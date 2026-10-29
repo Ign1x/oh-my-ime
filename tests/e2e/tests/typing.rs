@@ -84,6 +84,8 @@ fn switching_with_the_cli_and_hotkeys() -> anyhow::Result<()> {
     env.key(&["ctrl"], "space")?;
     env.type_text(" gh ")?;
     editor.wait_for_text("abCD ef GH ")?;
+    // The engine sees the release of Ctrl+Space, which xkb types as NUL.
+    assert_eq!(env.count_in_log("engine request failed"), 0);
     Ok(())
 }
 

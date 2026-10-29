@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Keys typed with Control held no longer fail to reach the engine. xkb types NUL for
+  Ctrl+Space, which D-Bus strings cannot carry; `KeyEvent::text` now never contains
+  control characters.
+
 ### Changed
 
 - Warnings about failed or late engine requests name the request.

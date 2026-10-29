@@ -37,7 +37,9 @@ pub struct KeyEvent {
     pub modifiers: u32,
     /// Timestamp in milliseconds with an undefined base.
     pub time: u32,
-    /// Text the key would produce without an input method (may be empty).
+    /// Text the key would type without an input method. Never contains control
+    /// characters, so it is empty for Return, Tab, Escape, BackSpace and for most keys
+    /// pressed with Control.
     pub text: String,
     /// `true` for a release, `false` for a press.
     pub released: bool,

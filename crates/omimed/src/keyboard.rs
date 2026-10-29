@@ -45,6 +45,7 @@ impl Default for RepeatInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedKey {
     pub keysym: u32,
+    /// The text the key types; never contains control characters.
     pub utf8: String,
     pub repeats: bool,
 }
@@ -170,10 +171,18 @@ impl Keyboard {
         let code = xkb::Keycode::new(evdev_key + EVDEV_XKB_OFFSET);
         Some(DecodedKey {
             keysym: keymap.state.key_get_one_sym(code).raw(),
-            utf8: keymap.state.key_get_utf8(code),
+            utf8: typed_text(keymap.state.key_get_utf8(code)),
             repeats: keymap.state.get_keymap().key_repeats(code),
         })
     }
+}
+
+/// Drops control characters from what xkb produces for a key. Keys such as Return and
+/// Escape, and most keys with Ctrl held, produce one; none of them is text, and
+/// Ctrl+Space even produces NUL, which D-Bus strings cannot carry.
+fn typed_text(mut utf8: String) -> String {
+    utf8.retain(|c| !c.is_control());
+    utf8
 }
 
 fn apply_modifiers(state: &mut xkb::State, m: ModifierState) {
@@ -301,7 +310,9 @@ mod tests {
     // evdev codes from linux/input-event-codes.h
     const KEY_A: u32 = 30;
     const KEY_1: u32 = 2;
+    const KEY_ENTER: u32 = 28;
     const KEY_LEFTSHIFT: u32 = 42;
+    const KEY_SPACE: u32 = 57;
 
     #[test]
     fn decodes_keys_with_modifiers() {
@@ -327,6 +338,23 @@ mod tests {
             omime_proto::engine::modifiers::SHIFT
         );
         assert!(!keyboard.decode(KEY_LEFTSHIFT).unwrap().repeats);
+    }
+
+    #[test]
+    fn control_characters_are_not_text() {
+        let mut keyboard = Keyboard::new();
+        keyboard.set_keymap(us_keymap()).unwrap();
+        assert_eq!(keyboard.decode(KEY_ENTER).unwrap().utf8, "");
+
+        // Control is modifier bit 2 in every xkb keymap; xkb turns Ctrl+Space into NUL.
+        keyboard.set_modifiers(ModifierState {
+            depressed: 1 << 2,
+            ..Default::default()
+        });
+        let space = keyboard.decode(KEY_SPACE).unwrap();
+        assert_eq!(space.keysym, xkb::keysyms::KEY_space);
+        assert_eq!(space.utf8, "");
+        assert_eq!(keyboard.decode(KEY_A).unwrap().utf8, "");
     }
 
     #[test]

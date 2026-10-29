@@ -61,6 +61,9 @@
       A key was pressed or released.
       key: (keysym, evdev keycode, modifiers, time in ms, text, released, repeat).
       Modifier bits: Shift 1, CapsLock 2, Control 4, Alt 8, NumLock 16, Super 64.
+      text is what the key types under the current layout and modifiers. It never
+      contains control characters: it is empty for Return, Tab, Escape, BackSpace and
+      for most keys pressed with Control.
       Return handled=true to consume the key. Releases are routed like their presses
       regardless of the answer, so applications never see stuck keys.
       If the engine does not answer within the daemon's timeout (200 ms by default),
