@@ -2858,6 +2858,7 @@ dependencies = [
  "rustix 1.1.6",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "xkbcommon",
 ]

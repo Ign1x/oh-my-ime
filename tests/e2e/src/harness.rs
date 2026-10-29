@@ -187,6 +187,21 @@ impl TestEnv {
         })?;
         env.env.push(("WAYLAND_DISPLAY".into(), socket));
 
+        // Stands in for a physical keyboard: without one, the seat would lose its keyboard
+        // capability, and with it the keyboard focus, whenever omimed restarts.
+        let mut keyboard = env
+            .command(target_dir().join("omime-keyboard"))
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("cannot start omime-keyboard (build the workspace first)")?;
+        let stdout = keyboard.stdout.take().context("no stdout")?;
+        env.children.push(keyboard);
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line)?;
+        if line.trim() != "ready" {
+            bail!("omime-keyboard did not start");
+        }
+
         // A private bus without service activation, so that clients asking for portals
         // and the like cannot launch the developer's desktop services.
         let bus_config = env.dir.join("bus.conf");

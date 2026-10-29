@@ -16,6 +16,7 @@ xkbcommon.workspace = true
 rustix = { workspace = true, features = ["process"] }
 wayland-client.workspace = true
 wayland-protocols.workspace = true
+wayland-protocols-misc.workspace = true
 wayland-protocols-wlr.workspace = true
 
 [dev-dependencies]
