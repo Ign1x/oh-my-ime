@@ -1,5 +1,7 @@
 # oh-my-ime architecture
 
+English | [简体中文](zh-CN/architecture.md)
+
 This document describes how oh-my-ime is put together and why. It is the reference for
 contributors; the README gives the short version.
 

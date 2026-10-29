@@ -110,7 +110,7 @@ flowchart LR
   这样文本与按键的顺序始终一致。
 - 平台从不规定候选词模型。
 
-完整设计见 [docs/architecture.md](docs/architecture.md)（英文）。
+完整设计见 [docs/zh-CN/architecture.md](docs/zh-CN/architecture.md)。
 
 ## 开发状态
 
@@ -159,7 +159,7 @@ cd oh-my-ime
 scripts/install.sh
 ```
 
-NixOS 系统配置的写法见 [docs/hyprland.md](docs/hyprland.md#1-install)（英文）。
+NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)。
 
 先停止其他输入法（fcitx5、IBus），再让 omimed 随 Hyprland 启动：
 
@@ -180,10 +180,10 @@ end)
 | 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload` |
 | 状态栏 | `omime status --json`（可直接用作 waybar 模块） |
 
-omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排查见 [docs/hyprland.md](docs/hyprland.md)（英文）。
+omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
 
-- 编写自己的引擎：[docs/writing-an-engine.md](docs/writing-an-engine.md)（英文）
-- 参与开发：[docs/development.md](docs/development.md)（英文）
+- 编写自己的引擎：[docs/zh-CN/writing-an-engine.md](docs/zh-CN/writing-an-engine.md)
+- 参与开发：[docs/zh-CN/development.md](docs/zh-CN/development.md)
 
 ## 路线图
 

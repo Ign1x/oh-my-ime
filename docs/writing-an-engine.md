@@ -1,5 +1,7 @@
 # Writing an engine
 
+English | [简体中文](zh-CN/writing-an-engine.md)
+
 An oh-my-ime engine is an ordinary program. The daemon (`omimed`) starts it, sends it
 the keys typed into the focused text field and applies what it answers: committed text,
 an inline preedit, deletions. Its user interface is entirely its own; see

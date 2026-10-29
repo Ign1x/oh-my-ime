@@ -1,5 +1,7 @@
 # oh-my-ime on Hyprland
 
+English | [简体中文](zh-CN/hyprland.md)
+
 ## 1. Install
 
 ### With Nix

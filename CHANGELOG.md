@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Simplified Chinese versions of the guides in `docs/zh-CN`, linked from README.zh-CN.md.
 - A Nix package: `nix profile install github:Ign1x/oh-my-ime`, or the flake's package and
   overlay in a NixOS configuration. It contains the systemd user unit, and works without
   a dev shell: omimed finds the bundled engines and Sparkle its graphics libraries. CI
