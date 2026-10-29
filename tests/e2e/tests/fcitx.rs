@@ -86,20 +86,6 @@ fn assert_lines(lines: &[String], expected: &[&str]) {
     assert_eq!(actual.as_slice(), expected, "{lines:?}");
 }
 
-fn wait_for_status(env: &TestEnv, expected: &str) -> anyhow::Result<()> {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        let status = env.omime(&["status"])?;
-        if status.trim() == expected {
-            return Ok(());
-        }
-        if Instant::now() > deadline {
-            bail!("status is {:?}, not {expected:?}", status.trim());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 #[test]
 #[ignore = "end-to-end test; see the module docs"]
 fn fcitx_clients_type_through_engines() -> anyhow::Result<()> {
@@ -250,7 +236,7 @@ fn hotkeys_work_in_fcitx_clients() -> anyhow::Result<()> {
 
     // Ctrl+Space (state 4 is the X11 Control bit) switches to direct input.
     assert_lines(&key_event(&client, SPACE, 4, false)?, &["reply true"]);
-    wait_for_status(&env, "direct input")?;
+    env.wait_for_status("direct input")?;
 
     let typed = type_key(&client, A)?;
     assert_lines(&typed, &["reply false", "reply false"]);

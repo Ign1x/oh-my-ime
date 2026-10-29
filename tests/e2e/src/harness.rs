@@ -110,6 +110,25 @@ impl TestEnv {
         start_engine: Option<&str>,
         extra_seats: &[&str],
     ) -> anyhow::Result<Self> {
+        Self::start_with(engines, start_engine, extra_seats, false)
+    }
+
+    /// Like [`Self::start`], with an X server: sway runs XWayland, and everything
+    /// started afterwards sees `$DISPLAY` and `XMODIFIERS=@im=omime`, so omimed serves
+    /// XIM and X11 applications find it.
+    pub fn start_with_x11(
+        engines: &[TestEngine],
+        start_engine: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        Self::start_with(engines, start_engine, &[], true)
+    }
+
+    fn start_with(
+        engines: &[TestEngine],
+        start_engine: Option<&str>,
+        extra_seats: &[&str],
+        x11: bool,
+    ) -> anyhow::Result<Self> {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "omime-e2e-{}-{}",
@@ -139,13 +158,14 @@ impl TestEnv {
         }
         // No borders or title bars: windows start at the output's origin, so tests can
         // compute where popups appear.
-        std::fs::write(
-            dir.join("sway.conf"),
-            extra_seats.iter().fold(
-                "output HEADLESS-1 resolution 1280x720\ndefault_border none\n".to_owned(),
-                |config, seat| config + &format!("seat {seat} fallback false\n"),
-            ),
-        )?;
+        let mut config = "output HEADLESS-1 resolution 1280x720\ndefault_border none\n".to_owned();
+        for seat in extra_seats {
+            config += &format!("seat {seat} fallback false\n");
+        }
+        if x11 {
+            config += "xwayland enable\n";
+        }
+        std::fs::write(dir.join("sway.conf"), config)?;
 
         let mut env = TestEnv {
             env: vec![
@@ -206,6 +226,12 @@ impl TestEnv {
         })?;
         env.env.push(("SWAYSOCK".into(), ipc.display().to_string()));
 
+        if x11 {
+            let display = env.wait_for_xwayland()?;
+            env.env.push(("DISPLAY".into(), display));
+            env.env.push(("XMODIFIERS".into(), "@im=omime".into()));
+        }
+
         // Stand in for physical keyboards: without one, a seat would lose its keyboard
         // capability, and with it the keyboard focus, whenever omimed restarts.
         for seat in std::iter::once("seat0").chain(extra_seats.iter().copied()) {
@@ -259,6 +285,35 @@ impl TestEnv {
 
         env.start_daemon(start_engine)?;
         Ok(env)
+    }
+
+    /// Asks sway for the XWayland display it started and waits until it has one.
+    ///
+    /// sway sets `$DISPLAY` in its own environment when XWayland comes up, so `exec`
+    /// expands it; the first attempts may run before the X server is ready and write an
+    /// empty line.
+    fn wait_for_xwayland(&self) -> anyhow::Result<String> {
+        let file = self.dir.join("display");
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let command = format!("echo $DISPLAY > '{}'", file.display());
+            let _ = self
+                .command("swaymsg")
+                .args(["exec", command.as_str()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if let Ok(display) = std::fs::read_to_string(&file) {
+                let display = display.trim();
+                if !display.is_empty() {
+                    return Ok(display.to_owned());
+                }
+            }
+            if Instant::now() > deadline {
+                bail!("XWayland did not start (is `xwayland` installed?)");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn start_daemon(&mut self, engine: Option<&str>) -> anyhow::Result<()> {
@@ -372,12 +427,26 @@ impl TestEnv {
 
     /// Opens the test editor without waiting for it to get focus.
     pub fn spawn_editor(&self, args: &[&str]) -> anyhow::Result<Editor> {
+        self.spawn_capturing("omime-ti-client", args)
+    }
+
+    /// Opens the XIM test client, an X11 application, and waits until it has an input
+    /// context. Sway gives the new window the keyboard focus.
+    pub fn xim_client(&self) -> anyhow::Result<Editor> {
+        let client = self.spawn_capturing("omime-xim-client", &[])?;
+        client.wait_for("the XIM client to be ready", |l| l == "ready")?;
+        Ok(client)
+    }
+
+    /// Runs a test client that prints one line per event and collects its output.
+    fn spawn_capturing(&self, program: &str, args: &[&str]) -> anyhow::Result<Editor> {
+        let program = target_dir().join(program);
         let mut child = self
-            .command(target_dir().join("omime-ti-client"))
+            .command(&program)
             .args(args)
             .stdout(Stdio::piped())
             .spawn()
-            .context("cannot start omime-ti-client")?;
+            .with_context(|| format!("cannot start {}", program.display()))?;
         let stdout = child.stdout.take().context("no stdout")?;
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sink = lines.clone();
@@ -514,6 +583,14 @@ impl TestEnv {
             );
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Waits until `omime status` prints `expected`.
+    pub fn wait_for_status(&self, expected: &str) -> anyhow::Result<()> {
+        wait_until(&format!("the status {expected:?}"), || {
+            let status = self.omime(&["status"]).ok()?;
+            (status.trim() == expected).then_some(())
+        })
     }
 
     /// Runs the `omime` CLI and returns its exit status and stdout, also when the status

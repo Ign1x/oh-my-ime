@@ -19,6 +19,8 @@ wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-misc.workspace = true
 wayland-protocols-wlr.workspace = true
+x11rb = "0.14"
+xim = { version = "0.6", default-features = false, features = ["std", "x11rb-client"] }
 zbus = { workspace = true, features = ["tokio"] }
 
 [dev-dependencies]
