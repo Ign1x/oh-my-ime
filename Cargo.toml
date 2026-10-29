@@ -13,6 +13,14 @@ homepage = "https://github.com/Ign1x/oh-my-ime"
 
 [workspace.dependencies]
 omime-proto = { path = "crates/omime-proto" }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+tokio = { version = "1.47", features = ["rt", "net", "time", "macros", "signal", "sync", "io-util"] }
+rustix = { version = "1", features = ["fs", "process", "net", "pipe", "time"] }
+xkbcommon = { version = "0.9", default-features = false }
+wl-proxy = { version = "=0.1.5", default-features = false, features = ["logging"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
