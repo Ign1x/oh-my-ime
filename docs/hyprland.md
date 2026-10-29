@@ -88,6 +88,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Pick an engine | `omime switch sparkle`, `omime switch direct` |
 | See what is installed | `omime list` (`*` marks enabled engines) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
+| Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Reload the configuration | `omime reload` |
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in

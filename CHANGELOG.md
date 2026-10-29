@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `omime install <dir>` copies an engine directory into
+  `~/.local/share/oh-my-ime/engines` after checking its manifest, and
+  `omime uninstall <id>` removes it again; both work without a running omimed.
 - Simplified Chinese versions of the guides in `docs/zh-CN`, linked from README.zh-CN.md.
 - A Nix package: `nix profile install github:Ign1x/oh-my-ime`, or the flake's package and
   overlay in a NixOS configuration. It contains the systemd user unit, and works without

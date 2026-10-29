@@ -79,6 +79,7 @@ bind = SUPER, space, exec, omime next
 | 指定引擎 | `omime switch sparkle`、`omime switch direct` |
 | 查看已安装的内容 | `omime list`（`*` 标记已启用的引擎） |
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
+| 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 重新加载配置 | `omime reload` |
 
 omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。

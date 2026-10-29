@@ -27,18 +27,23 @@ pub fn state_dir() -> Option<PathBuf> {
     xdg_dir("XDG_STATE_HOME", ".local/state").map(|d| d.join(PROJECT_DIR))
 }
 
+/// `$XDG_DATA_HOME/oh-my-ime/engines`, the directory `omime install` writes to.
+pub fn user_engine_dir() -> Option<PathBuf> {
+    xdg_dir("XDG_DATA_HOME", ".local/share").map(|d| d.join(PROJECT_DIR).join("engines"))
+}
+
 /// Directories searched for engines, highest priority first:
 ///
 /// 1. every entry of `$OMIME_ENGINE_PATH` (colon separated; handy for development),
-/// 2. `$XDG_DATA_HOME/oh-my-ime/engines` (user installs),
+/// 2. [`user_engine_dir`] (user installs),
 /// 3. `<dir>/oh-my-ime/engines` for each entry of `$XDG_DATA_DIRS`.
 pub fn engine_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(extra) = env::var_os("OMIME_ENGINE_PATH") {
         dirs.extend(env::split_paths(&extra).filter(|p| !p.as_os_str().is_empty()));
     }
-    if let Some(data_home) = xdg_dir("XDG_DATA_HOME", ".local/share") {
-        dirs.push(data_home.join(PROJECT_DIR).join("engines"));
+    if let Some(user) = user_engine_dir() {
+        dirs.push(user);
     }
     let data_dirs = env::var_os("XDG_DATA_DIRS")
         .filter(|d| !d.is_empty())

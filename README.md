@@ -176,7 +176,7 @@ Wayland application and pick from Sparkle's deck.
 | Toggle direct input ↔ last engine | `Ctrl+Space` |
 | Next engine | `Ctrl+Shift+Space` or `omime next` |
 | Pick an engine | `omime switch sparkle`, `omime switch direct` |
-| Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload` |
+| Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Status bars | `omime status --json` (works as a waybar module) |
 
 omimed remembers the engine you used last. The full setup, a waybar snippet and

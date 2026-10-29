@@ -1,6 +1,9 @@
 //! `omime` — manage the oh-my-ime input method platform.
 
+mod install;
+
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
@@ -18,10 +21,13 @@ Commands:
   toggle           Switch between direct input and the last engine
   enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
+  install <DIR>    Install an engine from a directory (`--force` to replace it)
+  uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
   help             Print this help
 
-The commands talk to a running `omimed` over the session bus.";
+The other commands talk to a running `omimed` over the session bus; `install` and
+`uninstall` also work without it.";
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Daemon1",
@@ -38,6 +44,16 @@ trait Daemon {
 }
 
 enum Command {
+    /// Commands that need a running omimed.
+    Daemon(DaemonCommand),
+    Install {
+        dir: PathBuf,
+        force: bool,
+    },
+    Uninstall(String),
+}
+
+enum DaemonCommand {
     List,
     Status { json: bool },
     Switch(String),
@@ -52,16 +68,27 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     Ok(Some(match args.as_slice() {
         [] | ["help" | "-h" | "--help"] => return Ok(None),
-        ["list"] => Command::List,
-        ["status"] => Command::Status { json: false },
-        ["status", "--json"] => Command::Status { json: true },
-        ["switch", engine] => Command::Switch((*engine).to_owned()),
-        ["next"] => Command::Next,
-        ["toggle"] => Command::Toggle,
-        ["enable", engine] => Command::Enable((*engine).to_owned()),
-        ["disable", engine] => Command::Disable((*engine).to_owned()),
-        ["reload"] => Command::Reload,
-        _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
+        ["install", dir] if *dir != "--force" => Command::Install {
+            dir: PathBuf::from(*dir),
+            force: false,
+        },
+        ["install", dir, "--force"] | ["install", "--force", dir] => Command::Install {
+            dir: PathBuf::from(*dir),
+            force: true,
+        },
+        ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
+        args => Command::Daemon(match args {
+            ["list"] => DaemonCommand::List,
+            ["status"] => DaemonCommand::Status { json: false },
+            ["status", "--json"] => DaemonCommand::Status { json: true },
+            ["switch", engine] => DaemonCommand::Switch((*engine).to_owned()),
+            ["next"] => DaemonCommand::Next,
+            ["toggle"] => DaemonCommand::Toggle,
+            ["enable", engine] => DaemonCommand::Enable((*engine).to_owned()),
+            ["disable", engine] => DaemonCommand::Disable((*engine).to_owned()),
+            ["reload"] => DaemonCommand::Reload,
+            _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
+        }),
     }))
 }
 
@@ -89,11 +116,63 @@ fn json_string(s: &str) -> String {
 }
 
 async fn run(command: Command) -> anyhow::Result<()> {
-    let conn = zbus::Connection::session()
-        .await
-        .context("cannot connect to the session bus")?;
+    match command {
+        Command::Install { dir, force } => install_engine(&dir, force).await,
+        Command::Uninstall(engine) => uninstall_engine(&engine).await,
+        Command::Daemon(command) => run_daemon(command).await,
+    }
+}
+
+/// Installs the engine directory `dir` for the user and lets a running omimed notice.
+async fn install_engine(dir: &Path, force: bool) -> anyhow::Result<()> {
+    let engines_dir =
+        omime_proto::paths::user_engine_dir().context("cannot find the data directory")?;
+    let engine = install::install(dir, &engines_dir, force)?;
+    if let Some(warning) = install::command_warning(&engine) {
+        eprintln!("warning: {warning}");
+    }
+    edit_config_engines(engine.id(), true)?;
+    let running = reload_if_running().await?;
+    println!(
+        "Installed {} ({}) into {}",
+        engine.id(),
+        engine.manifest.engine.name,
+        engine.dir.display()
+    );
+    if !running {
+        println!("omimed is not running; it will find the engine when it starts.");
+    }
+    Ok(())
+}
+
+/// Removes the user-installed engine `engine` and lets a running omimed notice.
+async fn uninstall_engine(engine: &str) -> anyhow::Result<()> {
+    let engines_dir =
+        omime_proto::paths::user_engine_dir().context("cannot find the data directory")?;
+    install::uninstall(&engines_dir, engine, &omime_proto::paths::engine_dirs())?;
+    edit_config_engines(engine, false)?;
+    reload_if_running().await?;
+    println!("Uninstalled {engine}");
+    Ok(())
+}
+
+/// Asks a running omimed to reload. Returns `false` when there is none, so installing
+/// and uninstalling also work in a session without a bus.
+async fn reload_if_running() -> anyhow::Result<bool> {
+    let Ok(conn) = zbus::Connection::session().await else {
+        return Ok(false);
+    };
+    if !daemon_owns_bus_name(&conn).await? {
+        return Ok(false);
+    }
     let daemon = DaemonProxy::new(&conn).await?;
-    let owner = conn
+    daemon.reload().await?;
+    Ok(true)
+}
+
+/// Whether omimed currently owns its bus name.
+async fn daemon_owns_bus_name(conn: &zbus::Connection) -> anyhow::Result<bool> {
+    Ok(conn
         .call_method(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
@@ -103,19 +182,52 @@ async fn run(command: Command) -> anyhow::Result<()> {
         )
         .await?
         .body()
-        .deserialize::<bool>()?;
-    if !owner {
+        .deserialize::<bool>()?)
+}
+
+/// Adds `engine` to or removes it from an explicit `engines` list in config.toml.
+/// Without a list every installed engine is enabled, so there is nothing to change.
+fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
+    let dir =
+        omime_proto::paths::config_dir().context("cannot find the configuration directory")?;
+    let path = dir.join(omime_proto::config::CONFIG_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    };
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("cannot parse {}", path.display()))?;
+    if doc.get("engines").is_none() {
+        return Ok(());
+    }
+    let updated = edit_engines(&text, &[], engine, enable)
+        .with_context(|| format!("cannot update {}", path.display()))?;
+    if updated != text {
+        std::fs::write(&path, updated)
+            .with_context(|| format!("cannot write {}", path.display()))?;
+    }
+    Ok(())
+}
+
+async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
+    let conn = zbus::Connection::session()
+        .await
+        .context("cannot connect to the session bus")?;
+    let daemon = DaemonProxy::new(&conn).await?;
+    if !daemon_owns_bus_name(&conn).await? {
         bail!("omimed is not running (nobody owns {DAEMON_BUS_NAME} at {DAEMON_OBJECT_PATH})");
     }
 
     match command {
-        Command::List => {
+        DaemonCommand::List => {
             for (id, name, enabled, state) in daemon.list_engines().await? {
                 let mark = if enabled { '*' } else { ' ' };
                 println!("{mark} {id:<16} {name:<24} {state}");
             }
         }
-        Command::Status { json } => {
+        DaemonCommand::Status { json } => {
             let status = daemon.status().await?;
             let engine = string(&status, "engine");
             let label = string(&status, "label");
@@ -144,7 +256,7 @@ async fn run(command: Command) -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Switch(engine) => {
+        DaemonCommand::Switch(engine) => {
             let target = if engine == "direct" {
                 ""
             } else {
@@ -152,11 +264,11 @@ async fn run(command: Command) -> anyhow::Result<()> {
             };
             daemon.switch(target).await?;
         }
-        Command::Next => daemon.next().await?,
-        Command::Toggle => daemon.toggle().await?,
-        Command::Enable(engine) => set_enabled(&daemon, &engine, true).await?,
-        Command::Disable(engine) => set_enabled(&daemon, &engine, false).await?,
-        Command::Reload => daemon.reload().await?,
+        DaemonCommand::Next => daemon.next().await?,
+        DaemonCommand::Toggle => daemon.toggle().await?,
+        DaemonCommand::Enable(engine) => set_enabled(&daemon, &engine, true).await?,
+        DaemonCommand::Disable(engine) => set_enabled(&daemon, &engine, false).await?,
+        DaemonCommand::Reload => daemon.reload().await?,
     }
     Ok(())
 }
@@ -266,12 +378,35 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert!(matches!(parse(&args("")), Ok(None)));
-        assert!(matches!(parse(&args("list")), Ok(Some(Command::List))));
+        assert!(matches!(
+            parse(&args("list")),
+            Ok(Some(Command::Daemon(DaemonCommand::List)))
+        ));
         assert!(matches!(
             parse(&args("status --json")),
-            Ok(Some(Command::Status { json: true }))
+            Ok(Some(Command::Daemon(DaemonCommand::Status { json: true })))
         ));
-        assert!(matches!(parse(&args("switch echo")), Ok(Some(Command::Switch(e))) if e == "echo"));
+        assert!(
+            matches!(parse(&args("switch echo")), Ok(Some(Command::Daemon(DaemonCommand::Switch(e)))) if e == "echo")
+        );
+        assert!(matches!(
+            parse(&args("install /tmp/echo")),
+            Ok(Some(Command::Install { dir, force: false })) if dir == Path::new("/tmp/echo")
+        ));
+        assert!(matches!(
+            parse(&args("install /tmp/echo --force")),
+            Ok(Some(Command::Install { force: true, .. }))
+        ));
+        assert!(
+            matches!(parse(&args("uninstall echo")), Ok(Some(Command::Uninstall(e))) if e == "echo")
+        );
+        assert!(parse(&args("install")).is_err());
+        assert!(parse(&args("install --force")).is_err());
+        assert!(matches!(
+            parse(&args("install --force /tmp/echo")),
+            Ok(Some(Command::Install { force: true, .. }))
+        ));
+        assert!(parse(&args("uninstall")).is_err());
         assert!(parse(&args("switch")).is_err());
         assert!(parse(&args("frobnicate")).is_err());
     }

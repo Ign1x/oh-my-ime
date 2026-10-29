@@ -68,6 +68,8 @@ api = "1.0"
 name = "回声"
 ```
 
+要为当前用户安装这个目录，运行 `omime install <dir>`：它会检查清单，把目录复制到 `~/.local/share/oh-my-ime/engines/<id>`，并让正在运行的 omimed 重新加载。`--force` 会替换之前安装的副本，`omime uninstall <id>` 则将其移除。
+
 omimed 按以下顺序查找引擎目录：
 
 1. `$OMIME_ENGINE_PATH` 中的每个目录（以冒号分隔；开发时很方便），

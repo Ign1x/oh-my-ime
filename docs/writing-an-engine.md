@@ -80,6 +80,11 @@ api = "1.0"
 name = "回声"
 ```
 
+To install the directory for the current user, run `omime install <dir>`: it checks the
+manifest, copies the directory to `~/.local/share/oh-my-ime/engines/<id>` and asks a
+running omimed to reload. `--force` replaces an earlier copy, and `omime uninstall <id>`
+removes it again.
+
 omimed looks for engine directories in, in this order:
 
 1. every directory in `$OMIME_ENGINE_PATH` (colon separated; handy while developing),
