@@ -20,7 +20,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail};
-use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent, Rect};
+use omime_proto::engine::{Action, ContextId};
 use tracing::{debug, error, info, warn};
 use wl_proxy::baseline::Baseline;
 use wl_proxy::object::{Object, ObjectCoreApi};
@@ -43,6 +43,7 @@ use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatCapability, WlSeatHand
 use wl_proxy::protocols::wlr_foreign_toplevel_management_unstable_v1::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1;
 use wl_proxy::state::{State, StateError, StateHandler};
 
+use crate::frontend::{ContextIds, FrontendEvent};
 use crate::keyboard::{ModifierState, RepeatInfo};
 use bridge::Bridge;
 pub use bridge::EngineId;
@@ -160,33 +161,6 @@ pub struct KeyRef {
     pub repeat: bool,
 }
 
-/// What the frontend reports to the core.
-#[derive(Debug)]
-pub enum FrontendEvent {
-    /// A (non-sensitive) text field got focus.
-    Activated {
-        seat: SeatId,
-        ctx: ContextId,
-        info: ContextInfo,
-    },
-    /// Properties of the focused field changed. `reset` means the application changed
-    /// the text on its own.
-    Updated {
-        ctx: ContextId,
-        info: ContextInfo,
-        reset: bool,
-    },
-    /// The text field lost focus.
-    Deactivated { ctx: ContextId },
-    /// A key needs a decision: call [`Frontend::finish_key`].
-    Key { key: KeyRef, event: KeyEvent },
-    /// The text cursor relative to an engine's popup changed.
-    CursorRect { engine: EngineId, rect: Rect },
-    /// Another application got focus (`None` when unknown). Sent after the `Updated`
-    /// events of the focused fields, which carry the new app id.
-    FocusedApp(Option<String>),
-}
-
 /// Queue of [`FrontendEvent`]s, shared with the seat sessions.
 pub type Outputs = Rc<RefCell<VecDeque<FrontendEvent>>>;
 
@@ -214,8 +188,7 @@ pub struct Frontend {
     bridge: Bridge,
     active_engine: Option<EngineId>,
     outputs: Outputs,
-    /// Last context id handed out; ids are never reused within a daemon's lifetime.
-    last_ctx: ContextId,
+    context_ids: ContextIds,
 }
 
 impl std::fmt::Debug for Frontend {
@@ -228,7 +201,7 @@ impl std::fmt::Debug for Frontend {
 
 impl Frontend {
     /// Connects to the compositor named by `display` (or `WAYLAND_DISPLAY`).
-    pub fn connect(display: Option<&str>, last_ctx: ContextId) -> anyhow::Result<Self> {
+    pub fn connect(display: Option<&str>, context_ids: ContextIds) -> anyhow::Result<Self> {
         let mut builder = State::builder(Baseline::V6);
         if let Some(display) = display {
             builder = builder.with_server_display_name(display);
@@ -273,7 +246,7 @@ impl Frontend {
             bridge,
             active_engine: None,
             outputs: Outputs::default(),
-            last_ctx,
+            context_ids,
         })
     }
 
@@ -329,11 +302,6 @@ impl Frontend {
     /// Whether the compositor reports which window has focus.
     pub fn reports_focused_app(&self) -> bool {
         self.toplevel_manager.is_some()
-    }
-
-    /// The last context id handed out, to continue numbering after a reconnect.
-    pub fn last_context_id(&self) -> ContextId {
-        self.last_ctx
     }
 
     /// Takes the events accumulated for the core.
@@ -453,7 +421,7 @@ impl Frontend {
                 event,
             } => {
                 if let Some(session) = self.seats.get_mut(&seat) {
-                    session.handle_im(generation, event, &mut self.last_ctx);
+                    session.handle_im(generation, event, &self.context_ids);
                 }
             }
             Event::Grab {

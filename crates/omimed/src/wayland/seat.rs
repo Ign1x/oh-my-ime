@@ -18,9 +18,8 @@ use wl_proxy::protocols::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_mana
 use wl_proxy::protocols::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 use wl_proxy::protocols::wayland::wl_seat::WlSeat;
 
-use super::{
-    EventQueue, FrontendEvent, GrabEvent, GrabEvents, ImEvent, ImEvents, KeyRef, Outputs, SeatId,
-};
+use super::{EventQueue, GrabEvent, GrabEvents, ImEvent, ImEvents, KeyRef, Outputs, SeatId};
+use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
 use crate::ime_state::ImState;
 use crate::keyboard::{self, KeyTracker, Keyboard, ReleaseAction};
 
@@ -201,7 +200,7 @@ impl SeatSession {
         self.im = Some(im);
     }
 
-    pub fn handle_im(&mut self, generation: u32, event: ImEvent, next_ctx: &mut ContextId) {
+    pub fn handle_im(&mut self, generation: u32, event: ImEvent, context_ids: &ContextIds) {
         if generation != self.im_generation || self.im.is_none() {
             return;
         }
@@ -215,7 +214,7 @@ impl SeatSession {
             } => self.ime.surrounding_text(text, cursor, anchor),
             ImEvent::TextChangeCause(cause) => self.ime.text_change_cause(cause),
             ImEvent::ContentType { hints, purpose } => self.ime.content_type(hints, purpose),
-            ImEvent::Done => self.on_done(next_ctx),
+            ImEvent::Done => self.on_done(context_ids),
             ImEvent::Unavailable => self.on_unavailable(),
         }
     }
@@ -251,7 +250,7 @@ impl SeatSession {
         }
     }
 
-    fn on_done(&mut self, next_ctx: &mut ContextId) {
+    fn on_done(&mut self, context_ids: &ContextIds) {
         let applied = self.ime.done();
         if self.retry.take().is_some() {
             info!(seat = self.name, "became the input method");
@@ -267,14 +266,13 @@ impl SeatSession {
             self.end_context();
         }
         if wanted && self.ctx.is_none() {
-            *next_ctx += 1;
-            let ctx = *next_ctx;
+            let ctx = context_ids.next();
             self.ctx = Some(ctx);
             debug!(seat = self.name, ctx, "text field focused");
             self.outputs
                 .borrow_mut()
                 .push_back(FrontendEvent::Activated {
-                    seat: self.id,
+                    origin: Origin::Wayland(self.id),
                     ctx,
                     info: self.context_info(),
                 });
@@ -453,9 +451,10 @@ impl SeatSession {
             released,
             repeat,
         };
-        self.outputs
-            .borrow_mut()
-            .push_back(FrontendEvent::Key { key, event });
+        self.outputs.borrow_mut().push_back(FrontendEvent::Key {
+            key: frontend::KeyRef::Wayland(key),
+            event,
+        });
     }
 
     /// Carries out the core's decision about a key.

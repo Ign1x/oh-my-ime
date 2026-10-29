@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_proto::config::{CONFIG_FILE, Config};
-use omime_proto::engine::ContextId;
+use omime_proto::engine::{Action, ContextId};
 use omime_proto::manifest;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
@@ -20,8 +20,9 @@ use tracing::{error, info, warn};
 
 use crate::control::{self, ControlRequest, ControlService};
 use crate::core::{Core, CoreEvent};
+use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
 use crate::state::State;
-use crate::wayland::Frontend;
+use crate::wayland::{EngineId, Frontend};
 
 /// Options for [`run`].
 #[derive(Debug, Default)]
@@ -111,7 +112,7 @@ struct Daemon {
     control_rx: mpsc::UnboundedReceiver<ControlRequest>,
     /// Kept alive for the control service's lifetime.
     _control: Option<Rc<ControlService>>,
-    last_ctx: ContextId,
+    context_ids: ContextIds,
 }
 
 impl Daemon {
@@ -169,7 +170,7 @@ impl Daemon {
             ui_rx,
             control_rx,
             _control: control,
-            last_ctx: 0,
+            context_ids: ContextIds::default(),
         })
     }
 
@@ -178,7 +179,8 @@ impl Daemon {
         let mut first = true;
         loop {
             // A failure to connect means the compositor is gone: that ends the daemon.
-            let mut frontend = Frontend::connect(self.options.display.as_deref(), self.last_ctx)?;
+            let mut frontend =
+                Frontend::connect(self.options.display.as_deref(), self.context_ids.clone())?;
             info!("connected to the compositor");
             let startup_engine = if first {
                 first = false;
@@ -189,7 +191,6 @@ impl Daemon {
                 None
             };
             let end = self.session(&mut frontend, startup_engine).await?;
-            self.last_ctx = frontend.last_context_id();
             self.core.forget_contexts();
             match end {
                 SessionEnd::Shutdown => {
@@ -228,12 +229,15 @@ impl Daemon {
             // that its UI connection finds a complete registry.
             if frontend.is_ready()
                 && let Some(engine) = startup_engine.take()
-                && let Err(e) = self.core.set_current(Some(engine), frontend)
+                && let Err(e) = self
+                    .core
+                    .set_current(Some(engine), &mut Outputs::new(frontend))
             {
                 warn!("{e:#}");
             }
             for event in frontend.take_events() {
-                self.core.on_frontend_event(event, frontend);
+                self.core
+                    .on_frontend_event(event, &mut Outputs::new(frontend));
             }
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
@@ -258,10 +262,10 @@ impl Daemon {
                     if let Err(e) = frontend.on_timer(now) {
                         break SessionEnd::Lost(e);
                     }
-                    self.core.on_timer(now, frontend);
+                    self.core.on_timer(now, &mut Outputs::new(frontend));
                 }
                 Some(event) = self.core_rx.recv() => {
-                    self.core.on_event(event, frontend).await;
+                    self.core.on_event(event, &mut Outputs::new(frontend)).await;
                 }
                 Some((engine, fd)) = self.ui_rx.recv() => {
                     if let Err(e) = frontend.add_ui_client(engine.as_str().into(), fd) {
@@ -299,13 +303,15 @@ impl Daemon {
                 ));
             }
             ControlRequest::Switch(target, reply) => {
-                let _ = reply.send(result(self.core.switch_to(target, frontend)));
+                let _ = reply.send(result(
+                    self.core.switch_to(target, &mut Outputs::new(frontend)),
+                ));
             }
             ControlRequest::Next(reply) => {
-                let _ = reply.send(result(self.core.next(frontend)));
+                let _ = reply.send(result(self.core.next(&mut Outputs::new(frontend))));
             }
             ControlRequest::Toggle(reply) => {
-                let _ = reply.send(result(self.core.toggle(frontend)));
+                let _ = reply.send(result(self.core.toggle(&mut Outputs::new(frontend))));
             }
             ControlRequest::Diagnose(reply) => {
                 let display = self
@@ -323,7 +329,8 @@ impl Daemon {
             ControlRequest::Reload(reply) => {
                 let config = load_config();
                 let installed = discover_engines();
-                self.core.reconfigure(&config, installed, frontend);
+                self.core
+                    .reconfigure(&config, installed, &mut Outputs::new(frontend));
                 let _ = reply.send(Ok(()));
             }
         }
@@ -334,5 +341,44 @@ async fn sleep_until(deadline: Option<Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
         None => std::future::pending().await,
+    }
+}
+
+/// The frontends of one compositor session, as the core sees them.
+struct Outputs<'a> {
+    wayland: &'a mut Frontend,
+}
+
+impl<'a> Outputs<'a> {
+    fn new(wayland: &'a mut Frontend) -> Self {
+        Self { wayland }
+    }
+}
+
+impl Frontends for Outputs<'_> {
+    fn finish_key(&mut self, key: &KeyRef, handled: bool) {
+        match key {
+            KeyRef::Wayland(key) => self.wayland.finish_key(key, handled),
+        }
+    }
+
+    fn apply_actions(&mut self, origin: Origin, ctx: ContextId, actions: &[Action]) {
+        match origin {
+            Origin::Wayland(seat) => self.wayland.apply_actions(seat, ctx, actions),
+        }
+    }
+
+    fn clear_preedit(&mut self, origin: Origin, ctx: ContextId) {
+        match origin {
+            Origin::Wayland(seat) => self.wayland.clear_preedit(seat, ctx),
+        }
+    }
+
+    fn set_active_engine(&mut self, engine: Option<EngineId>) {
+        self.wayland.set_active_engine(engine);
+    }
+
+    fn set_engine_visible(&mut self, engine: EngineId, visible: bool) {
+        self.wayland.set_engine_visible(engine, visible);
     }
 }
