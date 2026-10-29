@@ -82,6 +82,15 @@ pub fn echo_engine() -> TestEngine {
     }
 }
 
+/// `omime-dummy-ui`, an engine that draws a window of one color and consumes nothing.
+pub fn dummy_engine(args: &[&str]) -> TestEngine {
+    TestEngine {
+        id: "dummy",
+        program: target_dir().join("omime-dummy-ui"),
+        args: args.iter().map(|a| (*a).to_owned()).collect(),
+    }
+}
+
 /// A private compositor session with omimed running in it.
 pub struct TestEnv {
     dir: PathBuf,
@@ -566,6 +575,33 @@ impl TestEnv {
     /// Takes a screenshot of the output.
     pub fn screenshot(&self, path: &Path) -> anyhow::Result<()> {
         self.run(self.command("grim").arg(path))
+    }
+
+    /// The color of the pixel at `(x, y)` of the output, as `0xRRGGBB`.
+    pub fn pixel(&self, x: u32, y: u32) -> anyhow::Result<u32> {
+        let geometry = format!("{x},{y} 1x1");
+        let output = self
+            .command("grim")
+            .args(["-g", &geometry, "-t", "ppm", "-"])
+            .output()
+            .context("cannot run grim")?;
+        if !output.status.success() {
+            bail!("grim failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        crate::ppm_pixel(&output.stdout).context("grim wrote no image")
+    }
+
+    /// Waits until the pixel at `(x, y)` has the color `rgb` (`0xRRGGBB`).
+    pub fn wait_for_pixel(&self, x: u32, y: u32, rgb: u32) -> anyhow::Result<()> {
+        let mut last = None;
+        let found = wait_until(&format!("the color {rgb:06x} at ({x}, {y})"), || {
+            last = self.pixel(x, y).ok();
+            (last == Some(rgb)).then_some(())
+        });
+        found.with_context(|| match last {
+            Some(color) => format!("the pixel is {color:06x}"),
+            None => "no screenshot".to_owned(),
+        })
     }
 
     /// Runs the `omime` CLI and returns its output.

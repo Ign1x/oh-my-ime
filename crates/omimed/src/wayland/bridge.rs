@@ -146,7 +146,10 @@ type Shared = Rc<RefCell<BridgeShared>>;
 
 impl BridgeShared {
     fn window_visible(&self, engine: &EngineId) -> bool {
-        self.im_active && self.popup_host.is_some() && self.active_engine.as_ref() == Some(engine)
+        self.im_active
+            && self.popup_host.is_some()
+            && self.active_engine.as_ref() == Some(engine)
+            && self.shown_engines.contains(engine)
     }
 
     fn next_serial(&mut self) -> u32 {

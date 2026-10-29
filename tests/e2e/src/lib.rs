@@ -33,6 +33,31 @@ pub fn parse_color(hex: &str) -> anyhow::Result<u32> {
     Ok(0xff00_0000 | rgb)
 }
 
+/// The first pixel of a binary PPM image (what `grim -t ppm` writes) as `0xRRGGBB`.
+pub fn ppm_pixel(image: &[u8]) -> Option<u32> {
+    // The header is four fields ("P6", width, height, maximum value), each ended by
+    // one whitespace byte; the samples follow.
+    let mut fields = 0;
+    let mut in_field = false;
+    for (i, byte) in image.iter().enumerate() {
+        if !byte.is_ascii_whitespace() {
+            in_field = true;
+            continue;
+        }
+        if in_field {
+            in_field = false;
+            fields += 1;
+            if fields == 4 {
+                let [r, g, b] = image.get(i + 1..i + 4)? else {
+                    return None;
+                };
+                return Some(u32::from(*r) << 16 | u32::from(*g) << 8 | u32::from(*b));
+            }
+        }
+    }
+    None
+}
+
 /// Quotes a string as JSON.
 pub fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -76,6 +101,15 @@ pub fn parse_json_string(s: &str) -> Option<(String, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ppm_images_give_their_first_pixel() {
+        assert_eq!(ppm_pixel(b"P6\n1 1\n255\n\x12\x34\x56"), Some(0x12_3456));
+        // Whitespace in the samples is data.
+        assert_eq!(ppm_pixel(b"P6 2 1 255 \x20\x0a\x09\0\0\0"), Some(0x20_0a09));
+        assert_eq!(ppm_pixel(b"P6\n1 1\n255\n\x12"), None);
+        assert_eq!(ppm_pixel(b""), None);
+    }
 
     #[test]
     fn colors_are_opaque_argb() {

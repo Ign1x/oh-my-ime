@@ -38,11 +38,12 @@
             buildLibs
             ++ (with pkgs; [
               pkg-config
-              # End-to-end tests: a headless compositor, its X server and a virtual
-              # keyboard.
+              # End-to-end tests: a headless compositor, its X server, a virtual
+              # keyboard and screenshots.
               sway
               xwayland
               wtype
+              grim
             ])
             ++ extraPackages;
 

@@ -15,7 +15,8 @@
 //! so if `file` does not exist yet (and creates it).
 //!
 //! When started by omimed (`OMIME_ENGINE_ADDRESS` is set) it also registers as an
-//! engine that passes every key through, after `--slow-ms` milliseconds if given.
+//! engine that passes every key through, after `--slow-ms` milliseconds if given. It
+//! asks for its window to be shown when a text field is focused, unless `--hidden`.
 
 use std::time::{Duration, Instant};
 
@@ -31,16 +32,20 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 const USAGE: &str = "\
 Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]
-                      [--misbehave-once FILE] [--slow-ms N]";
+                      [--misbehave-once FILE] [--slow-ms N] [--hidden]";
 
 /// An engine that consumes nothing, optionally slowly.
 struct PassThrough {
     slow: Duration,
+    /// Whether to ask for the window to be shown.
+    show: bool,
 }
 
 impl omime_sdk::Engine for PassThrough {
     fn activate(&mut self, ctx: &mut omime_sdk::Context<'_>) {
-        ctx.host().set_popup_visible(true);
+        if self.show {
+            ctx.host().set_popup_visible(true);
+        }
     }
 
     fn process_key(
@@ -270,6 +275,7 @@ fn main() -> anyhow::Result<()> {
     let mut misbehave = None;
     let mut once: Option<std::path::PathBuf> = None;
     let mut slow = Duration::ZERO;
+    let mut show = true;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -289,6 +295,7 @@ fn main() -> anyhow::Result<()> {
             }
             "--misbehave-once" => once = Some(value()?.into()),
             "--slow-ms" => slow = Duration::from_millis(value()?.parse()?),
+            "--hidden" => show = false,
             _ => bail!("{USAGE}"),
         }
     }
@@ -301,7 +308,7 @@ fn main() -> anyhow::Result<()> {
     }
     // Keep the engine connection alive for as long as the window exists.
     let _engine = if std::env::var_os(omime_sdk::ENGINE_ADDRESS_ENV).is_some() {
-        Some(omime_sdk::spawn(PassThrough { slow })?)
+        Some(omime_sdk::spawn(PassThrough { slow, show })?)
     } else {
         None
     };
