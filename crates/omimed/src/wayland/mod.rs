@@ -412,6 +412,7 @@ impl Frontend {
             self.handle_event(event)?;
         }
         if handled {
+            self.update_focused_app();
             self.update_bridge();
         }
         Ok(())
@@ -464,10 +465,10 @@ impl Frontend {
                     session.handle_grab(generation, event);
                 }
             }
-            Event::Toplevel(event) => {
-                self.toplevels.handle(event);
-                self.update_focused_app();
-            }
+            // The focused application is worked out once the batch is handled: focus
+            // moves as two changes (one window loses it, another gets it), and in between
+            // no window has it.
+            Event::Toplevel(event) => self.toplevels.handle(event),
             Event::PopupCursorRect {
                 engine,
                 x,
@@ -556,7 +557,6 @@ impl Frontend {
         {
             self.toplevel_manager = None;
             self.toplevels.handle(ToplevelEvent::Finished);
-            self.update_focused_app();
         }
     }
 
