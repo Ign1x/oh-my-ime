@@ -125,6 +125,8 @@ pub(super) struct BridgeShared {
     /// Whether a text input is focused and the input method active.
     im_active: bool,
     active_engine: Option<EngineId>,
+    /// Engines that asked for their windows to be hidden (`SetPopupVisible(false)`).
+    hidden_engines: std::collections::HashSet<EngineId>,
     /// Surfaces that have been given an `xdg_toplevel`, i.e. engine windows.
     windows: Vec<Weak<WlSurface>>,
     configure_serial: u32,
@@ -165,6 +167,7 @@ impl Bridge {
             popup_host: None,
             im_active: false,
             active_engine: None,
+            hidden_engines: std::collections::HashSet::new(),
             windows: Vec::new(),
             configure_serial: 0,
             events,
@@ -220,6 +223,17 @@ impl Bridge {
         });
         debug!(engine = &*engine, "UI client connected");
         Ok(())
+    }
+
+    /// Records whether `engine` wants its windows shown. Takes effect with the next
+    /// [`Self::set_policy`].
+    pub fn set_engine_visible(&self, engine: EngineId, visible: bool) {
+        let mut shared = self.shared.borrow_mut();
+        if visible {
+            shared.hidden_engines.remove(&engine);
+        } else {
+            shared.hidden_engines.insert(engine);
+        }
     }
 
     /// Updates who may show windows and refreshes their visibility.

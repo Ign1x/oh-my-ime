@@ -12,10 +12,6 @@ use rustix::fs::{MemfdFlags, SealFlags};
 use xkbcommon::xkb;
 
 /// Offset between evdev key codes (used on the wire) and XKB key codes.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used once engines receive keys (M2)")
-)]
 const EVDEV_XKB_OFFSET: u32 = 8;
 
 /// Modifier and layout state as sent by `zwp_input_method_keyboard_grab_v2.modifiers`.
@@ -46,10 +42,6 @@ impl Default for RepeatInfo {
 }
 
 /// A key decoded with the current keymap and modifier state.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used once engines receive keys (M2)")
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedKey {
     pub keysym: u32,
@@ -143,16 +135,36 @@ impl Keyboard {
         self.repeat = repeat;
     }
 
-    #[expect(dead_code, reason = "used by key repeat for engines (M2)")]
     pub fn repeat_info(&self) -> RepeatInfo {
         self.repeat
     }
 
+    /// The effective modifiers as engine protocol bits (`omime_proto::engine::modifiers`).
+    ///
+    /// Looked up by name, so keymaps with unusual modifier layouts still work.
+    pub fn modifier_bits(&self) -> u32 {
+        use omime_proto::engine::modifiers as m;
+        let Some(keymap) = &self.keymap else {
+            return 0;
+        };
+        [
+            (xkb::MOD_NAME_SHIFT, m::SHIFT),
+            (xkb::MOD_NAME_CAPS, m::CAPS_LOCK),
+            (xkb::MOD_NAME_CTRL, m::CONTROL),
+            (xkb::MOD_NAME_ALT, m::ALT),
+            (xkb::MOD_NAME_NUM, m::NUM_LOCK),
+            (xkb::MOD_NAME_LOGO, m::SUPER),
+        ]
+        .into_iter()
+        .filter(|(name, _)| {
+            keymap
+                .state
+                .mod_name_is_active(name, xkb::STATE_MODS_EFFECTIVE)
+        })
+        .fold(0, |bits, (_, bit)| bits | bit)
+    }
+
     /// Decodes an evdev key code with the current keymap and modifiers.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used once engines receive keys (M2)")
-    )]
     pub fn decode(&self, evdev_key: u32) -> Option<DecodedKey> {
         let keymap = self.keymap.as_ref()?;
         let code = xkb::Keycode::new(evdev_key + EVDEV_XKB_OFFSET);
@@ -235,10 +247,6 @@ impl KeyTracker {
     }
 
     /// The press of `key` was consumed by an engine.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used once engines receive keys (M2)")
-    )]
     pub fn press_consumed(&mut self, key: u32) {
         self.forwarded.remove(&key);
         self.consumed.insert(key);
@@ -259,10 +267,6 @@ impl KeyTracker {
     }
 
     /// Whether the application currently holds a press of `key` from us.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by key repeat for engines (M2)")
-    )]
     pub fn is_forwarded(&self, key: u32) -> bool {
         self.forwarded.contains(&key)
     }
@@ -318,6 +322,10 @@ mod tests {
         });
         assert_eq!(keyboard.decode(KEY_A).unwrap().utf8, "A");
         assert_eq!(keyboard.decode(KEY_1).unwrap().utf8, "!");
+        assert_eq!(
+            keyboard.modifier_bits(),
+            omime_proto::engine::modifiers::SHIFT
+        );
         assert!(!keyboard.decode(KEY_LEFTSHIFT).unwrap().repeats);
     }
 

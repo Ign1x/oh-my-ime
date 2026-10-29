@@ -61,6 +61,9 @@ pub struct Applied {
     pub is_active: bool,
     /// The input method was (re-)activated, which resets all text input state.
     pub activated: bool,
+    /// The application reported that something other than the input method changed
+    /// the text.
+    pub changed_by_other: bool,
 }
 
 /// Pending and current input method state of one seat.
@@ -77,10 +80,6 @@ impl ImState {
     }
 
     /// Number of `done` events received, which is the serial for `commit`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used for out-of-band commits (M2)")
-    )]
     pub fn serial(&self) -> u32 {
         self.done_count
     }
@@ -133,6 +132,7 @@ impl ImState {
         if let Some(surrounding) = pending.surrounding {
             self.current.surrounding = Some(surrounding);
         }
+        let changed_by_other = pending.cause == Some(ChangeCause::Other);
         if let Some(cause) = pending.cause {
             self.current.cause = cause;
         }
@@ -144,6 +144,7 @@ impl ImState {
             was_active,
             is_active: self.current.active,
             activated,
+            changed_by_other,
         }
     }
 
@@ -172,7 +173,8 @@ mod tests {
                 serial: 1,
                 was_active: false,
                 is_active: true,
-                activated: true
+                activated: true,
+                changed_by_other: false,
             }
         );
         assert!(im.current().content_type.is_sensitive());
@@ -206,7 +208,7 @@ mod tests {
         im.surrounding_text("ab".into(), 1, 1);
         im.text_change_cause(1);
         let applied = im.done();
-        assert!(!applied.activated && applied.is_active);
+        assert!(!applied.activated && applied.is_active && applied.changed_by_other);
         assert_eq!(im.current().content_type.purpose, ContentPurpose::Terminal);
         assert_eq!(im.current().cause, ChangeCause::Other);
     }

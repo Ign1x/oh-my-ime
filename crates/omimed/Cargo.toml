@@ -14,9 +14,10 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
 rustix.workspace = true
 xkbcommon.workspace = true
+zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 wl-proxy = { workspace = true, features = [
   "protocol-cursor_shape_v1",
   "protocol-fractional_scale_v1",

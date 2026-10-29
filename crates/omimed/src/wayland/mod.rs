@@ -1,9 +1,13 @@
 //! The Wayland frontend: the daemon's own objects on the compositor connection.
 //!
 //! All Wayland objects live in a single [`wl_proxy::state::State`]. Handlers installed on
-//! our objects never act directly: they push [`Event`]s into a queue that the daemon
-//! drains after every dispatch. This keeps all state changes in one place and avoids
+//! our objects never act directly: they push [`Event`]s into a queue that is drained
+//! after every dispatch. This keeps all state changes in one place and avoids
 //! re-entrancy into wl-proxy.
+//!
+//! The frontend reports what the core needs to know as [`FrontendEvent`]s and carries
+//! out the core's decisions through methods such as [`Frontend::finish_key`] and
+//! [`Frontend::apply_actions`].
 
 mod bridge;
 mod seat;
@@ -15,6 +19,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail};
+use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent, Rect};
 use tracing::{debug, error, info, warn};
 use wl_proxy::baseline::Baseline;
 use wl_proxy::object::{Object, ObjectCoreApi};
@@ -135,8 +140,47 @@ impl std::fmt::Debug for GrabEvent {
     }
 }
 
-/// Queue shared between wl-proxy handlers and the daemon.
+/// Queue shared between wl-proxy handlers and the frontend.
 pub type EventQueue = Rc<RefCell<VecDeque<Event>>>;
+
+/// Identifies a key the core has to decide about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyRef {
+    pub seat: SeatId,
+    /// The text field the key was typed into (0 if none).
+    pub ctx: ContextId,
+    pub keycode: u32,
+    pub time: u32,
+    pub released: bool,
+    pub repeat: bool,
+}
+
+/// What the frontend reports to the core.
+#[derive(Debug)]
+pub enum FrontendEvent {
+    /// A (non-sensitive) text field got focus.
+    Activated {
+        seat: SeatId,
+        ctx: ContextId,
+        info: ContextInfo,
+    },
+    /// Properties of the focused field changed. `reset` means the application changed
+    /// the text on its own.
+    Updated {
+        ctx: ContextId,
+        info: ContextInfo,
+        reset: bool,
+    },
+    /// The text field lost focus.
+    Deactivated { ctx: ContextId },
+    /// A key needs a decision: call [`Frontend::finish_key`].
+    Key { key: KeyRef, event: KeyEvent },
+    /// The text cursor relative to an engine's popup changed.
+    CursorRect { engine: EngineId, rect: Rect },
+}
+
+/// Queue of [`FrontendEvent`]s, shared with the seat sessions.
+pub type Outputs = Rc<RefCell<VecDeque<FrontendEvent>>>;
 
 const SEAT_VERSION: u32 = 7;
 
@@ -158,6 +202,9 @@ pub struct Frontend {
     initial_sync_done: bool,
     bridge: Bridge,
     active_engine: Option<EngineId>,
+    outputs: Outputs,
+    /// Last context id handed out; ids are never reused within a daemon's lifetime.
+    last_ctx: ContextId,
 }
 
 impl std::fmt::Debug for Frontend {
@@ -170,7 +217,7 @@ impl std::fmt::Debug for Frontend {
 
 impl Frontend {
     /// Connects to the compositor named by `display` (or `WAYLAND_DISPLAY`).
-    pub fn connect(display: Option<&str>) -> anyhow::Result<Self> {
+    pub fn connect(display: Option<&str>, last_ctx: ContextId) -> anyhow::Result<Self> {
         let mut builder = State::builder(Baseline::V6);
         if let Some(display) = display {
             builder = builder.with_server_display_name(display);
@@ -209,6 +256,8 @@ impl Frontend {
             initial_sync_done: false,
             bridge,
             active_engine: None,
+            outputs: Outputs::default(),
+            last_ctx,
         })
     }
 
@@ -248,6 +297,43 @@ impl Frontend {
         self.process_events()
     }
 
+    /// The last context id handed out, to continue numbering after a reconnect.
+    pub fn last_context_id(&self) -> ContextId {
+        self.last_ctx
+    }
+
+    /// Takes the events accumulated for the core.
+    pub fn take_events(&mut self) -> Vec<FrontendEvent> {
+        self.outputs.borrow_mut().drain(..).collect()
+    }
+
+    /// Forwards or swallows a key reported in [`FrontendEvent::Key`].
+    pub fn finish_key(&mut self, key: &KeyRef, handled: bool) {
+        if let Some(seat) = self.seats.get_mut(&key.seat) {
+            seat.finish_key(key, handled);
+        }
+    }
+
+    /// Applies an engine's actions to the text field `ctx` on `seat`.
+    pub fn apply_actions(&mut self, seat: SeatId, ctx: ContextId, actions: &[Action]) {
+        if let Some(seat) = self.seats.get_mut(&seat) {
+            seat.apply_actions(ctx, actions);
+        }
+    }
+
+    /// Removes any preedit from the text field `ctx` on `seat`.
+    pub fn clear_preedit(&mut self, seat: SeatId, ctx: ContextId) {
+        if let Some(seat) = self.seats.get_mut(&seat) {
+            seat.clear_preedit(ctx);
+        }
+    }
+
+    /// Whether `engine` wants its windows shown while it is active.
+    pub fn set_engine_visible(&mut self, engine: EngineId, visible: bool) {
+        self.bridge.set_engine_visible(engine, visible);
+        self.update_bridge();
+    }
+
     /// Hands a UI connection of `engine` to the bridge.
     pub fn add_ui_client(&self, engine: EngineId, socket: OwnedFd) -> anyhow::Result<()> {
         self.bridge.add_client(engine, socket)
@@ -261,14 +347,15 @@ impl Frontend {
 
     /// Tells the bridge which input method hosts popups and whether it is active.
     fn update_bridge(&self) {
+        let focused = |s: &&SeatSession| s.context().is_some();
         let host = self
             .seats
             .values()
-            .find(|s| s.is_active())
+            .find(focused)
             .or_else(|| self.seats.values().find(|s| s.input_method().is_some()));
         self.bridge.set_policy(
             host.and_then(|s| s.input_method().cloned()),
-            host.is_some_and(SeatSession::is_active),
+            host.is_some_and(|s| s.context().is_some()),
             self.active_engine.clone(),
         );
     }
@@ -331,7 +418,7 @@ impl Frontend {
                 event,
             } => {
                 if let Some(session) = self.seats.get_mut(&seat) {
-                    session.handle_im(generation, event);
+                    session.handle_im(generation, event, &mut self.last_ctx);
                 }
             }
             Event::Grab {
@@ -350,10 +437,12 @@ impl Frontend {
                 width,
                 height,
             } => {
-                debug!(
-                    engine = &*engine,
-                    x, y, width, height, "text cursor rectangle"
-                );
+                self.outputs
+                    .borrow_mut()
+                    .push_back(FrontendEvent::CursorRect {
+                        engine,
+                        rect: (x, y, width, height),
+                    });
             }
             Event::ProtocolError { message } => {
                 bail!("the compositor closed the connection: {message}");
@@ -432,6 +521,7 @@ impl Frontend {
                 &im_manager.object,
                 &vk_manager.object,
                 self.queue.clone(),
+                self.outputs.clone(),
             );
             self.seats.insert(id, session);
         }

@@ -1,5 +1,7 @@
 //! `omimed` — the oh-my-ime daemon.
 
+mod control;
+mod core;
 mod daemon;
 mod ime_state;
 mod keyboard;
@@ -18,14 +20,14 @@ routes keyboard input to input method engines.
 
 Options:
   --display <NAME>  Connect to this Wayland display instead of $WAYLAND_DISPLAY
-  --dev-ui <ID>     Open a UI bridge socket for engine ID without launching it
-                    (repeatable; SIGUSR1 cycles the active one). For development.
+  --engine <ID>     Select this engine at startup (default: direct input)
   -h, --help        Print this help
   -V, --version     Print the version
 
 Environment:
   OMIME_LOG         Log filter, e.g. `debug` or `omimed=trace`
                     (default: info,wl_proxy=error)
+  OMIME_ENGINE_PATH Extra directories to look for engines in (colon separated)
   OMIME_WL_DEBUG    Log every Wayland message (may include typed keys!)";
 
 fn main() -> ExitCode {
@@ -45,9 +47,9 @@ fn main() -> ExitCode {
                 Some(display) => options.display = Some(display),
                 None => return usage_error("--display needs a value"),
             },
-            "--dev-ui" => match args.next() {
-                Some(engine) => options.dev_ui.push(engine),
-                None => return usage_error("--dev-ui needs an engine id"),
+            "--engine" => match args.next() {
+                Some(engine) => options.engine = Some(engine),
+                None => return usage_error("--engine needs an engine id"),
             },
             other => return usage_error(&format!("unknown argument `{other}`")),
         }
@@ -59,6 +61,7 @@ fn main() -> ExitCode {
                 .unwrap_or_else(|_| EnvFilter::new("info,wl_proxy=error")),
         )
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
 
     match daemon::run(options) {

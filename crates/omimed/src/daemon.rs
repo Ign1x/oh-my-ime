@@ -1,30 +1,34 @@
 //! The daemon's event loop.
 //!
 //! Everything runs on one thread: the wl-proxy state is not `Send`, and keeping a
-//! single owner for all input state makes ordering trivial to reason about.
+//! single owner for all input state makes ordering trivial to reason about. Background
+//! tasks (engine calls, sockets, D-Bus) report back through channels.
 
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use omime_proto::config::{CONFIG_FILE, Config};
+use omime_proto::engine::ContextId;
+use omime_proto::manifest;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::runtime_dir;
-use crate::wayland::{EngineId, Frontend};
+use crate::control::{self, ControlRequest, ControlService};
+use crate::core::{Core, CoreEvent};
+use crate::wayland::Frontend;
 
 /// Options for [`run`].
 #[derive(Debug, Default)]
 pub struct Options {
     /// Compositor to connect to instead of `$WAYLAND_DISPLAY`.
     pub display: Option<String>,
-    /// Engine ids for which to open UI bridge sockets without launching an engine.
-    /// Used to try toolkits against the bridge during development.
-    pub dev_ui: Vec<String>,
+    /// Engine to select at startup.
+    pub engine: Option<String>,
 }
 
 /// The wl-proxy poll fd, shared with the state that owns it.
@@ -50,45 +54,30 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         .build()
         .context("failed to start the async runtime")?;
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, async { Daemon::new(options)?.run().await })
+    local.block_on(&runtime, async { Daemon::new(options).await?.run().await })
 }
 
-/// A connection to an engine's UI socket.
-type UiConnection = (EngineId, OwnedFd);
-
-/// Listens on an engine's UI socket and passes connections to the main loop.
-fn listen_ui(engine: &str, connections: mpsc::UnboundedSender<UiConnection>) -> anyhow::Result<()> {
-    let path = runtime_dir::engine_dir(engine)?.join("wayland");
-    let listener = runtime_dir::bind_socket(&path)?;
-    info!(
-        engine,
-        "UI bridge socket ready: WAYLAND_DISPLAY={}",
-        runtime_dir::engine_wayland_display(engine)
-    );
-    let engine: EngineId = engine.into();
-    tokio::task::spawn_local(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let fd = match stream.into_std() {
-                        Ok(stream) => OwnedFd::from(stream),
-                        Err(e) => {
-                            warn!("cannot take over a UI connection: {e}");
-                            continue;
-                        }
-                    };
-                    if connections.send((engine.clone(), fd)).is_err() {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    warn!(engine = &*engine, "accepting a UI connection failed: {e}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+fn load_config() -> Config {
+    let Some(path) = omime_proto::paths::config_dir().map(|d| d.join(CONFIG_FILE)) else {
+        return Config::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match Config::parse(&text) {
+            Ok(config) => {
+                info!("using {}", path.display());
+                config
             }
+            Err(e) => {
+                warn!("ignoring {}: {e}", path.display());
+                Config::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+        Err(e) => {
+            warn!("cannot read {}: {e}", path.display());
+            Config::default()
         }
-    });
-    Ok(())
+    }
 }
 
 /// Why a compositor session ended.
@@ -102,53 +91,106 @@ enum SessionEnd {
 struct Signals {
     term: Signal,
     int: Signal,
-    usr1: Signal,
 }
 
 struct Daemon {
     options: Options,
     signals: Signals,
-    ui_rx: mpsc::UnboundedReceiver<UiConnection>,
-    dev_engines: Vec<EngineId>,
-    dev_active: usize,
+    core: Core,
+    core_rx: mpsc::UnboundedReceiver<CoreEvent>,
+    ui_rx: mpsc::UnboundedReceiver<(String, OwnedFd)>,
+    control_rx: mpsc::UnboundedReceiver<ControlRequest>,
+    /// Kept alive for the control service's lifetime.
+    _control: Option<Rc<ControlService>>,
+    last_ctx: ContextId,
 }
 
 impl Daemon {
-    fn new(options: Options) -> anyhow::Result<Self> {
+    async fn new(options: Options) -> anyhow::Result<Self> {
         let signals = Signals {
             term: signal(SignalKind::terminate())?,
             int: signal(SignalKind::interrupt())?,
-            usr1: signal(SignalKind::user_defined1())?,
         };
-        let (ui_tx, ui_rx) = mpsc::unbounded_channel();
-        // Sockets outlive compositor connections; engines simply reconnect.
-        for engine in &options.dev_ui {
-            listen_ui(engine, ui_tx.clone())?;
+
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let control = match control::start(control_tx).await {
+            Ok(service) => Some(Rc::new(service)),
+            Err(e @ control::ControlError::AlreadyRunning) => return Err(e.into()),
+            Err(e) => {
+                warn!("{e}; `omime` and status bars will not be able to reach the daemon");
+                None
+            }
+        };
+
+        let config = load_config();
+        let (installed, problems) = manifest::discover(&omime_proto::paths::engine_dirs());
+        for (path, problem) in problems {
+            warn!("ignoring {}: {problem}", path.display());
         }
-        let dev_engines = options.dev_ui.iter().map(|e| e.as_str().into()).collect();
+        if installed.is_empty() {
+            warn!("no engines are installed; keys pass through unchanged");
+        } else {
+            let ids: Vec<&str> = installed.iter().map(|e| e.id()).collect();
+            info!("installed engines: {}", ids.join(", "));
+        }
+
+        let (core_tx, core_rx) = mpsc::unbounded_channel();
+        let (ui_tx, ui_rx) = mpsc::unbounded_channel();
+        let host_display = options
+            .display
+            .clone()
+            .or_else(|| std::env::var("WAYLAND_DISPLAY").ok());
+        let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
+        if let Some(service) = control.clone() {
+            core.set_switch_listener(move |engine| service.current_changed(engine));
+        }
         Ok(Self {
             options,
             signals,
+            core,
+            core_rx,
             ui_rx,
-            dev_engines,
-            dev_active: 0,
+            control_rx,
+            _control: control,
+            last_ctx: 0,
         })
     }
 
     async fn run(mut self) -> anyhow::Result<()> {
         let mut recent_failures: Vec<Instant> = Vec::new();
+        let mut first = true;
         loop {
             // A failure to connect means the compositor is gone: that ends the daemon.
-            let frontend = Frontend::connect(self.options.display.as_deref())?;
+            let mut frontend = Frontend::connect(self.options.display.as_deref(), self.last_ctx)?;
             info!("connected to the compositor");
-            match self.session(frontend).await? {
-                SessionEnd::Shutdown => return Ok(()),
+            if first {
+                first = false;
+                if let Some(engine) = self.options.engine.clone()
+                    && let Err(e) = self.core.switch_to(Some(engine), &mut frontend)
+                {
+                    warn!("{e:#}");
+                }
+            } else {
+                let current = self.core.current().map(Into::into);
+                frontend.set_active_engine(current);
+            }
+            let end = self.session(&mut frontend).await?;
+            self.last_ctx = frontend.last_context_id();
+            self.core.forget_contexts();
+            match end {
+                SessionEnd::Shutdown => {
+                    self.core.shutdown();
+                    // Give engines a moment to receive Shutdown.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    return Ok(());
+                }
                 SessionEnd::Lost(e) => {
                     error!("lost the compositor connection: {e:#}");
                     let now = Instant::now();
                     recent_failures.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
                     recent_failures.push(now);
                     if recent_failures.len() > 5 {
+                        self.core.shutdown();
                         return Err(e.context("the connection keeps failing; giving up"));
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -159,16 +201,21 @@ impl Daemon {
     }
 
     /// Runs until the compositor connection ends or we are asked to stop.
-    async fn session(&mut self, mut frontend: Frontend) -> anyhow::Result<SessionEnd> {
+    async fn session(&mut self, frontend: &mut Frontend) -> anyhow::Result<SessionEnd> {
         let poll_fd = watch(PollFd(frontend.state().poll_fd().clone()))
             .context("failed to watch the Wayland connection")?;
-        frontend.set_active_engine(self.dev_engines.get(self.dev_active).cloned());
 
         let end = loop {
+            for event in frontend.take_events() {
+                self.core.on_frontend_event(event, frontend);
+            }
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
             }
-            let deadline = frontend.next_deadline();
+            let deadline = [frontend.next_deadline(), self.core.deadline()]
+                .into_iter()
+                .flatten()
+                .min();
             tokio::select! {
                 ready = poll_fd.readable() => {
                     let mut guard = match ready {
@@ -181,23 +228,22 @@ impl Daemon {
                     }
                 }
                 () = sleep_until(deadline) => {
-                    if let Err(e) = frontend.on_timer(Instant::now()) {
+                    let now = Instant::now();
+                    if let Err(e) = frontend.on_timer(now) {
                         break SessionEnd::Lost(e);
                     }
+                    self.core.on_timer(now, frontend);
+                }
+                Some(event) = self.core_rx.recv() => {
+                    self.core.on_event(event, frontend).await;
                 }
                 Some((engine, fd)) = self.ui_rx.recv() => {
-                    if let Err(e) = frontend.add_ui_client(engine, fd) {
+                    if let Err(e) = frontend.add_ui_client(engine.as_str().into(), fd) {
                         warn!("{e:#}");
                     }
                 }
-                _ = self.signals.usr1.recv() => {
-                    // Development aid: cycle through the --dev-ui engines.
-                    if !self.dev_engines.is_empty() {
-                        self.dev_active = (self.dev_active + 1) % self.dev_engines.len();
-                        let engine = self.dev_engines[self.dev_active].clone();
-                        info!(engine = &*engine, "active engine");
-                        frontend.set_active_engine(Some(engine));
-                    }
+                Some(request) = self.control_rx.recv() => {
+                    self.on_control(request, frontend);
                 }
                 _ = self.signals.term.recv() => break SessionEnd::Shutdown,
                 _ = self.signals.int.recv() => break SessionEnd::Shutdown,
@@ -212,6 +258,30 @@ impl Daemon {
         let _ = frontend.flush();
         frontend.state().destroy();
         Ok(end)
+    }
+
+    fn on_control(&mut self, request: ControlRequest, frontend: &mut Frontend) {
+        let result = |r: anyhow::Result<()>| r.map_err(|e| format!("{e:#}"));
+        match request {
+            ControlRequest::List(reply) => {
+                let _ = reply.send(self.core.engines());
+            }
+            ControlRequest::Status(reply) => {
+                let _ = reply.send(control::status_dict(
+                    self.core.current(),
+                    self.core.current_status(),
+                ));
+            }
+            ControlRequest::Switch(target, reply) => {
+                let _ = reply.send(result(self.core.switch_to(target, frontend)));
+            }
+            ControlRequest::Next(reply) => {
+                let _ = reply.send(result(self.core.next(frontend)));
+            }
+            ControlRequest::Toggle(reply) => {
+                let _ = reply.send(result(self.core.toggle(frontend)));
+            }
+        }
     }
 }
 
