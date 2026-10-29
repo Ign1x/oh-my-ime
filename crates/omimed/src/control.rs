@@ -23,6 +23,7 @@ pub enum ControlRequest {
     Next(oneshot::Sender<Result<(), String>>),
     Toggle(oneshot::Sender<Result<(), String>>),
     Reload(oneshot::Sender<Result<(), String>>),
+    Diagnose(oneshot::Sender<Dict>),
 }
 
 struct ControlObject {
@@ -84,6 +85,14 @@ impl ControlObject {
     /// Reads the configuration again and looks for newly installed or removed engines.
     async fn reload(&self) -> zbus::fdo::Result<()> {
         failed(self.ask(ControlRequest::Reload).await?)
+    }
+
+    /// What `omime doctor` checks: "display" (s, the compositor), "seats" (a(sb): every
+    /// seat's name and whether omimed is its input method; another input method holds
+    /// the others) and "focused-app" (b: whether the compositor reports the focused
+    /// window, which per-application engines need).
+    async fn diagnose(&self) -> zbus::fdo::Result<Dict> {
+        self.ask(ControlRequest::Diagnose).await
     }
 
     /// Emitted when the current engine changes (empty for direct input).
@@ -169,6 +178,16 @@ pub async fn start(
         signals,
         current: RefCell::new(None),
     })
+}
+
+/// Builds the reply of `Diagnose`.
+pub fn diagnosis(display: &str, seats: Vec<(String, bool)>, focused_app: bool) -> Dict {
+    let owned = |value: Variant<'_>| OwnedVariant::try_from(value).expect("no file descriptors");
+    Dict::from([
+        ("display".to_owned(), owned(Variant::from(display))),
+        ("seats".to_owned(), owned(Variant::from(seats))),
+        ("focused-app".to_owned(), owned(Variant::from(focused_app))),
+    ])
 }
 
 /// Builds the reply of `Status`.

@@ -318,6 +318,19 @@ impl Frontend {
         self.initial_sync_done
     }
 
+    /// Every seat's name and whether omimed is its input method.
+    pub fn seat_states(&self) -> Vec<(String, bool)> {
+        self.seats
+            .values()
+            .map(|s| (s.name().to_owned(), s.is_input_method()))
+            .collect()
+    }
+
+    /// Whether the compositor reports which window has focus.
+    pub fn reports_focused_app(&self) -> bool {
+        self.toplevel_manager.is_some()
+    }
+
     /// The last context id handed out, to continue numbering after a reconnect.
     pub fn last_context_id(&self) -> ContextId {
         self.last_ctx

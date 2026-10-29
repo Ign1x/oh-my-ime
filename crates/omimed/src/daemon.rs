@@ -307,6 +307,19 @@ impl Daemon {
             ControlRequest::Toggle(reply) => {
                 let _ = reply.send(result(self.core.toggle(frontend)));
             }
+            ControlRequest::Diagnose(reply) => {
+                let display = self
+                    .options
+                    .display
+                    .clone()
+                    .or_else(|| std::env::var("WAYLAND_DISPLAY").ok())
+                    .unwrap_or_default();
+                let _ = reply.send(control::diagnosis(
+                    &display,
+                    frontend.seat_states(),
+                    frontend.reports_focused_app(),
+                ));
+            }
             ControlRequest::Reload(reply) => {
                 let config = load_config();
                 let installed = discover_engines();

@@ -138,6 +138,12 @@ impl SeatSession {
     }
 
     /// The input method object, if we currently own one.
+    /// Whether omimed is this seat's input method (rather than waiting for another one
+    /// to leave).
+    pub fn is_input_method(&self) -> bool {
+        self.im.is_some() && self.retry.is_none()
+    }
+
     pub fn input_method(&self) -> Option<&Rc<ZwpInputMethodV2>> {
         self.im.as_ref()
     }
