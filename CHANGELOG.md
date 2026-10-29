@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A Nix package: `nix profile install github:Ign1x/oh-my-ime`, or the flake's package and
+  overlay in a NixOS configuration. It contains the systemd user unit, and works without
+  a dev shell: omimed finds the bundled engines and Sparkle its graphics libraries.
+
 ### Fixed
 
 - Keys typed with Control held no longer fail to reach the engine. xkb types NUL for

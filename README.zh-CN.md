@@ -145,13 +145,21 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 
 ## 快速开始
 
+使用 Nix（NixOS 或其他发行版均可）：
+
+```sh
+nix profile install github:Ign1x/oh-my-ime
+```
+
+也可以从源码编译并安装到 `~/.local`（需要 Rust 工具链，以及 wayland、libxkbcommon、dbus、fontconfig 的开发文件）：
+
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop                       # 或者准备 Rust 工具链，以及 wayland、libxkbcommon、
-                                  # dbus、fontconfig 的开发文件
-scripts/install.sh                # 编译并安装到 ~/.local
+scripts/install.sh
 ```
+
+NixOS 系统配置的写法见 [docs/hyprland.md](docs/hyprland.md#1-install)（英文）。
 
 先停止其他输入法（fcitx5、IBus），再让 omimed 随 Hyprland 启动：
 

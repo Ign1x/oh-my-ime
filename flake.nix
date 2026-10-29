@@ -54,6 +54,19 @@
         };
     in
     {
+      packages = forAllSystems (pkgs: rec {
+        oh-my-ime = pkgs.callPackage ./nix/package.nix { };
+        default = oh-my-ime;
+      });
+
+      overlays.default = final: _prev: {
+        oh-my-ime = final.callPackage ./nix/package.nix { };
+      };
+
+      checks = forAllSystems (pkgs: {
+        package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+      });
+
       devShells = forAllSystems (pkgs: {
         # Everything for development, including Hyprland for manual testing.
         default = shell pkgs (

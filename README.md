@@ -142,13 +142,22 @@ and `zwp_virtual_keyboard_v1`.
 
 ## Getting started
 
+With Nix, on NixOS or any other distribution:
+
+```sh
+nix profile install github:Ign1x/oh-my-ime
+```
+
+Or build from source and install into `~/.local` (needs a Rust toolchain plus the
+wayland, libxkbcommon, dbus and fontconfig development files):
+
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop                       # or a Rust toolchain plus the wayland, libxkbcommon,
-                                  # dbus and fontconfig development files
-scripts/install.sh                # builds and installs into ~/.local
+scripts/install.sh
 ```
+
+A NixOS configuration snippet is in [docs/hyprland.md](docs/hyprland.md#1-install).
 
 Stop any other input method (fcitx5, IBus), then start omimed with Hyprland:
 

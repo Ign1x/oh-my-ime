@@ -2,15 +2,43 @@
 
 ## 1. Install
 
+### With Nix
+
+On NixOS or any other distribution with Nix:
+
+```sh
+nix profile install github:Ign1x/oh-my-ime
+```
+
+On NixOS you can add it to your system configuration instead. With
+`inputs.oh-my-ime.url = "github:Ign1x/oh-my-ime"` in your flake:
+
+```nix
+{ inputs, pkgs, ... }:
+let
+  oh-my-ime = inputs.oh-my-ime.packages.${pkgs.stdenv.hostPlatform.system}.default;
+in
+{
+  environment.systemPackages = [ oh-my-ime ];
+  # The systemd user unit; it starts omimed with sessions that run through systemd
+  # (for example UWSM). Otherwise start omimed from Hyprland, see step 3.
+  systemd.packages = [ oh-my-ime ];
+  systemd.user.services.omimed.wantedBy = [ "graphical-session.target" ];
+}
+```
+
+### From source
+
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop        # or install a Rust toolchain plus the wayland, libxkbcommon,
-                   # dbus and fontconfig development files
 scripts/install.sh # installs into ~/.local; PREFIX=/usr/local for a system install
 ```
 
-`~/.local/bin` must be in the `PATH` Hyprland starts programs with.
+This needs a Rust toolchain plus the wayland, libxkbcommon, dbus and fontconfig
+development files, and `~/.local/bin` must be in the `PATH` Hyprland starts programs
+with. On NixOS use the Nix package: binaries built this way do not find the graphics
+libraries there.
 
 ## 2. Stop other input methods
 
@@ -47,7 +75,7 @@ bind = SUPER, space, exec, omime next
 Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses systemd
 (for example through UWSM), you can instead install
 [`data/omimed.service`](../data/omimed.service) into `~/.config/systemd/user/` and run
-`systemctl --user enable --now omimed`.
+`systemctl --user enable --now omimed`. The Nix package already contains the unit.
 
 ## 4. Use it
 
