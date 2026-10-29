@@ -1,0 +1,16 @@
+# oh-my-ime configuration: ~/.config/oh-my-ime/config.toml
+# Run `omime reload` after editing.
+
+# Enabled engines, in switching order. Without this line every installed engine is
+# enabled. `omime enable <id>` and `omime disable <id>` edit it for you.
+# engines = ["sparkle", "echo"]
+
+[hotkeys]
+# Switch between direct input and the last used engine. Empty disables it.
+toggle = "Control+space"
+# Switch to the next enabled engine. Empty disables it.
+next = "Control+Shift+space"
+
+[engine]
+# How long to wait for an engine to answer a key before passing the key through.
+key_timeout_ms = 200
