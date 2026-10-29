@@ -129,14 +129,58 @@ polling:
 
 ## Which applications work
 
-oh-my-ime talks to applications through the compositor's text-input protocol:
+oh-my-ime reaches Wayland applications through the compositor's text-input protocol, and
+X11 applications through XIM or the Fcitx5 GTK and Qt modules:
 
 | Toolkit / application | Status |
 |---|---|
 | GTK 3 and 4, Qt 6, foot, kitty, alacritty, wezterm (Wayland) | ✅ text-input-v3 |
 | Firefox (Wayland) | ✅ |
 | Chromium and Electron apps (Wayland) | ✅ with `--enable-wayland-ime --wayland-text-input-version=3` on older versions |
-| X11 applications under XWayland | 🚧 not yet (XIM bridge planned for Phase 2) |
+| X11 applications under XWayland, through XIM | ✅ `XMODIFIERS=@im=omime` |
+| X11 GTK and Qt applications under XWayland, through the Fcitx5 modules | ✅ `GTK_IM_MODULE=fcitx`, `QT_IM_MODULE=fcitx` |
+
+### X11 applications
+
+XWayland applications never see `text-input`, so they reach omimed another way. omimed
+serves both frontends itself; fcitx5 must not run.
+
+- **XIM.** omimed is the XIM server `omime` on the X display in `$DISPLAY`, when
+  `DISPLAY` is set at startup. Applications started with `XMODIFIERS=@im=omime` use it:
+  xterm, urxvt, Emacs (X11), Java (AWT/Swing), Wine, and GTK with `GTK_IM_MODULE=xim`.
+  Only X11 applications read `XMODIFIERS`, so it is safe to set it for the whole session.
+- **Fcitx5 modules.** Applications started with `GTK_IM_MODULE=fcitx` or
+  `QT_IM_MODULE=fcitx` talk to omimed through the Fcitx5 module protocol. The modules must
+  be installed (`fcitx5-gtk`, `fcitx5-qt`).
+
+With the systemd user unit, `DISPLAY` must be in the user manager's environment, or omimed
+starts without XIM. In Hyprland, add this to `hyprland.conf` (with the Lua configuration,
+pass the same command to `hl.exec_cmd`):
+
+```ini
+exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
+```
+
+If omimed already runs, run `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`
+and restart it once.
+
+Do not set `GTK_IM_MODULE`/`QT_IM_MODULE` for the whole session. A Wayland GTK or Qt
+application with `GTK_IM_MODULE=fcitx` reaches omimed and can type, but omimed cannot
+place engine windows for it: Wayland does not tell clients where their windows are, so the
+candidates stay invisible. With `ibus` it reaches nothing. Set these variables only for
+X11 applications, in a wrapper script or a `.desktop` file:
+
+```sh
+#!/bin/sh
+GTK_IM_MODULE=fcitx exec "$@"
+```
+
+Engine windows for X11 applications are layer surfaces in the namespace `omime-popup`.
+Hyprland animates layer surfaces; turn that off for them:
+
+```ini
+layerrule = noanim, omime-popup
+```
 
 ## Troubleshooting
 
@@ -147,8 +191,11 @@ oh-my-ime talks to applications through the compositor's text-input protocol:
   in a terminal with `OMIME_LOG=debug omimed` and read what it says.
 - **`another input method is active on this seat`.** fcitx5, IBus or another input method
   is running; see step 2. omimed keeps retrying and takes over once the seat is free.
-- **An application ignores the input method.** Make sure `GTK_IM_MODULE`/`QT_IM_MODULE`
-  are not set to `fcitx` or `ibus` in its environment; those modules talk to fcitx5 or
-  IBus directly and bypass the compositor.
+- **An application ignores the input method.** An X11 application needs
+  `XMODIFIERS=@im=omime`, or, with the Fcitx5 modules installed,
+  `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`. Do not set the module variables for the
+  whole session: a Wayland application then types through omimed without engine windows
+  (see [X11 applications](#x11-applications)), and `ibus` reaches nothing. `omime doctor`
+  warns about input method variables in the environment.
 - **Popups disappear over fullscreen windows, or sit slightly off with some fractional
   scaling setups.** Both are Hyprland limitations that affect every input method.

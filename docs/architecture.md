@@ -110,12 +110,21 @@ compositor's point of view, the input method's own surfaces.
   shown. To hide a window, the bridge injects `attach(NULL)` + `commit` and swallows the
   compositor's release of the last buffer, holding it on the compositor's behalf; showing
   the window again re-attaches that buffer instantly, without waiting for the toolkit to
-  draw. Buffers committed while hidden replace the held one.
+  draw. Buffers committed while hidden replace the held one. While an X11 application has
+  focus and no Wayland text field does, a shown window goes to a mirror instead; see
+  [X11 applications](#x11-applications).
 - **Scale.** Compositors report an input popup's fractional scale only once it is
-  mapped; the bridge hands the last known scale to new engine surfaces right away.
+  mapped; the bridge hands the last known scale to new engine surfaces right away. A
+  mirror's preferred fractional scale reaches the engine as if it came from its own
+  surface.
+- **Frame callbacks.** The bridge answers an engine window's frame callbacks itself: it
+  requests a frame on whichever surface currently shows the window, the popup or the
+  mirror, and answers the engine's callbacks when that surface's frame arrives. A toolkit
+  never stalls when its window moves between the two.
 - **Input routing.** Pointer `enter`, `motion`, `button`, `axis` and `frame` go only to the
   engine whose surface the pointer entered. `wl_surface.enter(output)` and similar events are
-  filtered by owner.
+  filtered by owner. Pointer events on a mirror reach the engine as events on its own
+  surface.
 - **Cleanup.** When an engine disconnects or dies, its compositor objects are destroyed in
   dependency order: popup role, then surface extensions, subsurfaces, surfaces, buffers and
   pools, and finally seat and output objects. If an engine destroys a surface itself, the popup
@@ -125,6 +134,45 @@ compositor's point of view, the input method's own surfaces.
   broken engine is disconnected on its own. Anything else that makes the compositor
   close the shared connection makes the daemon reconnect, bind the input method again
   and restart the engines; the end-to-end tests cover this.
+
+## X11 applications
+
+X11 applications never speak `text-input`, so the Wayland frontend cannot reach them. Two
+X11 frontends do, and both feed the same core and the same engines; an engine does not
+know which frontend a key came from.
+
+- **XIM.** Built on the [`xim`](https://crates.io/crates/xim) and
+  [`x11rb`](https://crates.io/crates/x11rb) crates. When `DISPLAY` is set at startup,
+  omimed becomes the XIM server `omime` on that display; applications find it with
+  `XMODIFIERS=@im=omime`. While the X server is not up, omimed retries with a growing
+  delay (2 s, doubling up to 60 s), and it reconnects when the server goes away. Only key
+  presses pass through XIM; releases reach the application directly. libX11 puts a commit
+  or a key sent back at the front of the application's event queue, so two in a row would
+  arrive in the wrong order: omimed sends them one at a time as synchronous requests and
+  waits for the application's `XIM_SYNC_REPLY` (300 ms at most) before the next. Keysyms
+  come from the X server's core keyboard mapping.
+- **Fcitx5 modules.** omimed serves `org.fcitx.Fcitx.InputMethod1` and
+  `org.fcitx.Fcitx.InputContext1` under the bus names `org.fcitx.Fcitx5` and
+  `org.freedesktop.portal.Fcitx`, and queues for them while another program, such as a
+  running fcitx5, holds them. Each application context gets one input context object, and
+  only its owner, the application's unique bus name, may call it. Keys arrive with
+  `ProcessKeyEvent` or `ProcessKeyEventBatch`; the committed text, preedit, deletions of
+  surrounding text and keys sent back reach the application as signals before the key's
+  reply. With the `KeyEventOrderFix` capability, a key the engine did not consume but that
+  produced text is answered as handled and sent back after the text. Password fields
+  bypass the engines, as everywhere else.
+- **Engine windows.** Compositors show input popups only for Wayland text fields. While an
+  X11 application has focus and no Wayland text field does, the bridge shows the active
+  engine's window on a layer surface of its own, a *mirror*: layer `overlay`, namespace
+  `omime-popup`, which needs `zwlr_layer_shell_v1` (Hyprland, sway and other wlroots
+  compositors have it). The mirror shows the engine's buffers with the scale, transform and
+  viewport of the engine's surface; the engine's own surface stays unmapped meanwhile. It
+  opens below the text cursor, above it when there is no room below, and moves left when it
+  would leave the output on the right. The cursor comes from `SetCursorRect` for the Fcitx5
+  modules, or from the XIM spot location, where the application draws text; omimed assumes
+  a line of 20 pixels around the baseline. X11 coordinates are mapped to the compositor's
+  by matching XWayland's RandR monitors with the compositor's outputs by name (xdg-output),
+  which also handles Hyprland's `xwayland:force_zero_scaling`.
 
 ## Engine protocol (v1)
 
@@ -149,9 +197,6 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
 
 ## Compatibility layers (planned)
 
-- **X11 / XWayland:** an XIM bridge (`omime-xim`), plus a server for the Fcitx5 IM-module
-  D-Bus protocol so that existing `fcitx5-gtk`/`fcitx5-qt` modules work unchanged. Popups for X11
-  contexts are placed with layer-shell using compositor-specific coordinate mapping.
 - **Virtual `input-method-v2`:** the bridge can offer a virtual input method to a hosted client.
   This lets unmodified Fcitx5, IBus (≥ 1.5.32) and other input-method-v2 programs run as one
   oh-my-ime engine with their own UI.

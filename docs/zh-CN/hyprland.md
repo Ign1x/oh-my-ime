@@ -99,8 +99,7 @@ remember = true
 
 ### Waybar
 
-`omime status --watch --json` 先输出一次状态，之后每次变化输出一行，格式与 waybar 一致
-（`text`、`tooltip` 和 `class`），waybar 因此无需轮询：
+`omime status --watch --json` 先输出一次状态，之后每次变化输出一行，格式与 waybar 一致（`text`、`tooltip` 和 `class`），waybar 因此无需轮询：
 
 ```json
 "custom/ime": {
@@ -113,19 +112,48 @@ remember = true
 
 ## 哪些应用可用
 
-oh-my-ime 通过合成器的 text-input 协议与应用通信：
+oh-my-ime 通过合成器的 text-input 协议连接 Wayland 应用，通过 XIM 或 Fcitx5 的 GTK 与 Qt 模块连接 X11 应用：
 
 | 工具包 / 应用 | 状态 |
 |---|---|
 | GTK 3 和 4、Qt 6、foot、kitty、alacritty、wezterm（Wayland） | ✅ text-input-v3 |
 | Firefox（Wayland） | ✅ |
 | Chromium 与 Electron 应用（Wayland） | ✅ 旧版本需加 `--enable-wayland-ime --wayland-text-input-version=3` |
-| XWayland 下的 X11 应用 | 🚧 尚不支持（XIM 桥计划于阶段 2） |
+| XWayland 下的 X11 应用，通过 XIM | ✅ `XMODIFIERS=@im=omime` |
+| XWayland 下的 GTK 与 Qt X11 应用，通过 Fcitx5 模块 | ✅ `GTK_IM_MODULE=fcitx`、`QT_IM_MODULE=fcitx` |
+
+### X11 应用
+
+XWayland 应用收不到 `text-input`，因此通过另外的途径连接 omimed。两个前端都由 omimed 自己提供；fcitx5 不能运行。
+
+- **XIM。** 启动时若设置了 `DISPLAY`，omimed 就是 `$DISPLAY` 对应 X 显示上的 XIM 服务端 `omime`。以 `XMODIFIERS=@im=omime` 启动的应用会用它：xterm、urxvt、Emacs（X11）、Java（AWT/Swing）、Wine，以及设置了 `GTK_IM_MODULE=xim` 的 GTK 应用。只有 X11 应用会读取 `XMODIFIERS`，因此可以为整个会话设置它。
+- **Fcitx5 模块。** 以 `GTK_IM_MODULE=fcitx` 或 `QT_IM_MODULE=fcitx` 启动的应用通过 Fcitx5 模块协议与 omimed 通信。需要安装对应的模块（`fcitx5-gtk`、`fcitx5-qt`）。
+
+使用 systemd 用户单元时，`DISPLAY` 必须在用户管理器的环境中，否则 omimed 启动时不会提供 XIM。在 Hyprland 中把它加入 `hyprland.conf`（Lua 配置中把同样的命令交给 `hl.exec_cmd`）：
+
+```ini
+exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
+```
+
+如果 omimed 已经在运行，请执行 `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`，然后重启它一次。
+
+不要为整个会话设置 `GTK_IM_MODULE`/`QT_IM_MODULE`。设置了 `GTK_IM_MODULE=fcitx` 的 Wayland GTK 或 Qt 应用能连到 omimed 并输入文字，但 omimed 无法为它放置引擎窗口：Wayland 不会告诉客户端自己的窗口在哪里，候选词因此始终不可见。设为 `ibus` 则什么都连不到。只在 X11 应用里设置这些变量，例如在包装脚本或 `.desktop` 文件中：
+
+```sh
+#!/bin/sh
+GTK_IM_MODULE=fcitx exec "$@"
+```
+
+X11 应用的引擎窗口是命名空间为 `omime-popup` 的图层表面。Hyprland 会为图层表面播放动画；可以为它们关掉：
+
+```ini
+layerrule = noanim, omime-popup
+```
 
 ## 故障排查
 
 - **某些功能不正常。** 先运行 `omime doctor`：它检查守护进程、seat、`config.toml`、已安装的引擎和环境，每个发现输出一行（`✓` 正常、`!` 警告、`✗` 问题）。
 - **打字没有任何反应。** 检查 `omime status`。如果 omimed 没有运行，在终端里用 `OMIME_LOG=debug omimed` 启动它，看它输出什么。
 - **`another input method is active on this seat`。** fcitx5、IBus 或其他输入法正在运行；见第 2 步。omimed 会持续重试，一旦 seat 空闲就接管。
-- **某个应用忽略了输入法。** 确保它的环境中 `GTK_IM_MODULE`/`QT_IM_MODULE` 没有设为 `fcitx` 或 `ibus`；这些模块会直接与 fcitx5 或 IBus 通信，绕过合成器。
+- **某个应用忽略了输入法。** X11 应用需要 `XMODIFIERS=@im=omime`；或者安装 Fcitx5 模块后，使用 `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`。不要为整个会话设置模块变量：Wayland 应用虽然能经由 omimed 输入，却得不到引擎窗口（见 [X11 应用](#x11-应用)），设为 `ibus` 则什么都连不到。`omime doctor` 会对环境中的输入法变量发出警告。
 - **弹窗在全屏窗口上方消失，或在某些分数缩放的配置下位置略有偏移。** 这两者都是 Hyprland 的限制，影响所有输入法。

@@ -55,11 +55,20 @@ Bridge 是基于 [`wl-proxy`](https://crates.io/crates/wl-proxy) 构建的多路
 - **逐引擎的 socket。** 每个引擎得到 `$XDG_RUNTIME_DIR/oh-my-ime/<engine-id>/wayland`（目录权限 `0700`）。`WAYLAND_DISPLAY` 被设为这个相对名称，`DISPLAY` 被移除，以免工具包悄悄回退到 X11。守护进程自己接受连接，因此始终知道某个客户端属于哪个引擎。
 - **全局对象过滤。** 引擎看到的是一个虚拟 registry。它包含 UI 需要的全局对象（合成器、子合成器、shm、不带键盘能力的 seat、输出、xdg-output、linux-dmabuf、viewporter、分数缩放、光标形状、单像素缓冲、呈现时间），并隐藏其余一切（text input、input method、虚拟键盘、layer shell、捕获类协议）。绑定时会核对通告的版本，并在守护进程自己的 registry 上执行。守护进程同步获知全局对象，因此引擎完成第一次 roundtrip 时 registry 绝不会是残缺的。
 - **虚拟协议。** `xdg_wm_base` 由 Bridge 代为应答：引擎创建一个普通的无边框 `xdg_toplevel`，Bridge 用 `configure(0, 0, [])` 应答初始 commit，并关闭 `xdg_popup`。虚拟的 `zxdg_decoration_manager_v1` 总是回答“服务器端”，于是工具包会去掉标题栏；虚拟的 `wl_data_device_manager` 为强依赖剪贴板的工具包提供空剪贴板：引擎永远看不到用户的剪贴板。
-- **弹窗生命周期。** 每个引擎 surface 只在应当映射它的那次 commit 之前获得一次 input-popup 角色，并终身持有。窗口在引擎调用 `SetPopupVisible(true)` 之前一直隐藏，且只显示当前激活引擎的窗口。隐藏窗口时，Bridge 注入 `attach(NULL)` + `commit`，并吞掉合成器对最后一个 buffer 的 release，代合成器扣住该 buffer；再次显示时立即重新 attach 该 buffer，无需等待工具包重绘。隐藏期间提交的 buffer 会替换被扣住的那个。
-- **缩放。** 合成器只在输入法弹窗映射之后才报告其分数缩放；Bridge 会把最近一次已知的缩放立即交给新出现的引擎 surface。
-- **输入路由。** 指针的 `enter`、`motion`、`button`、`axis` 和 `frame` 只送给指针进入其 surface 的那个引擎。`wl_surface.enter(output)` 之类的事件按所属者过滤。
+- **弹窗生命周期。** 每个引擎 surface 只在应当映射它的那次 commit 之前获得一次 input-popup 角色，并终身持有。窗口在引擎调用 `SetPopupVisible(true)` 之前一直隐藏，且只显示当前激活引擎的窗口。隐藏窗口时，Bridge 注入 `attach(NULL)` + `commit`，并吞掉合成器对最后一个 buffer 的 release，代合成器扣住该 buffer；再次显示时立即重新 attach 该 buffer，无需等待工具包重绘。隐藏期间提交的 buffer 会替换被扣住的那个。当 X11 应用拥有焦点且没有 Wayland 文本框时，显示中的窗口改为出现在镜像上；见 [X11 应用](#x11-应用)。
+- **缩放。** 合成器只在输入法弹窗映射之后才报告其分数缩放；Bridge 会把最近一次已知的缩放立即交给新出现的引擎 surface。镜像的首选分数缩放会像来自引擎自己的 surface 一样送达引擎。
+- **帧回调。** 引擎窗口的帧回调由 Bridge 自己应答：它向当前显示该窗口的 surface（弹窗或镜像）请求一帧，并在该 surface 的帧到达时应答引擎的回调。窗口在两者之间移动时，工具包不会卡住。
+- **输入路由。** 指针的 `enter`、`motion`、`button`、`axis` 和 `frame` 只送给指针进入其 surface 的那个引擎。`wl_surface.enter(output)` 之类的事件按所属者过滤。镜像上的指针事件会作为其自身 surface 上的事件送达引擎。
 - **清理。** 引擎断开或死亡时，按依赖顺序销毁它的合成器对象：先弹窗角色，再 surface 扩展、子 surface、surface、buffer 和 pool，最后是 seat 与 output 对象。若引擎自己销毁了 surface，则先销毁弹窗角色。
 - **故障处理。** 合成器视为致命、且容易检查的请求（shm pool 与 buffer、绑定版本、虚拟对象）会做校验，出错的引擎被单独断开。其他任何导致合成器关闭共享连接的情况，都会让守护进程重新连接、重新绑定输入法并重启引擎；端到端测试覆盖了这一点。
+
+## X11 应用
+
+X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有两个 X11 前端，两者都汇入同一个核心和同一批引擎；引擎并不知道某个按键来自哪个前端。
+
+- **XIM。** 基于 [`xim`](https://crates.io/crates/xim) 与 [`x11rb`](https://crates.io/crates/x11rb) 两个 crate。启动时若设置了 `DISPLAY`，omimed 就成为该显示上的 XIM 服务端 `omime`；应用通过 `XMODIFIERS=@im=omime` 找到它。X 服务器尚未启动时，omimed 以递增的延迟重试（2 秒起，每次翻倍，最长 60 秒）；X 服务器消失后它会重新连接。只有按下事件经过 XIM，释放事件直接送达应用。libX11 会把上屏文本或被回送的按键插入应用事件队列的最前面，连续两个就会顺序错乱：因此 omimed 把它们作为同步请求逐个发送，等应用回复 `XIM_SYNC_REPLY`（最多 300 ms）之后才发下一个。keysym 来自 X 服务器的核心键盘映射。
+- **Fcitx5 模块。** omimed 在 `org.fcitx.Fcitx5` 与 `org.freedesktop.portal.Fcitx` 这两个总线名下提供 `org.fcitx.Fcitx.InputMethod1` 和 `org.fcitx.Fcitx.InputContext1`；当别的程序（例如运行中的 fcitx5）持有这些名字时，omimed 排队等待。每个应用上下文对应一个输入上下文对象，只有它的所有者（应用的唯一总线名）可以调用。按键以 `ProcessKeyEvent` 或 `ProcessKeyEventBatch` 到达；上屏文本、预编辑、对周围文本的删除以及被回送的按键都作为信号在该按键的回复之前送达应用。具备 `KeyEventOrderFix` 能力时，引擎未消费但产生了文本的按键会以已处理作答，并在文本之后回送。密码输入框绕过引擎，与其他途径相同。
+- **引擎窗口。** 合成器只为 Wayland 文本框显示输入法弹窗。当 X11 应用拥有焦点且没有 Wayland 文本框时，Bridge 把当前引擎的窗口显示在自己创建的图层表面上，即*镜像*：图层为 `overlay`，命名空间为 `omime-popup`，需要 `zwlr_layer_shell_v1`（Hyprland、sway 等 wlroots 合成器都有）。镜像以引擎 surface 的缩放、变换和 viewport 显示引擎的缓冲区；引擎自己的 surface 在此期间保持未映射。镜像开在文本光标下方，下方没有空间时开在上方，会超出输出右侧时向左平移。光标来自 Fcitx5 模块的 `SetCursorRect`，或 XIM 的 spot 位置（应用绘制文本处，omimed 假定基线周围一行 20 像素）。X11 坐标按名称匹配 XWayland 的 RandR 监视器与合成器的输出（xdg-output）来映射为合成器坐标，这也涵盖了 Hyprland 的 `xwayland:force_zero_scaling`。
 
 ## 引擎协议（v1）
 
@@ -73,7 +82,6 @@ Bridge 是基于 [`wl-proxy`](https://crates.io/crates/wl-proxy) 构建的多路
 
 ## 兼容层（计划中）
 
-- **X11 / XWayland：** 一个 XIM 桥（`omime-xim`），外加一个 Fcitx5 输入法模块 D-Bus 协议的服务端，使现有的 `fcitx5-gtk`/`fcitx5-qt` 模块无需修改即可工作。X11 上下文的弹窗借助 layer-shell 与针对具体合成器的坐标映射来放置。
 - **虚拟 `input-method-v2`：** Bridge 可以向被托管的客户端提供一个虚拟输入法。这样未修改的 Fcitx5、IBus（≥ 1.5.32）以及其他 input-method-v2 程序就能作为 oh-my-ime 的一个引擎运行，并保留自己的 UI。
 - **逐引擎宿主：** 一个 IBus 引擎宿主（私有总线、组件发现、Factory/Engine 转换）和一个 Fcitx5 插件宿主（C++、libFcitx5Core）。
 

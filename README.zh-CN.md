@@ -61,12 +61,13 @@ Wayland 让这件事更难：
 flowchart LR
     subgraph Apps["应用"]
       A1["Wayland 应用<br/>text-input-v3"]
-      A2["X11 应用<br/>XIM / IM 模块（计划中）"]
+      A2["X11 应用<br/>XIM · Fcitx5 模块"]
     end
     C["合成器<br/>（优先 Hyprland）"]
     subgraph D["omimed — oh-my-ime 守护进程"]
       direction TB
       W["Wayland 前端<br/>input-method-v2 · 键盘抓取 · 虚拟键盘"]
+      X["X11 前端<br/>XIM · Fcitx5 模块"]
       R["核心<br/>上下文 · 按键路由 · 切换"]
       B["UI Bridge<br/>多路复用 Wayland 代理"]
     end
@@ -75,8 +76,10 @@ flowchart LR
       E2["引擎 B<br/>Qt / GTK / GL UI"]
     end
     A1 <--> C
+    A2 <-->|"XIM · Fcitx5 模块"| X
     C <-->|"同一个客户端连接"| W
     W --- R
+    X --- R
     R <-->|"D-Bus 点对点<br/>按键 · 上屏 · 预编辑"| E1
     R <-->|"D-Bus 点对点"| E2
     E1 -.->|"Wayland（UI）"| B
@@ -128,7 +131,8 @@ flowchart LR
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
 | 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
 | 附带 systemd 用户单元的 Nix 包 | ✅ |
-| X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 阶段 2 |
+| X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
+| X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
 | 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 阶段 3 · 🧩 兼容 |
 | 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
 
@@ -197,7 +201,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
    - M3：完整 UI Bridge + Slint 示例输入法 ✅
    - M4：管理功能与健壮性 ✅ → `v0.1.0`
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证；Nix 包；中文文档 ✅ → `v0.2.0`
-4. **阶段 2**：X11/XWayland：XIM 桥与 Fcitx IM 模块 D-Bus 协议
+4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅（尚未发布）
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
 7. **阶段 5**：原生 Rime 引擎、设置界面、托盘、更多合成器、C ABI SDK

@@ -63,12 +63,13 @@ Wayland makes this harder:
 flowchart LR
     subgraph Apps
       A1["Wayland app<br/>text-input-v3"]
-      A2["X11 app<br/>XIM / IM module (planned)"]
+      A2["X11 app<br/>XIM · Fcitx5 module"]
     end
     C["Compositor<br/>(Hyprland first)"]
     subgraph D["omimed — oh-my-ime daemon"]
       direction TB
       W["Wayland frontend<br/>input-method-v2 · keyboard grab · virtual keyboard"]
+      X["X11 frontends<br/>XIM · Fcitx5 modules"]
       R["Core<br/>contexts · key routing · switching"]
       B["UI Bridge<br/>multiplexing Wayland proxy"]
     end
@@ -77,8 +78,10 @@ flowchart LR
       E2["Engine B<br/>Qt / GTK / GL UI"]
     end
     A1 <--> C
+    A2 <-->|"XIM · Fcitx5 module"| X
     C <-->|"one client connection"| W
     W --- R
+    X --- R
     R <-->|"D-Bus peer-to-peer<br/>keys · commit · preedit"| E1
     R <-->|"D-Bus peer-to-peer"| E2
     E1 -.->|"Wayland (UI)"| B
@@ -125,7 +128,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
 | Several seats, each with its own input method session | ✅ tested on sway |
 | Nix package with the systemd user unit | ✅ |
-| X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 Phase 2 |
+| X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
+| Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
 | Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
 | Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
 
@@ -199,7 +203,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    - M4: management and robustness ✅ → `v0.1.0`
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat
    validation, Nix package, Chinese guides ✅ → `v0.2.0`
-4. **Phase 2** — X11/XWayland: XIM bridge and the Fcitx IM-module D-Bus protocol
+4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅
+   (not released yet)
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2`
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
 7. **Phase 5** — native Rime engine, settings GUI, tray, more compositors, C ABI SDK

@@ -9,8 +9,8 @@ nix develop            # everything, including Hyprland for manual tests
 nix develop .#e2e      # only what the end-to-end tests need (used by CI)
 ```
 
-The shells provide the native libraries, a headless-capable sway, wtype and
-dbus-daemon. Rust comes from rustup and `rust-toolchain.toml`.
+The shells provide the native libraries, a headless-capable sway with XWayland, wtype,
+grim and dbus-daemon. Rust comes from rustup and `rust-toolchain.toml`.
 
 ## Checks
 
@@ -26,6 +26,13 @@ cargo deny check
 `tests/e2e` starts a private headless sway, a private session bus and omimed for every
 test, and types with a virtual keyboard into `omime-ti-client`, a tiny editor that
 prints every text-input event. Nothing touches your desktop session.
+
+The X11 tests also start XWayland (`TestEnv::start_with_x11`), which the dev shells
+provide. `xim.rs` types into `omime-xim-client`, an X11 client that uses XIM, and
+`fcitx.rs` drives the Fcitx5 module protocol with `omime-fcitx-client`. `popups.rs`
+checks where engine windows open, that they stay hidden until the engine asks, how they
+follow X11 text cursors, and that clicks on them reach the engine; it reads pixels with
+`grim`.
 
 ```sh
 cargo build --workspace
