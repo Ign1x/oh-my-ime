@@ -10,4 +10,21 @@ All notable changes to this project are documented here. The format follows
 
 - Project foundation: Cargo workspace, pinned toolchain, Nix dev shell with test compositors,
   CI (fmt, clippy, tests, cargo-deny), bilingual README and architecture documentation.
-- `omime-proto`: D-Bus names, engine protocol version and text field content types.
+- `omime-proto`: D-Bus names, protocol version and wire types, engine manifests, the
+  configuration file and XDG paths.
+- `omimed`: the daemon.
+  - `input-method-v2` frontend with keyboard grab, virtual keyboard passthrough, key
+    repeat for consumed keys, and the commit/preedit rules Hyprland needs.
+  - UI bridge: engine windows become IME popups through a multiplexing Wayland proxy,
+    with a virtual `xdg_shell`, pointer routing, held buffers while hidden, shm
+    validation, dependency-ordered cleanup and reconnection.
+  - Engine host: discovery, launch, supervision with crash restarts, startup and key
+    timeouts, ordered per-field request queues.
+  - Switching with hotkeys (`Ctrl+Space`, `Ctrl+Shift+Space`) and the
+    `io.github.ign1x.OhMyIme.Daemon1` control API; single instance per session.
+  - Password and PIN fields bypass engines and the keyboard grab.
+- Engine protocol v1 (`protocol/io.github.ign1x.OhMyIme.Engine1.xml`) and the Rust SDK
+  `omime-sdk`.
+- `omime` CLI: `list`, `status [--json]`, `switch`, `next`, `toggle`.
+- `echo` engine for tests and as a tutorial.
+- End-to-end tests in a private headless sway session, run in CI.

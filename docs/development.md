@@ -1,0 +1,71 @@
+# Development
+
+## Environment
+
+```sh
+nix develop            # everything, including Hyprland for manual tests
+nix develop .#e2e      # only what the end-to-end tests need (used by CI)
+```
+
+The shells provide the native libraries, a headless-capable sway, wtype and
+dbus-daemon. Rust comes from rustup and `rust-toolchain.toml`.
+
+## Checks
+
+```sh
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo deny check
+```
+
+## End-to-end tests
+
+`tests/e2e` starts a private headless sway, a private session bus and omimed for every
+test, and types with a virtual keyboard into `omime-ti-client`, a tiny editor that
+prints every text-input event. Nothing touches your desktop session.
+
+```sh
+cargo build --workspace
+cargo test -p omime-e2e -- --ignored
+```
+
+On failure the test's runtime directory is kept and printed; it contains
+`omimed.log` and `sway.log`.
+
+## Running omimed by hand
+
+omimed needs a compositor with `zwp_input_method_v2` and `zwp_virtual_keyboard_v1`
+(Hyprland, sway, ...) and no other input method running on it.
+
+```sh
+cargo build --workspace
+PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines \
+  OMIME_LOG=debug omimed --engine echo
+```
+
+Useful environment variables:
+
+| Variable | Effect |
+|---|---|
+| `OMIME_LOG` | Log filter, e.g. `debug`, `omimed::core=trace` |
+| `OMIME_WL_DEBUG` | Log every Wayland message (includes what you type!) |
+| `OMIME_ENGINE_PATH` | Extra engine directories, searched first |
+
+### Nested Hyprland
+
+To try things in Hyprland without leaving your current desktop, start it nested and
+point clients at its socket:
+
+```sh
+nix develop
+Hyprland &                      # opens a window; creates $XDG_RUNTIME_DIR/wayland-N
+export WAYLAND_DISPLAY=wayland-N
+unset GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
+omimed --engine echo &
+foot                            # type into it
+```
+
+`grim` can take screenshots of the nested session. Because a nested Hyprland only draws
+while its window is visible, create a headless output for unattended captures:
+`hyprctl output create headless`.

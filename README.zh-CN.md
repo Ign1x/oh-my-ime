@@ -110,15 +110,17 @@ flowchart LR
 
 | 模块 | 状态 |
 |---|---|
-| 工程基础（workspace、CI、Nix 开发环境） | ✅ 完成 |
-| Wayland 前端：`input-method-v2`、键盘抓取、虚拟键盘 | 🚧 进行中（M1） |
-| UI Bridge：引擎窗口成为输入法弹窗 | 🚧 进行中（M1 spike、M3） |
-| 引擎宿主、引擎协议 v1、Rust SDK、测试引擎 | 📅 计划中（M2） |
-| 切换、热键、控制 API、`omime` 命令行 | 📅 计划中（M2/M4） |
-| 拥有独立动画 UI 的示例输入法（Slint） | 📅 计划中（M3） |
-| X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 计划中（阶段 2） |
-| 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 计划中（阶段 3）· 🧩 兼容 |
-| 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 计划中（阶段 4）· 🧩 兼容 |
+| Wayland 前端：`input-method-v2`、键盘抓取、虚拟键盘、按键重复 | ✅ |
+| 引擎宿主：发现、启动、监护、崩溃重启、协议 v1 | ✅ |
+| Rust SDK（`omime-sdk`）与 `echo` 测试引擎 | ✅ |
+| 切换：热键、`omime` 命令行、D-Bus 控制接口 | ✅ |
+| 密码与 PIN 输入框绕过引擎 | ✅ |
+| UI Bridge：引擎窗口成为输入法弹窗（切换、点击、崩溃清理） | ✅ 已在 sway 与 Hyprland 验证，M3 继续完善 |
+| 拥有独立动画 UI 的示例输入法（Slint） | 🚧 下一步（M3） |
+| 配置文件、按应用记忆、安装/卸载 | 🚧 M4 / v0.2 |
+| X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 阶段 2 |
+| 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 阶段 3 · 🧩 兼容 |
+| 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
 
 ✅ 原生支持 · 🧩 兼容层 · 🚧 进行中 · 📅 计划中
 
@@ -134,17 +136,15 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 | KDE Plasma（KWin） | 仅 IM v1 | 需要 IM v1 前端（后续） |
 | GNOME（Mutter） | 无 IM 协议（仅 IBus D-Bus） | 暂无计划 |
 
-## 构建
+## 试用
 
-oh-my-ime 是一个 Rust workspace。
-用 Nix 开发环境可以一次性获得全部原生依赖和测试用合成器：
+oh-my-ime 是一个 Rust workspace。用 Nix 开发环境可以一次性获得全部原生依赖和测试用合成器：
 
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop          # 或：direnv allow
+nix develop                       # 或：direnv allow
 cargo build --workspace
-cargo test --workspace
 ```
 
 如果不用 Nix，需要准备：
@@ -153,14 +153,31 @@ cargo test --workspace
 - `pkg-config`；
 - `wayland`、`libxkbcommon`、`dbus` 的开发文件。
 
-守护进程能够上屏文字后（里程碑 M1/M2），这里会补充运行说明。
+然后在没有运行其他输入法的 Hyprland（或 sway）会话中执行：
+
+```sh
+PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
+omime list                        # 已安装的引擎
+omime switch echo                 # 或按 Ctrl+Space
+```
+
+在任意 Wayland 应用中打字：单词会先以行内预编辑显示，再以大写形式上屏。
+
+- `Ctrl+Space`：在直接输入和上一个引擎之间切换。
+- `Ctrl+Shift+Space`：轮换引擎。
+- `omime status --json`：可供状态栏使用。
+
+把 omimed 安装到 `PATH` 后，在 Hyprland 配置中加入 `exec-once = omimed` 即可随 Hyprland 自动启动。
+
+- 编写自己的引擎：[docs/writing-an-engine.md](docs/writing-an-engine.md)（英文）
+- 参与开发：[docs/development.md](docs/development.md)（英文）
 
 ## 路线图
 
 1. **阶段 0**：工程基础 ✅
 2. **阶段 1：Hyprland MVP**（`v0.1.0`）
-   - M1：Wayland 前端 + UI Bridge 验证
-   - M2：引擎宿主、协议 v1、Rust SDK、基础切换
+   - M1：Wayland 前端 + UI Bridge 验证 ✅
+   - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
    - M3：完整 UI Bridge + Slint 示例输入法
    - M4：管理功能与健壮性
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证

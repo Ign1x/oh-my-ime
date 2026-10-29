@@ -107,15 +107,17 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 
 | Area | State |
 |---|---|
-| Project foundation (workspace, CI, Nix dev shell) | ✅ done |
-| Wayland frontend: `input-method-v2`, keyboard grab, virtual keyboard | 🚧 in progress (M1) |
-| UI Bridge: engine windows become IME popups | 🚧 in progress (M1 spike, M3) |
-| Engine host, engine protocol v1, Rust SDK, test engine | 📅 planned (M2) |
-| Switching, hotkeys, control API, `omime` CLI | 📅 planned (M2/M4) |
-| Demo engine with its own animated UI (Slint) | 📅 planned (M3) |
-| X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 planned (Phase 2) |
-| Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 planned (Phase 3) · 🧩 compat |
-| Per-engine IBus and Fcitx5 addon hosts | 📅 planned (Phase 4) · 🧩 compat |
+| Wayland frontend: `input-method-v2`, keyboard grab, virtual keyboard, key repeat | ✅ |
+| Engine host: discovery, launch, supervision, crash restart, protocol v1 | ✅ |
+| Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
+| Switching: hotkeys, `omime` CLI, D-Bus control API | ✅ |
+| Password and PIN fields bypass engines | ✅ |
+| UI Bridge: engine windows become IME popups (switching, clicks, crash cleanup) | ✅ verified on sway and Hyprland, polishing in M3 |
+| Demo engine with its own animated UI (Slint) | 🚧 next (M3) |
+| Config file, per-app memory, install/uninstall | 🚧 M4 / v0.2 |
+| X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 Phase 2 |
+| Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
+| Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
 
 ✅ native support · 🧩 compatibility layer · 🚧 in progress · 📅 planned
 
@@ -131,30 +133,45 @@ and `zwp_virtual_keyboard_v1`.
 | KDE Plasma (KWin) | IM v1 only | needs an IM v1 frontend (later) |
 | GNOME (Mutter) | no IM protocol (IBus D-Bus only) | not planned yet |
 
-## Building
+## Try it
 
-oh-my-ime is a Rust workspace. The easiest way to get every native dependency and the test
-compositors is the Nix dev shell:
+oh-my-ime is a Rust workspace. The Nix dev shell provides every native dependency and
+the compositors used for testing:
 
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop          # or: direnv allow
+nix develop                       # or: direnv allow
 cargo build --workspace
-cargo test --workspace
 ```
 
-Without Nix you need a Rust toolchain (pinned in `rust-toolchain.toml`), `pkg-config`, and the
-development files of `wayland`, `libxkbcommon` and `dbus`.
+Without Nix you need a Rust toolchain (pinned in `rust-toolchain.toml`), `pkg-config`,
+and the development files of `wayland`, `libxkbcommon` and `dbus`.
 
-Running instructions will appear here once the daemon can type text (milestone M1/M2).
+Then, inside a Hyprland (or sway) session where no other input method is running:
+
+```sh
+PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
+omime list                        # installed engines
+omime switch echo                 # or press Ctrl+Space
+```
+
+Type into any Wayland application: words appear as an inline preedit and are committed
+in UPPERCASE. `Ctrl+Space` toggles between direct input and the last engine,
+`Ctrl+Shift+Space` cycles through engines, `omime status --json` feeds status bars.
+
+To run omimed with Hyprland automatically, add `exec-once = omimed` to your Hyprland
+configuration once it is installed in your `PATH`.
+
+- Writing your own engine: [docs/writing-an-engine.md](docs/writing-an-engine.md)
+- Hacking on oh-my-ime: [docs/development.md](docs/development.md)
 
 ## Roadmap
 
 1. **Phase 0** — foundation ✅
 2. **Phase 1 — Hyprland MVP** (`v0.1.0`)
-   - M1: Wayland frontend + UI Bridge spike
-   - M2: engine host, protocol v1, Rust SDK, basic switching
+   - M1: Wayland frontend + UI Bridge spike ✅
+   - M2: engine host, protocol v1, Rust SDK, basic switching ✅
    - M3: complete UI Bridge + Slint demo engine
    - M4: management and robustness
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat validation
