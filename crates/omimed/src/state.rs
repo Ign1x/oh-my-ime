@@ -1,5 +1,6 @@
 //! State that survives restarts (`$XDG_STATE_HOME/oh-my-ime/state.toml`).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ pub struct State {
     pub current: Option<String>,
     /// The engine `toggle` returns to.
     pub last: Option<String>,
+    /// The engine last used in each application, by app id (`""` for direct input).
+    pub apps: BTreeMap<String, String>,
 }
 
 fn path() -> Option<PathBuf> {
@@ -61,6 +64,10 @@ mod tests {
         let state = State {
             current: Some("sparkle".into()),
             last: None,
+            apps: BTreeMap::from([
+                ("org.mozilla.firefox".into(), "sparkle".into()),
+                ("foot".into(), String::new()),
+            ]),
         };
         let text = toml::to_string(&state).unwrap();
         assert_eq!(toml::from_str::<State>(&text).unwrap(), state);

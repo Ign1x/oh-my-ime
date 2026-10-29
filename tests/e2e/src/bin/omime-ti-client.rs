@@ -15,7 +15,7 @@
 //! ```
 //!
 //! `text` follows every change. Options: `--purpose N` and `--hints N` set the content
-//! type (8 = password).
+//! type (8 = password), `--app-id ID` the window's app id.
 
 use std::io::Write as _;
 use std::os::fd::AsFd;
@@ -341,11 +341,13 @@ delegate_noop!(App: ignore xdg_toplevel::XdgToplevel);
 fn main() -> anyhow::Result<()> {
     let mut purpose = 0;
     let mut hints = 0;
+    let mut app_id = "io.github.ign1x.OhMyIme.TestEditor".to_owned();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--purpose" => purpose = args.next().context("--purpose N")?.parse()?,
             "--hints" => hints = args.next().context("--hints N")?.parse()?,
+            "--app-id" => app_id = args.next().context("--app-id ID")?,
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -380,7 +382,7 @@ fn main() -> anyhow::Result<()> {
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("omime test editor".into());
-    toplevel.set_app_id("io.github.ign1x.OhMyIme.TestEditor".into());
+    toplevel.set_app_id(app_id);
     surface.commit();
     app.text_input = Some(ti_manager.get_text_input(seat, &qh, ()));
     app.surface = Some(surface);

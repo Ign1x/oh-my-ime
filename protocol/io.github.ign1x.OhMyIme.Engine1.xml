@@ -22,7 +22,8 @@
     Unknown kinds must be ignored by the daemon.
 
   Context dictionary keys (Activate, UpdateContext)
-    app-id              s     application id, when known
+    app-id              s     app id of the focused window, when the compositor
+                              reports it (wlr-foreign-toplevel-management)
     content-purpose     u     zwp_text_input_v3 content_purpose
     content-hints       u     zwp_text_input_v3 content_hint bits
     surrounding-text    s     text around the cursor

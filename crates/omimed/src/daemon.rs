@@ -148,22 +148,12 @@ impl Daemon {
             .or_else(|| std::env::var("WAYLAND_DISPLAY").ok());
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
         let saved = State::load();
-        core.set_last_engine(saved.last.clone());
-        let service = control.clone();
-        core.set_switch_listener(move |current, last| {
-            State {
-                current: current.map(str::to_owned),
-                last: last.map(str::to_owned),
-            }
-            .save();
-            if let Some(service) = &service {
-                service.current_changed(current);
-            }
-        });
+        core.restore(&saved);
+        core.set_state_listener(State::save);
         let service = control.clone();
         core.set_status_listener(move |current, status| {
             if let Some(service) = &service {
-                service.status_changed(control::status_dict(current, status));
+                service.status_changed(current, control::status_dict(current, status));
             }
         });
         // Without --engine, start where the user left off.
@@ -238,7 +228,7 @@ impl Daemon {
             // that its UI connection finds a complete registry.
             if frontend.is_ready()
                 && let Some(engine) = startup_engine.take()
-                && let Err(e) = self.core.switch_to(Some(engine), frontend)
+                && let Err(e) = self.core.set_current(Some(engine), frontend)
             {
                 warn!("{e:#}");
             }

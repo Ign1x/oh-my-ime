@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Per-application engines: with `remember = true` in the new `[apps]` section of
+  config.toml, each application gets back the engine last chosen in it, also after a
+  restart. omimed learns the focused application from the compositor's
+  `zwlr_foreign_toplevel_manager_v1`, and engines now receive its app id (`app-id`).
 - `omime install <dir>` copies an engine directory into
   `~/.local/share/oh-my-ime/engines` after checking its manifest, and
   `omime uninstall <id>` removes it again; both work without a running omimed.

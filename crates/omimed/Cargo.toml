@@ -29,6 +29,7 @@ wl-proxy = { workspace = true, features = [
   "protocol-single_pixel_buffer_v1",
   "protocol-viewporter",
   "protocol-virtual_keyboard_unstable_v1",
+  "protocol-wlr_foreign_toplevel_management_unstable_v1",
   "protocol-xdg_decoration_unstable_v1",
   "protocol-xdg_output_unstable_v1",
   "protocol-xdg_shell",

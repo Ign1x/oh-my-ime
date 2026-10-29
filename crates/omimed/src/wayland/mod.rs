@@ -11,6 +11,7 @@
 
 mod bridge;
 mod seat;
+mod toplevels;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
@@ -39,12 +40,14 @@ use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
 use wl_proxy::protocols::wayland::wl_keyboard::{WlKeyboardKeyState, WlKeyboardKeymapFormat};
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatCapability, WlSeatHandler};
+use wl_proxy::protocols::wlr_foreign_toplevel_management_unstable_v1::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1;
 use wl_proxy::state::{State, StateError, StateHandler};
 
 use crate::keyboard::{ModifierState, RepeatInfo};
 use bridge::Bridge;
 pub use bridge::EngineId;
 use seat::SeatSession;
+use toplevels::{ToplevelEvent, Toplevels};
 
 /// Identifies a seat by the registry name of its `wl_seat` global.
 pub type SeatId = u32;
@@ -75,6 +78,8 @@ pub enum Event {
         generation: u32,
         event: GrabEvent,
     },
+    /// A window's state changed (see [`toplevels`]).
+    Toplevel(ToplevelEvent),
     /// The text cursor rectangle relative to an engine's popup changed.
     PopupCursorRect {
         engine: EngineId,
@@ -177,6 +182,9 @@ pub enum FrontendEvent {
     Key { key: KeyRef, event: KeyEvent },
     /// The text cursor relative to an engine's popup changed.
     CursorRect { engine: EngineId, rect: Rect },
+    /// Another application got focus (`None` when unknown). Sent after the `Updated`
+    /// events of the focused fields, which carry the new app id.
+    FocusedApp(Option<String>),
 }
 
 /// Queue of [`FrontendEvent`]s, shared with the seat sessions.
@@ -196,6 +204,9 @@ pub struct Frontend {
     registry: Rc<WlRegistry>,
     im_manager: Option<BoundGlobal<ZwpInputMethodManagerV2>>,
     vk_manager: Option<BoundGlobal<ZwpVirtualKeyboardManagerV1>>,
+    toplevel_manager: Option<BoundGlobal<ZwlrForeignToplevelManagerV1>>,
+    toplevels: Toplevels,
+    focused_app: Option<String>,
     /// Bound `wl_seat`s by registry name, before and after a session exists.
     seat_objects: BTreeMap<SeatId, Rc<WlSeat>>,
     seats: BTreeMap<SeatId, SeatSession>,
@@ -253,6 +264,9 @@ impl Frontend {
             registry,
             im_manager: None,
             vk_manager: None,
+            toplevel_manager: None,
+            toplevels: Toplevels::default(),
+            focused_app: None,
             seat_objects: BTreeMap::new(),
             seats: BTreeMap::new(),
             initial_sync_done: false,
@@ -437,6 +451,10 @@ impl Frontend {
                     session.handle_grab(generation, event);
                 }
             }
+            Event::Toplevel(event) => {
+                self.toplevels.handle(event);
+                self.update_focused_app();
+            }
             Event::PopupCursorRect {
                 engine,
                 x,
@@ -471,6 +489,15 @@ impl Frontend {
                 object.set_forward_to_client(false);
                 self.registry.send_bind(name, object.clone());
                 self.vk_manager = Some(BoundGlobal { name, object });
+            }
+            ObjectInterface::ZwlrForeignToplevelManagerV1 => {
+                let object = self
+                    .state
+                    .create_object::<ZwlrForeignToplevelManagerV1>(version.min(toplevels::VERSION));
+                object.set_forward_to_client(false);
+                object.set_handler(toplevels::ManagerEvents::new(self.queue.clone()));
+                self.registry.send_bind(name, object.clone());
+                self.toplevel_manager = Some(BoundGlobal { name, object });
             }
             ObjectInterface::WlSeat => {
                 let seat = self
@@ -509,6 +536,34 @@ impl Frontend {
             warn!("the compositor removed zwp_virtual_keyboard_manager_v1");
             self.vk_manager = None;
         }
+        if self
+            .toplevel_manager
+            .as_ref()
+            .is_some_and(|g| g.name == name)
+        {
+            self.toplevel_manager = None;
+            self.toplevels.handle(ToplevelEvent::Finished);
+            self.update_focused_app();
+        }
+    }
+
+    /// Tells the seats and the core when another application got focus.
+    fn update_focused_app(&mut self) {
+        let app = self.toplevels.focused_app().map(str::to_owned);
+        if app == self.focused_app {
+            return;
+        }
+        debug!(
+            app = app.as_deref().unwrap_or("unknown"),
+            "focused application changed"
+        );
+        self.focused_app = app.clone();
+        for seat in self.seats.values_mut() {
+            seat.set_app_id(app.clone());
+        }
+        self.outputs
+            .borrow_mut()
+            .push_back(FrontendEvent::FocusedApp(app));
     }
 
     fn start_sessions(&mut self) {
@@ -520,7 +575,7 @@ impl Frontend {
                 continue;
             }
             debug!(seat = id, "starting input method session");
-            let session = SeatSession::new(
+            let mut session = SeatSession::new(
                 id,
                 seat.clone(),
                 &im_manager.object,
@@ -528,6 +583,7 @@ impl Frontend {
                 self.queue.clone(),
                 self.outputs.clone(),
             );
+            session.set_app_id(self.focused_app.clone());
             self.seats.insert(id, session);
         }
     }

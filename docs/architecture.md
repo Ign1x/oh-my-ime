@@ -74,6 +74,11 @@ For each `wl_seat`, `omimed` binds a `zwp_input_method_v2` and keeps an input co
   sends its own repeat events.
 - **Commit discipline.** After every `done`, the daemon sends a commit that carries the current
   preedit, whether or not anything changed.
+- **Focused application.** Input methods are not told which application a text field
+  belongs to. Where the compositor offers `zwlr_foreign_toplevel_manager_v1` (Hyprland,
+  sway, ...), the daemon follows which window is activated and passes its app id to
+  engines (`app-id`); with `[apps] remember`, the core gives each application the engine
+  last chosen in it. Window titles are never read.
 
 ## The UI Bridge
 

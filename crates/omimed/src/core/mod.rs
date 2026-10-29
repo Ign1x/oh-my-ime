@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use xkbcommon::xkb;
 
+use crate::state::State;
 use crate::wayland::{Frontend, FrontendEvent, KeyRef, SeatId};
 use engines::{EngineManager, EngineState, HostCall};
 
@@ -124,8 +125,8 @@ struct Context {
     in_flight: Option<InFlight>,
 }
 
-/// Callback for changes of the current engine.
-type SwitchListener = Box<dyn Fn(Option<&str>, Option<&str>)>;
+/// Callback for changes of what is kept across restarts.
+type StateListener = Box<dyn Fn(&State)>;
 /// Callback for changes of the current engine or of the status it published.
 type StatusListener = Box<dyn Fn(Option<&str>, Option<&Status>)>;
 
@@ -156,8 +157,14 @@ pub struct Core {
     /// Consecutive timeouts per engine.
     timeouts: BTreeMap<String, u32>,
     /// Called whenever `current` changes.
-    on_switch: Option<SwitchListener>,
+    on_state: Option<StateListener>,
     on_status: Option<StatusListener>,
+    /// Whether applications keep their own engine (`[apps] remember`).
+    remember_apps: bool,
+    /// The app id of the focused window, when the compositor reports it.
+    focused_app: Option<String>,
+    /// The engine last chosen in each application (`None` is direct input).
+    app_engines: BTreeMap<String, Option<String>>,
 }
 
 impl std::fmt::Debug for Core {
@@ -190,15 +197,32 @@ impl Core {
             next_token: 0,
             stale_tokens: HashSet::new(),
             timeouts: BTreeMap::new(),
-            on_switch: None,
+            on_state: None,
             on_status: None,
+            remember_apps: config.apps.remember,
+            focused_app: None,
+            app_engines: BTreeMap::new(),
         }
     }
 
-    /// Registers a callback for changes of the current engine. It receives the current
-    /// and the previous engine (`None` is direct input).
-    pub fn set_switch_listener(&mut self, listener: impl Fn(Option<&str>, Option<&str>) + 'static) {
-        self.on_switch = Some(Box::new(listener));
+    /// Registers a callback for changes of what should survive a restart: the current
+    /// and the last engine, and the engines of applications.
+    pub fn set_state_listener(&mut self, listener: impl Fn(&State) + 'static) {
+        self.on_state = Some(Box::new(listener));
+    }
+
+    fn state_changed(&self) {
+        if let Some(listener) = &self.on_state {
+            listener(&State {
+                current: self.current.clone(),
+                last: self.last_engine.clone(),
+                apps: self
+                    .app_engines
+                    .iter()
+                    .map(|(app, engine)| (app.clone(), engine.clone().unwrap_or_default()))
+                    .collect(),
+            });
+        }
     }
 
     /// Calls `listener` with the current engine and its status whenever either changes.
@@ -215,9 +239,15 @@ impl Core {
         }
     }
 
-    /// Restores the engine `toggle` returns to, e.g. from saved state.
-    pub fn set_last_engine(&mut self, engine: Option<String>) {
-        self.last_engine = engine.filter(|e| self.engines.get(e).is_some());
+    /// Takes over what was saved when the daemon stopped. The current engine is left to
+    /// the daemon, which switches to it once the compositor is ready.
+    pub fn restore(&mut self, state: &State) {
+        self.last_engine = state.last.clone().filter(|e| self.engines.get(e).is_some());
+        self.app_engines = state
+            .apps
+            .iter()
+            .map(|(app, engine)| (app.clone(), (!engine.is_empty()).then(|| engine.clone())))
+            .collect();
     }
 
     /// Whether `id` is installed and enabled.
@@ -235,10 +265,11 @@ impl Core {
         self.enabled = enabled_engines(config, &installed);
         self.hotkeys = parse_hotkeys(config);
         self.key_timeout = Duration::from_millis(config.engine.key_timeout_ms.max(1));
+        self.remember_apps = config.apps.remember;
         let removed = self.engines.update_installed(installed);
         // An engine that was disabled or uninstalled cannot stay in use.
         if self.current.as_ref().is_some_and(|c| !self.is_enabled(c))
-            && let Err(e) = self.switch_to(None, frontend)
+            && let Err(e) = self.set_current(None, frontend)
         {
             warn!("{e:#}");
         }
@@ -425,6 +456,28 @@ impl Core {
                     self.pump(ctx, frontend);
                 }
             }
+            FrontendEvent::FocusedApp(app) => self.on_focused_app(app, frontend),
+        }
+    }
+
+    /// Another application got focus. With `[apps] remember`, it gets back the engine
+    /// last chosen in it; applications without one keep the current engine.
+    fn on_focused_app(&mut self, app: Option<String>, frontend: &mut Frontend) {
+        self.focused_app = app;
+        if !self.remember_apps {
+            return;
+        }
+        let Some(app) = self.focused_app.clone() else {
+            return;
+        };
+        let Some(engine) = self.app_engines.get(&app).cloned() else {
+            return;
+        };
+        if engine.as_ref().is_some_and(|e| !self.is_enabled(e)) {
+            return;
+        }
+        if let Err(e) = self.set_current(engine, frontend) {
+            warn!(app, "cannot switch to the engine of the application: {e:#}");
         }
     }
 
@@ -696,8 +749,31 @@ impl Core {
         });
     }
 
-    /// Makes `target` (or direct input) the engine of all fields.
+    /// Switches to `target` (or direct input) because the user or an engine asked for it.
+    /// With `[apps] remember`, the focused application keeps this choice.
     pub fn switch_to(
+        &mut self,
+        target: Option<String>,
+        frontend: &mut Frontend,
+    ) -> anyhow::Result<()> {
+        self.set_current(target.clone(), frontend)?;
+        if self.remember_apps
+            && let Some(app) = self.focused_app.clone()
+            && self.app_engines.get(&app) != Some(&target)
+        {
+            debug!(
+                app,
+                engine = target.as_deref().unwrap_or("direct"),
+                "remembering"
+            );
+            self.app_engines.insert(app, target);
+            self.state_changed();
+        }
+        Ok(())
+    }
+
+    /// Makes `target` (or direct input) the engine of all fields.
+    pub fn set_current(
         &mut self,
         target: Option<String>,
         frontend: &mut Frontend,
@@ -755,9 +831,7 @@ impl Core {
                 context.queue.push_front(Request::Activate);
             }
         }
-        if let Some(listener) = &self.on_switch {
-            listener(self.current.as_deref(), self.last_engine.as_deref());
-        }
+        self.state_changed();
         self.status_changed();
         Ok(())
     }

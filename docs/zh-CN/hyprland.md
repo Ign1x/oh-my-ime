@@ -84,6 +84,17 @@ bind = SUPER, space, exec, omime next
 
 omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。
 
+### 每个应用一个引擎
+
+默认情况下，所有应用共用一个引擎。要让每个应用使用你上次在其中用过的引擎，在 `config.toml` 中加入以下内容，然后运行 `omime reload`：
+
+```toml
+[apps]
+remember = true
+```
+
+之后，在某个应用获得焦点时切换引擎，只会影响这个应用；每次回到它时，它都会换回自己的引擎，重启之后也一样。还没有切换过的应用沿用当前引擎。启动器等 layer-shell 界面不是窗口：在其中切换，算作下方窗口的选择。
+
 ### Waybar
 
 `omime status --json` 输出 `text`、`tooltip` 和 `class`，waybar 可以直接理解：

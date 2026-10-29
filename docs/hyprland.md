@@ -95,6 +95,21 @@ omimed starts with the engine you used last. The hotkeys and the key timeout liv
 `~/.config/oh-my-ime/config.toml`; [`data/config.toml`](../data/config.toml) documents
 every option.
 
+### One engine per application
+
+By default one engine serves every application. To give each application the engine
+you last used in it, add this to `config.toml` and run `omime reload`:
+
+```toml
+[apps]
+remember = true
+```
+
+Switching while an application has focus then only affects that application, and it
+gets its engine back whenever you return to it, also after a restart. Applications you
+have not switched in yet keep the current engine. Launchers and other layer-shell
+surfaces are not windows: switching in them counts for the window below.
+
 ### Waybar
 
 `omime status --json` prints `text`, `tooltip` and `class`, which waybar understands:

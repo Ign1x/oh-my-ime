@@ -186,6 +186,13 @@ impl TestEnv {
             })
         })?;
         env.env.push(("WAYLAND_DISPLAY".into(), socket));
+        let ipc = wait_until("the sway IPC socket", || {
+            std::fs::read_dir(&dir).ok()?.flatten().find_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                (name.starts_with("sway-ipc.") && name.ends_with(".sock")).then(|| e.path())
+            })
+        })?;
+        env.env.push(("SWAYSOCK".into(), ipc.display().to_string()));
 
         // Stands in for a physical keyboard: without one, the seat would lose its keyboard
         // capability, and with it the keyboard focus, whenever omimed restarts.
@@ -360,6 +367,30 @@ impl TestEnv {
             (now.0 > before.0 || now.1 > before.1).then_some(())
         })?;
         Ok(editor)
+    }
+
+    /// Gives keyboard focus to the window with `app_id` and waits until omimed holds the
+    /// keyboard for its text field.
+    pub fn focus(&self, app_id: &str) -> anyhow::Result<()> {
+        const GRABBED: &str = "keyboard grabbed";
+        let before = self.count_in_log(GRABBED);
+        self.run(
+            self.command("swaymsg")
+                .arg(format!("[app_id=\"{app_id}\"] focus"))
+                .stdout(Stdio::null()),
+        )?;
+        wait_until("omimed to take the focused field", || {
+            (self.count_in_log(GRABBED) > before).then_some(())
+        })
+    }
+
+    /// Writes `config.toml` and asks omimed to read it.
+    pub fn configure(&self, config: &str) -> anyhow::Result<()> {
+        let dir = self.dir.join("config/oh-my-ime");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("config.toml"), config)?;
+        self.omime(&["reload"])?;
+        Ok(())
     }
 
     /// Types `text` with a virtual keyboard (wtype).

@@ -13,6 +13,10 @@
 //! [engine]
 //! # How long to wait for an engine to answer a key before passing it through.
 //! key_timeout_ms = 200
+//!
+//! [apps]
+//! # Give each application the engine last used in it.
+//! remember = true
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +31,7 @@ pub struct Config {
     pub engines: Option<Vec<String>>,
     pub hotkeys: Hotkeys,
     pub engine: EngineSettings,
+    pub apps: AppSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +65,13 @@ impl Default for EngineSettings {
             key_timeout_ms: 200,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AppSettings {
+    /// Remember the engine of each application, instead of using one engine for all.
+    pub remember: bool,
 }
 
 impl Config {
@@ -118,6 +130,13 @@ mod tests {
         assert_eq!(config.engines.as_deref(), Some(&["echo".to_owned()][..]));
         assert_eq!(config.hotkeys, Hotkeys::default());
         assert_eq!(config.engine.key_timeout_ms, 200);
+        assert!(!config.apps.remember);
+        assert!(
+            Config::parse("[apps]\nremember = true")
+                .unwrap()
+                .apps
+                .remember
+        );
         assert_eq!(Config::parse("").unwrap(), Config::default());
         assert!(Config::parse("bogus = 1").is_err());
     }

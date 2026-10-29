@@ -14,3 +14,10 @@ next = "Control+Shift+space"
 [engine]
 # How long to wait for an engine to answer a key before passing the key through.
 key_timeout_ms = 200
+
+[apps]
+# Give each application the engine you last used in it, instead of one engine for all
+# of them. Applications you have not switched in keep the current engine. Needs a
+# compositor that tells clients which window has focus (Hyprland, sway and other
+# compositors with wlr-foreign-toplevel-management).
+remember = false

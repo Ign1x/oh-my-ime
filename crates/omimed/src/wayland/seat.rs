@@ -76,6 +76,8 @@ pub struct SeatSession {
     /// The preedit shown in the focused field. Every commit replaces the preedit, so it
     /// is re-sent each time.
     preedit: Preedit,
+    /// The app id of the focused window, when the compositor reports it.
+    app_id: Option<String>,
 }
 
 impl std::fmt::Debug for SeatSession {
@@ -121,6 +123,7 @@ impl SeatSession {
             vk,
             vk_keymap: None,
             preedit: Preedit::default(),
+            app_id: None,
         };
         session.request_input_method(im_manager);
         session
@@ -142,6 +145,21 @@ impl SeatSession {
     /// The focused, non-sensitive text field.
     pub fn context(&self) -> Option<ContextId> {
         self.ctx
+    }
+
+    /// Another application got focus; a focused field now belongs to it.
+    pub fn set_app_id(&mut self, app_id: Option<String>) {
+        if self.app_id == app_id {
+            return;
+        }
+        self.app_id = app_id;
+        if let Some(ctx) = self.ctx {
+            self.outputs.borrow_mut().push_back(FrontendEvent::Updated {
+                ctx,
+                info: self.context_info(),
+                reset: false,
+            });
+        }
     }
 
     pub fn deadline(&self) -> Option<Instant> {
@@ -217,7 +235,7 @@ impl SeatSession {
     fn context_info(&self) -> ContextInfo {
         let current = self.ime.current();
         ContextInfo {
-            app_id: None,
+            app_id: self.app_id.clone(),
             content_type: current.content_type,
             surrounding: current
                 .surrounding

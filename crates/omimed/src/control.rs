@@ -3,6 +3,8 @@
 //!
 //! Owning the bus name also makes sure only one daemon runs per session.
 
+use std::cell::RefCell;
+
 use omime_proto::engine::Dict;
 use omime_proto::names::{DAEMON_BUS_NAME, DAEMON_OBJECT_PATH};
 use tokio::sync::{mpsc, oneshot};
@@ -105,17 +107,19 @@ enum Signal {
 #[derive(Debug)]
 pub struct ControlService {
     signals: mpsc::UnboundedSender<Signal>,
+    /// The engine last announced with `CurrentChanged`.
+    current: RefCell<Option<String>>,
 }
 
 impl ControlService {
-    /// Announces a new current engine.
-    pub fn current_changed(&self, engine: Option<&str>) {
-        let engine = engine.unwrap_or_default().to_owned();
-        let _ = self.signals.send(Signal::CurrentChanged(engine));
-    }
-
-    /// Announces a new status (see [`status_dict`]).
-    pub fn status_changed(&self, status: Dict) {
+    /// Announces the status of the current engine `engine` (see [`status_dict`]), and the
+    /// engine itself if it changed.
+    pub fn status_changed(&self, engine: Option<&str>, status: Dict) {
+        if self.current.borrow().as_deref() != engine {
+            self.current.replace(engine.map(str::to_owned));
+            let engine = engine.unwrap_or_default().to_owned();
+            let _ = self.signals.send(Signal::CurrentChanged(engine));
+        }
         let _ = self.signals.send(Signal::StatusChanged(status));
     }
 }
@@ -161,7 +165,10 @@ pub async fn start(
             };
         }
     });
-    Ok(ControlService { signals })
+    Ok(ControlService {
+        signals,
+        current: RefCell::new(None),
+    })
 }
 
 /// Builds the reply of `Status`.
