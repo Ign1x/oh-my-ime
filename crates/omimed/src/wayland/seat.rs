@@ -61,6 +61,9 @@ pub struct SeatSession {
     grab_generation: u32,
     keyboard: Keyboard,
     keys: KeyTracker,
+    /// Keys physically held right now, as reported by the grab. Engines answer later
+    /// than the release may arrive; repeats only start for keys still held.
+    held: std::collections::BTreeSet<u32>,
     repeat: Option<Repeat>,
     /// The compositor repeats keys itself; don't synthesise repeats then.
     compositor_repeats: bool,
@@ -112,6 +115,7 @@ impl SeatSession {
             grab_generation: 0,
             keyboard: Keyboard::new(),
             keys: KeyTracker::default(),
+            held: std::collections::BTreeSet::new(),
             repeat: None,
             compositor_repeats: false,
             vk,
@@ -318,6 +322,7 @@ impl SeatSession {
     fn release_grab(&mut self) {
         let Some(grab) = self.grab.take() else { return };
         self.repeat = None;
+        self.held.clear();
         let time = now_ms();
         for key in self.keys.take_forwarded() {
             self.vk.send_key(time, key, KEY_STATE_RELEASED);
@@ -365,12 +370,14 @@ impl SeatSession {
             GrabEvent::RepeatInfo(repeat) => self.keyboard.set_repeat_info(repeat),
             GrabEvent::Key { time, key, state } => match state {
                 KEY_STATE_PRESSED => {
+                    self.held.insert(key);
                     if self.repeat.is_some_and(|r| r.keycode != key) {
                         self.repeat = None;
                     }
                     self.emit_key(time, key, false, false);
                 }
                 KEY_STATE_RELEASED => {
+                    self.held.remove(&key);
                     if self.repeat.is_some_and(|r| r.keycode == key) {
                         self.repeat = None;
                     }
@@ -459,6 +466,10 @@ impl SeatSession {
     }
 
     fn start_repeat(&mut self, keycode: u32) {
+        if !self.held.contains(&keycode) {
+            // Released while the engine was deciding.
+            return;
+        }
         let info = self.keyboard.repeat_info();
         let repeats = self.keyboard.decode(keycode).is_some_and(|d| d.repeats);
         if self.compositor_repeats || info.rate <= 0 || !repeats {
