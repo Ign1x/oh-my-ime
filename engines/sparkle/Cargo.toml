@@ -1,0 +1,25 @@
+[package]
+name = "omime-sparkle"
+description = "Sparkle: an oh-my-ime demo engine with its own animated Slint UI (emoji by shortcode)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+omime-sdk.workspace = true
+emojis = "0.9"
+# Slint is used under its royalty-free license (see the README for the attribution).
+# The software renderer works everywhere; femtovg uses the GPU when available.
+slint = { version = "1.16", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "backend-winit-wayland",
+  "renderer-femtovg",
+  "renderer-software",
+] }
+
+[lints]
+workspace = true

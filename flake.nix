@@ -18,6 +18,8 @@
           # Libraries that are linked at build time.
           buildLibs = with pkgs; [
             dbus
+            fontconfig
+            freetype
             libxkbcommon
             wayland
           ];

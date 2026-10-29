@@ -1,0 +1,12 @@
+[engine]
+id = "sparkle"
+name = "Sparkle"
+description = "Type :shortcode to insert emoji, picked from an animated card deck. A demo of an engine that draws its own UI."
+languages = ["und"]
+icon = "face-smile"
+exec = ["omime-sparkle"]
+api = "1.0"
+
+[engine.i18n.zh-CN]
+name = "闪闪"
+description = "输入 :短代码 插入 emoji，从带动画的卡片中挑选。演示引擎如何自绘界面。"

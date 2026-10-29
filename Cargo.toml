@@ -29,6 +29,7 @@ wl-proxy = { version = "=0.1.5", default-features = false, features = ["logging"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
