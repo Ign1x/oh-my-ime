@@ -87,18 +87,36 @@ impl ControlObject {
     /// Emitted when the current engine changes (empty for direct input).
     #[zbus(signal)]
     async fn current_changed(emitter: &SignalEmitter<'_>, engine: &str) -> zbus::Result<()>;
+
+    /// Emitted when what `Status` returns changes, because the current engine changed or
+    /// published a new status. Carries the new status.
+    #[zbus(signal)]
+    async fn status_changed(emitter: &SignalEmitter<'_>, status: &Dict) -> zbus::Result<()>;
+}
+
+/// A signal waiting to be emitted.
+#[derive(Debug)]
+enum Signal {
+    CurrentChanged(String),
+    StatusChanged(Dict),
 }
 
 /// The running control service.
 #[derive(Debug)]
 pub struct ControlService {
-    signals: mpsc::UnboundedSender<String>,
+    signals: mpsc::UnboundedSender<Signal>,
 }
 
 impl ControlService {
     /// Announces a new current engine.
     pub fn current_changed(&self, engine: Option<&str>) {
-        let _ = self.signals.send(engine.unwrap_or_default().to_owned());
+        let engine = engine.unwrap_or_default().to_owned();
+        let _ = self.signals.send(Signal::CurrentChanged(engine));
+    }
+
+    /// Announces a new status (see [`status_dict`]).
+    pub fn status_changed(&self, status: Dict) {
+        let _ = self.signals.send(Signal::StatusChanged(status));
     }
 }
 
@@ -127,13 +145,20 @@ pub async fn start(
         Err(e) => return Err(ControlError::NoBus(e)),
     }
 
-    let (signals, mut pending) = mpsc::unbounded_channel::<String>();
+    let (signals, mut pending) = mpsc::unbounded_channel();
     tokio::task::spawn_local(async move {
         let Ok(emitter) = SignalEmitter::new(&conn, DAEMON_OBJECT_PATH) else {
             return;
         };
-        while let Some(engine) = pending.recv().await {
-            let _ = ControlObject::current_changed(&emitter, &engine).await;
+        while let Some(signal) = pending.recv().await {
+            let _ = match signal {
+                Signal::CurrentChanged(engine) => {
+                    ControlObject::current_changed(&emitter, &engine).await
+                }
+                Signal::StatusChanged(status) => {
+                    ControlObject::status_changed(&emitter, &status).await
+                }
+            };
         }
     });
     Ok(ControlService { signals })

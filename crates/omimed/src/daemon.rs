@@ -160,6 +160,12 @@ impl Daemon {
                 service.current_changed(current);
             }
         });
+        let service = control.clone();
+        core.set_status_listener(move |current, status| {
+            if let Some(service) = &service {
+                service.status_changed(control::status_dict(current, status));
+            }
+        });
         // Without --engine, start where the user left off.
         let mut options = options;
         if options.engine.is_none() {

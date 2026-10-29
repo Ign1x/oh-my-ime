@@ -16,7 +16,7 @@ use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
 use omime_proto::config::{Config, HotkeySpec};
-use omime_proto::engine::{Action, ContextId, ContextInfo, Dict, KeyEvent, WireAction};
+use omime_proto::engine::{Action, ContextId, ContextInfo, Dict, KeyEvent, Status, WireAction};
 use omime_proto::manifest::InstalledEngine;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -126,6 +126,8 @@ struct Context {
 
 /// Callback for changes of the current engine.
 type SwitchListener = Box<dyn Fn(Option<&str>, Option<&str>)>;
+/// Callback for changes of the current engine or of the status it published.
+type StatusListener = Box<dyn Fn(Option<&str>, Option<&Status>)>;
 
 /// One row of [`Core::engines`].
 #[derive(Debug, Clone)]
@@ -155,6 +157,7 @@ pub struct Core {
     timeouts: BTreeMap<String, u32>,
     /// Called whenever `current` changes.
     on_switch: Option<SwitchListener>,
+    on_status: Option<StatusListener>,
 }
 
 impl std::fmt::Debug for Core {
@@ -188,6 +191,7 @@ impl Core {
             stale_tokens: HashSet::new(),
             timeouts: BTreeMap::new(),
             on_switch: None,
+            on_status: None,
         }
     }
 
@@ -195,6 +199,20 @@ impl Core {
     /// and the previous engine (`None` is direct input).
     pub fn set_switch_listener(&mut self, listener: impl Fn(Option<&str>, Option<&str>) + 'static) {
         self.on_switch = Some(Box::new(listener));
+    }
+
+    /// Calls `listener` with the current engine and its status whenever either changes.
+    pub fn set_status_listener(
+        &mut self,
+        listener: impl Fn(Option<&str>, Option<&Status>) + 'static,
+    ) {
+        self.on_status = Some(Box::new(listener));
+    }
+
+    fn status_changed(&self) {
+        if let Some(listener) = &self.on_status {
+            listener(self.current(), self.current_status());
+        }
     }
 
     /// Restores the engine `toggle` returns to, e.g. from saved state.
@@ -239,7 +257,7 @@ impl Core {
     }
 
     /// The status the current engine published.
-    pub fn current_status(&self) -> Option<&omime_proto::engine::Status> {
+    pub fn current_status(&self) -> Option<&Status> {
         self.current
             .as_deref()
             .and_then(|id| self.engines.get(id))
@@ -467,8 +485,13 @@ impl Core {
                 frontend.set_engine_visible(engine.into(), visible);
             }
             HostCall::SetStatus(status) => {
-                if let Some(slot) = self.engines.get_mut(engine) {
+                if let Some(slot) = self.engines.get_mut(engine)
+                    && slot.status != status
+                {
                     slot.status = status;
+                    if self.current.as_deref() == Some(engine) {
+                        self.status_changed();
+                    }
                 }
             }
             HostCall::RequestSwitch(target) => {
@@ -735,6 +758,7 @@ impl Core {
         if let Some(listener) = &self.on_switch {
             listener(self.current.as_deref(), self.last_engine.as_deref());
         }
+        self.status_changed();
         Ok(())
     }
 
