@@ -81,6 +81,7 @@ bind = SUPER, space, exec, omime next
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
 | 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 重新加载配置 | `omime reload` |
+| 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
 omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。
 
@@ -97,13 +98,13 @@ remember = true
 
 ### Waybar
 
-`omime status --json` 输出 `text`、`tooltip` 和 `class`，waybar 可以直接理解：
+`omime status --watch --json` 先输出一次状态，之后每次变化输出一行，格式与 waybar 一致
+（`text`、`tooltip` 和 `class`），waybar 因此无需轮询：
 
 ```json
 "custom/ime": {
-    "exec": "omime status --json",
+    "exec": "omime status --watch --json",
     "return-type": "json",
-    "interval": 1,
     "on-click": "omime toggle",
     "on-click-right": "omime next"
 }

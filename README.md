@@ -177,7 +177,7 @@ Wayland application and pick from Sparkle's deck.
 | Next engine | `Ctrl+Shift+Space` or `omime next` |
 | Pick an engine | `omime switch sparkle`, `omime switch direct` |
 | Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
-| Status bars | `omime status --json` (works as a waybar module) |
+| Status bars | `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 
 omimed remembers the engine you used last. The full setup, a waybar snippet and
 troubleshooting are in [docs/hyprland.md](docs/hyprland.md).

@@ -1,6 +1,7 @@
 //! `omime` — manage the oh-my-ime input method platform.
 
 mod install;
+mod watch;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,8 @@ Usage: omime <COMMAND>
 
 Commands:
   list             List installed engines
-  status [--json]  Show the current engine
+  status [--json] [--watch]
+                   Show the current engine (`--watch` keeps streaming changes)
   switch <ENGINE>  Switch to an engine (`direct` for no engine)
   next             Switch to the next enabled engine
   toggle           Switch between direct input and the last engine
@@ -27,7 +29,7 @@ Commands:
   help             Print this help
 
 The other commands talk to a running `omimed` over the session bus; `install` and
-`uninstall` also work without it.";
+`uninstall` also work without it, and `status --watch` keeps watching for it.";
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Daemon1",
@@ -41,6 +43,10 @@ trait Daemon {
     fn next(&self) -> zbus::Result<()>;
     fn toggle(&self) -> zbus::Result<()>;
     fn reload(&self) -> zbus::Result<()>;
+
+    /// Emitted when what `Status` returns changes. Carries the new status.
+    #[zbus(signal)]
+    fn status_changed(&self, status: HashMap<String, OwnedVariant>) -> zbus::Result<()>;
 }
 
 enum Command {
@@ -51,6 +57,10 @@ enum Command {
         force: bool,
     },
     Uninstall(String),
+    /// `status --watch`, which keeps running while omimed is away.
+    Watch {
+        json: bool,
+    },
 }
 
 enum DaemonCommand {
@@ -77,6 +87,10 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             force: true,
         },
         ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
+        ["status", "--watch"] => Command::Watch { json: false },
+        ["status", "--json", "--watch"] | ["status", "--watch", "--json"] => {
+            Command::Watch { json: true }
+        }
         args => Command::Daemon(match args {
             ["list"] => DaemonCommand::List,
             ["status"] => DaemonCommand::Status { json: false },
@@ -115,10 +129,54 @@ fn json_string(s: &str) -> String {
     out
 }
 
+/// Formats a status dictionary (the reply of `Status` or the argument of
+/// `StatusChanged`) as the line `omime status` prints.
+fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
+    let engine = string(status, "engine");
+    let label = string(status, "label");
+    if json {
+        let field = |v: &Option<String>| v.as_deref().map_or("null".into(), json_string);
+        let tooltip = string(status, "tooltip");
+        // `text`, `tooltip` and `class` make this usable as a waybar module.
+        let text = label
+            .clone()
+            .or_else(|| engine.clone())
+            .unwrap_or_else(|| "⌨".into());
+        let class = engine.clone().unwrap_or_else(|| "direct".into());
+        format!(
+            "{{\"engine\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
+            field(&engine),
+            field(&label),
+            field(&tooltip),
+            json_string(&text),
+            json_string(&class),
+        )
+    } else {
+        match (engine, label) {
+            (None, _) => "direct input".into(),
+            (Some(engine), Some(label)) => format!("{engine} ({label})"),
+            (Some(engine), None) => engine,
+        }
+    }
+}
+
+/// The line for "omimed is not running", in the same formats as [`format_status`].
+fn format_stopped(json: bool) -> String {
+    if json {
+        // `class` is `stopped`, so status bars can tell it from direct input.
+        "{\"engine\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
+         \"text\":\"⌨\",\"class\":\"stopped\"}"
+            .into()
+    } else {
+        "omimed is not running".into()
+    }
+}
+
 async fn run(command: Command) -> anyhow::Result<()> {
     match command {
         Command::Install { dir, force } => install_engine(&dir, force).await,
         Command::Uninstall(engine) => uninstall_engine(&engine).await,
+        Command::Watch { json } => watch::run(json).await,
         Command::Daemon(command) => run_daemon(command).await,
     }
 }
@@ -229,32 +287,7 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
         }
         DaemonCommand::Status { json } => {
             let status = daemon.status().await?;
-            let engine = string(&status, "engine");
-            let label = string(&status, "label");
-            if json {
-                let field = |v: &Option<String>| v.as_deref().map_or("null".into(), json_string);
-                let tooltip = string(&status, "tooltip");
-                // `text`, `tooltip` and `class` make this usable as a waybar module.
-                let text = label
-                    .clone()
-                    .or_else(|| engine.clone())
-                    .unwrap_or_else(|| "⌨".into());
-                let class = engine.clone().unwrap_or_else(|| "direct".into());
-                println!(
-                    "{{\"engine\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
-                    field(&engine),
-                    field(&label),
-                    field(&tooltip),
-                    json_string(&text),
-                    json_string(&class),
-                );
-            } else {
-                match (engine, label) {
-                    (None, _) => println!("direct input"),
-                    (Some(engine), Some(label)) => println!("{engine} ({label})"),
-                    (Some(engine), None) => println!("{engine}"),
-                }
-            }
+            println!("{}", format_status(&status, json));
         }
         DaemonCommand::Switch(engine) => {
             let target = if engine == "direct" {
@@ -386,6 +419,18 @@ mod tests {
             parse(&args("status --json")),
             Ok(Some(Command::Daemon(DaemonCommand::Status { json: true })))
         ));
+        assert!(matches!(
+            parse(&args("status --watch")),
+            Ok(Some(Command::Watch { json: false }))
+        ));
+        assert!(matches!(
+            parse(&args("status --json --watch")),
+            Ok(Some(Command::Watch { json: true }))
+        ));
+        assert!(matches!(
+            parse(&args("status --watch --json")),
+            Ok(Some(Command::Watch { json: true }))
+        ));
         assert!(
             matches!(parse(&args("switch echo")), Ok(Some(Command::Daemon(DaemonCommand::Switch(e)))) if e == "echo")
         );
@@ -432,5 +477,30 @@ mod tests {
     fn json_strings_are_escaped() {
         assert_eq!(json_string("a\"b\\c\n"), "\"a\\\"b\\\\c\\u000a\"");
         assert_eq!(json_string("中"), "\"中\"");
+    }
+
+    #[test]
+    fn status_lines_match_waybar() {
+        let status = HashMap::from([(
+            "engine".to_owned(),
+            OwnedVariant::try_from(zbus::Variant::from("echo")).unwrap(),
+        )]);
+        assert_eq!(format_status(&status, false), "echo");
+        assert_eq!(
+            format_status(&status, true),
+            "{\"engine\":\"echo\",\"label\":null,\"tooltip\":null,\
+             \"text\":\"echo\",\"class\":\"echo\"}"
+        );
+        assert_eq!(
+            format_status(&HashMap::new(), true),
+            "{\"engine\":null,\"label\":null,\"tooltip\":null,\
+             \"text\":\"⌨\",\"class\":\"direct\"}"
+        );
+        assert_eq!(format_stopped(false), "omimed is not running");
+        assert_eq!(
+            format_stopped(true),
+            "{\"engine\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
+             \"text\":\"⌨\",\"class\":\"stopped\"}"
+        );
     }
 }

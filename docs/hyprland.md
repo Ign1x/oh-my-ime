@@ -90,6 +90,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Reload the configuration | `omime reload` |
+| Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in
 `~/.config/oh-my-ime/config.toml`; [`data/config.toml`](../data/config.toml) documents
@@ -112,13 +113,14 @@ surfaces are not windows: switching in them counts for the window below.
 
 ### Waybar
 
-`omime status --json` prints `text`, `tooltip` and `class`, which waybar understands:
+`omime status --watch --json` prints the status and then one line per change, in the
+format waybar understands (`text`, `tooltip` and `class`), so waybar follows it without
+polling:
 
 ```json
 "custom/ime": {
-    "exec": "omime status --json",
+    "exec": "omime status --watch --json",
     "return-type": "json",
-    "interval": 1,
     "on-click": "omime toggle",
     "on-click-right": "omime next"
 }

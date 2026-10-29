@@ -178,7 +178,7 @@ end)
 | 下一个引擎 | `Ctrl+Shift+Space` 或 `omime next` |
 | 指定引擎 | `omime switch sparkle`、`omime switch direct` |
 | 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
-| 状态栏 | `omime status --json`（可直接用作 waybar 模块） |
+| 状态栏 | `omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 
 omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
 

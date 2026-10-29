@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   config.toml, each application gets back the engine last chosen in it, also after a
   restart. omimed learns the focused application from the compositor's
   `zwlr_foreign_toplevel_manager_v1`, and engines now receive its app id (`app-id`).
+- `omime status --watch [--json]` prints one line per change of the status, also while
+  omimed stops and starts, for status bars such as waybar; the control API's new
+  `StatusChanged` signal carries the changes.
 - `omime install <dir>` copies an engine directory into
   `~/.local/share/oh-my-ime/engines` after checking its manifest, and
   `omime uninstall <id>` removes it again; both work without a running omimed.
