@@ -79,6 +79,7 @@ pub struct TestEnv {
     dir: PathBuf,
     env: Vec<(String, String)>,
     children: Vec<Child>,
+    daemon: Option<Child>,
     daemon_log: PathBuf,
 }
 
@@ -155,6 +156,7 @@ impl TestEnv {
             daemon_log: dir.join("omimed.log"),
             dir,
             children: Vec::new(),
+            daemon: None,
         };
 
         let sway = env
@@ -211,26 +213,44 @@ impl TestEnv {
         let bus_path = env.dir.join("bus");
         wait_until("the session bus", || bus_path.exists().then_some(()))?;
 
-        let mut omimed = env.command(target.join("omimed"));
-        if let Some(engine) = start_engine {
+        env.start_daemon(start_engine)?;
+        Ok(env)
+    }
+
+    fn start_daemon(&mut self, engine: Option<&str>) -> anyhow::Result<()> {
+        let mut omimed = self.command(target_dir().join("omimed"));
+        if let Some(engine) = engine {
             omimed.args(["--engine", engine]);
         }
         let daemon = omimed
             .env("OMIME_LOG", "debug")
             // Headless sway renders with pixman and has no GPU buffers to offer.
             .env("SLINT_BACKEND", "winit-software")
-            .stderr(std::fs::File::create(&env.daemon_log)?)
+            .stderr(std::fs::File::create(&self.daemon_log)?)
             .spawn()
             .context("cannot start omimed (build the workspace first)")?;
-        env.children.push(daemon);
-        let log = env.daemon_log.clone();
+        self.daemon = Some(daemon);
+        let log = self.daemon_log.clone();
         wait_until("omimed to connect", || {
             std::fs::read_to_string(&log)
                 .ok()?
                 .contains("starting input method session")
                 .then_some(())
         })?;
-        Ok(env)
+        Ok(())
+    }
+
+    /// Stops omimed (SIGTERM, like a session ending) and starts it again without
+    /// `--engine`.
+    pub fn restart_daemon(&mut self) -> anyhow::Result<()> {
+        if let Some(mut daemon) = self.daemon.take() {
+            rustix::process::kill_process(
+                rustix::process::Pid::from_child(&daemon),
+                rustix::process::Signal::TERM,
+            )?;
+            daemon.wait()?;
+        }
+        self.start_daemon(None)
     }
 
     /// The runtime directory of this environment.
@@ -381,6 +401,10 @@ impl TestEnv {
 impl Drop for TestEnv {
     fn drop(&mut self) {
         // omimed first, so it can release the keyboard; the compositor last.
+        if let Some(mut daemon) = self.daemon.take() {
+            let _ = daemon.kill();
+            let _ = daemon.wait();
+        }
         for child in self.children.iter_mut().rev() {
             let _ = child.kill();
             let _ = child.wait();

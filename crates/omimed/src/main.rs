@@ -6,6 +6,7 @@ mod daemon;
 mod ime_state;
 mod keyboard;
 mod runtime_dir;
+mod state;
 mod wayland;
 
 use std::process::ExitCode;
@@ -20,7 +21,7 @@ routes keyboard input to input method engines.
 
 Options:
   --display <NAME>  Connect to this Wayland display instead of $WAYLAND_DISPLAY
-  --engine <ID>     Select this engine at startup (default: direct input)
+  --engine <ID>     Select this engine at startup (default: the last one used)
   -h, --help        Print this help
   -V, --version     Print the version
 

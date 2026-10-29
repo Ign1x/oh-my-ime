@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::control::{self, ControlRequest, ControlService};
 use crate::core::{Core, CoreEvent};
+use crate::state::State;
 use crate::wayland::Frontend;
 
 /// Options for [`run`].
@@ -80,6 +81,14 @@ fn load_config() -> Config {
     }
 }
 
+fn discover_engines() -> Vec<omime_proto::manifest::InstalledEngine> {
+    let (installed, problems) = manifest::discover(&omime_proto::paths::engine_dirs());
+    for (path, problem) in problems {
+        warn!("ignoring {}: {problem}", path.display());
+    }
+    installed
+}
+
 /// Why a compositor session ended.
 enum SessionEnd {
     /// We were asked to stop.
@@ -123,10 +132,7 @@ impl Daemon {
         };
 
         let config = load_config();
-        let (installed, problems) = manifest::discover(&omime_proto::paths::engine_dirs());
-        for (path, problem) in problems {
-            warn!("ignoring {}: {problem}", path.display());
-        }
+        let installed = discover_engines();
         if installed.is_empty() {
             warn!("no engines are installed; keys pass through unchanged");
         } else {
@@ -141,8 +147,23 @@ impl Daemon {
             .clone()
             .or_else(|| std::env::var("WAYLAND_DISPLAY").ok());
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
-        if let Some(service) = control.clone() {
-            core.set_switch_listener(move |engine| service.current_changed(engine));
+        let saved = State::load();
+        core.set_last_engine(saved.last.clone());
+        let service = control.clone();
+        core.set_switch_listener(move |current, last| {
+            State {
+                current: current.map(str::to_owned),
+                last: last.map(str::to_owned),
+            }
+            .save();
+            if let Some(service) = &service {
+                service.current_changed(current);
+            }
+        });
+        // Without --engine, start where the user left off.
+        let mut options = options;
+        if options.engine.is_none() {
+            options.engine = saved.current.filter(|e| core.is_enabled(e));
         }
         Ok(Self {
             options,
@@ -289,6 +310,12 @@ impl Daemon {
             }
             ControlRequest::Toggle(reply) => {
                 let _ = reply.send(result(self.core.toggle(frontend)));
+            }
+            ControlRequest::Reload(reply) => {
+                let config = load_config();
+                let installed = discover_engines();
+                self.core.reconfigure(&config, installed, frontend);
+                let _ = reply.send(Ok(()));
             }
         }
     }

@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 omime-proto.workspace = true
 anyhow.workspace = true
+toml_edit.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 

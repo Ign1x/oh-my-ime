@@ -256,21 +256,7 @@ impl EngineManager {
     ) -> Self {
         let slots = installed
             .into_iter()
-            .map(|installed| {
-                (
-                    installed.id().to_owned(),
-                    EngineSlot {
-                        installed,
-                        state: EngineState::Stopped,
-                        proxy: None,
-                        status: Status::default(),
-                        generation: 0,
-                        kill: None,
-                        crashes: Vec::new(),
-                        sockets_ready: false,
-                    },
-                )
-            })
+            .map(|installed| (installed.id().to_owned(), Self::slot(installed)))
             .collect();
         Self {
             slots,
@@ -278,6 +264,56 @@ impl EngineManager {
             ui_connections,
             host_display,
         }
+    }
+
+    fn slot(installed: InstalledEngine) -> EngineSlot {
+        EngineSlot {
+            installed,
+            state: EngineState::Stopped,
+            proxy: None,
+            status: Status::default(),
+            generation: 0,
+            kill: None,
+            crashes: Vec::new(),
+            sockets_ready: false,
+        }
+    }
+
+    /// Replaces the set of installed engines. Running engines keep running with their
+    /// old command until restarted; removed engines are stopped. Returns their ids.
+    pub fn update_installed(&mut self, installed: Vec<InstalledEngine>) -> Vec<String> {
+        let mut fresh: BTreeMap<String, InstalledEngine> = installed
+            .into_iter()
+            .map(|e| (e.id().to_owned(), e))
+            .collect();
+        let removed: Vec<String> = self
+            .slots
+            .keys()
+            .filter(|id| !fresh.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in &removed {
+            if let Some(mut slot) = self.slots.remove(id) {
+                info!(engine = id, "engine uninstalled");
+                if let Some(proxy) = slot.proxy.take() {
+                    tokio::task::spawn_local(async move {
+                        let _ = proxy.shutdown().await;
+                    });
+                }
+                // Dropping the kill sender lets the supervisor kill the process.
+                slot.kill.take();
+            }
+        }
+        for (id, slot) in &mut self.slots {
+            if let Some(installed) = fresh.remove(id) {
+                slot.installed = installed;
+            }
+        }
+        for (id, installed) in fresh {
+            info!(engine = id, "engine installed");
+            self.slots.insert(id, Self::slot(installed));
+        }
+        removed
     }
 
     pub fn get(&self, id: &str) -> Option<&EngineSlot> {

@@ -112,7 +112,7 @@ struct Context {
 }
 
 /// Callback for changes of the current engine.
-type SwitchListener = Box<dyn Fn(Option<&str>)>;
+type SwitchListener = Box<dyn Fn(Option<&str>, Option<&str>)>;
 
 /// One row of [`Core::engines`].
 #[derive(Debug, Clone)]
@@ -161,21 +161,7 @@ impl Core {
         ui_connections: mpsc::UnboundedSender<(String, OwnedFd)>,
         host_display: Option<String>,
     ) -> Self {
-        let ids: Vec<String> = installed.iter().map(|e| e.id().to_owned()).collect();
-        let enabled = match &config.engines {
-            Some(list) => list
-                .iter()
-                .filter(|id| {
-                    let known = ids.contains(id);
-                    if !known {
-                        warn!(engine = id.as_str(), "configured engine is not installed");
-                    }
-                    known
-                })
-                .cloned()
-                .collect(),
-            None => ids,
-        };
+        let enabled = enabled_engines(config, &installed);
         Self {
             engines: EngineManager::new(installed, events.clone(), ui_connections, host_display),
             enabled,
@@ -192,9 +178,47 @@ impl Core {
         }
     }
 
-    /// Registers a callback for changes of the current engine.
-    pub fn set_switch_listener(&mut self, listener: impl Fn(Option<&str>) + 'static) {
+    /// Registers a callback for changes of the current engine. It receives the current
+    /// and the previous engine (`None` is direct input).
+    pub fn set_switch_listener(&mut self, listener: impl Fn(Option<&str>, Option<&str>) + 'static) {
         self.on_switch = Some(Box::new(listener));
+    }
+
+    /// Restores the engine `toggle` returns to, e.g. from saved state.
+    pub fn set_last_engine(&mut self, engine: Option<String>) {
+        self.last_engine = engine.filter(|e| self.engines.get(e).is_some());
+    }
+
+    /// Whether `id` is installed and enabled.
+    pub fn is_enabled(&self, id: &str) -> bool {
+        self.enabled.iter().any(|e| e == id)
+    }
+
+    /// Applies a new configuration and set of installed engines.
+    pub fn reconfigure(
+        &mut self,
+        config: &Config,
+        installed: Vec<InstalledEngine>,
+        frontend: &mut Frontend,
+    ) {
+        self.enabled = enabled_engines(config, &installed);
+        self.hotkeys = parse_hotkeys(config);
+        self.key_timeout = Duration::from_millis(config.engine.key_timeout_ms.max(1));
+        let removed = self.engines.update_installed(installed);
+        // An engine that was disabled or uninstalled cannot stay in use.
+        if self.current.as_ref().is_some_and(|c| !self.is_enabled(c))
+            && let Err(e) = self.switch_to(None, frontend)
+        {
+            warn!("{e:#}");
+        }
+        if self
+            .last_engine
+            .as_ref()
+            .is_some_and(|l| removed.contains(l))
+        {
+            self.last_engine = None;
+        }
+        info!(enabled = self.enabled.join(", "), "configuration reloaded");
     }
 
     pub fn current(&self) -> Option<&str> {
@@ -688,7 +712,7 @@ impl Core {
             }
         }
         if let Some(listener) = &self.on_switch {
-            listener(self.current.as_deref());
+            listener(self.current.as_deref(), self.last_engine.as_deref());
         }
         Ok(())
     }
@@ -734,6 +758,26 @@ impl Core {
 
     pub fn shutdown(&mut self) {
         self.engines.shutdown();
+    }
+}
+
+/// The enabled engines in switching order: the configured list (minus what is not
+/// installed) or every installed engine.
+fn enabled_engines(config: &Config, installed: &[InstalledEngine]) -> Vec<String> {
+    let ids: Vec<String> = installed.iter().map(|e| e.id().to_owned()).collect();
+    match &config.engines {
+        Some(list) => list
+            .iter()
+            .filter(|id| {
+                let known = ids.contains(id);
+                if !known {
+                    warn!(engine = id.as_str(), "configured engine is not installed");
+                }
+                known
+            })
+            .cloned()
+            .collect(),
+        None => ids,
     }
 }
 

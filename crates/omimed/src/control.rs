@@ -20,6 +20,7 @@ pub enum ControlRequest {
     Switch(Option<String>, oneshot::Sender<Result<(), String>>),
     Next(oneshot::Sender<Result<(), String>>),
     Toggle(oneshot::Sender<Result<(), String>>),
+    Reload(oneshot::Sender<Result<(), String>>),
 }
 
 struct ControlObject {
@@ -76,6 +77,11 @@ impl ControlObject {
     /// Switches between direct input and the last engine.
     async fn toggle(&self) -> zbus::fdo::Result<()> {
         failed(self.ask(ControlRequest::Toggle).await?)
+    }
+
+    /// Reads the configuration again and looks for newly installed or removed engines.
+    async fn reload(&self) -> zbus::fdo::Result<()> {
+        failed(self.ask(ControlRequest::Reload).await?)
     }
 
     /// Emitted when the current engine changes (empty for direct input).

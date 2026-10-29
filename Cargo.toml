@@ -17,6 +17,7 @@ omime-sdk = { path = "crates/omime-sdk", version = "0.1.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
+toml_edit = "0.23"
 # Members enable what they need; `omime-proto` only uses the wire types.
 zbus = { version = "6.1", default-features = false }
 thiserror = "2"
