@@ -9,10 +9,10 @@
 //! `OMIME_E2E_INSTALL_DIR` at its `bin` directory (for example `result/bin` of the Nix
 //! package); the test tools still come from the target directory.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -389,6 +389,36 @@ impl TestEnv {
         Ok(Editor { child, lines })
     }
 
+    /// Opens a client of the Fcitx5 module protocol and waits until it has an input
+    /// context.
+    pub fn fcitx_client(&self, args: &[&str]) -> anyhow::Result<FcitxClient> {
+        let mut child = self
+            .command(target_dir().join("omime-fcitx-client"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("cannot start omime-fcitx-client")?;
+        let stdin = child.stdin.take().context("no stdin")?;
+        let stdout = child.stdout.take().context("no stdout")?;
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                sink.lock().unwrap_or_else(|p| p.into_inner()).push(line);
+            }
+        });
+        let client = FcitxClient {
+            child,
+            stdin: Mutex::new(Some(stdin)),
+            lines,
+        };
+        client.wait_for("the Fcitx client to be ready", |l| {
+            l.strip_prefix("ready ").is_some()
+        })?;
+        Ok(client)
+    }
+
     /// Clicks with the cursor of `seat` at (`x`, `y`) of the output, which gives that
     /// seat's keyboard focus to the window there.
     pub fn click_on_seat(&self, seat: &str, x: u32, y: u32) -> anyhow::Result<()> {
@@ -537,6 +567,54 @@ impl Drop for TestEnv {
         } else {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+}
+
+/// A client of the Fcitx5 module protocol (`omime-fcitx-client`).
+pub struct FcitxClient {
+    child: Child,
+    stdin: Mutex<Option<ChildStdin>>,
+    lines: Arc<Mutex<Vec<String>>>,
+}
+
+impl std::fmt::Debug for FcitxClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FcitxClient").finish_non_exhaustive()
+    }
+}
+
+impl FcitxClient {
+    /// All lines printed so far.
+    pub fn lines(&self) -> Vec<String> {
+        self.lines.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Sends one command line to the client.
+    pub fn send(&self, line: &str) -> anyhow::Result<()> {
+        let mut stdin = self.stdin.lock().unwrap_or_else(|p| p.into_inner());
+        let stdin = stdin.as_mut().context("the client's stdin is closed")?;
+        writeln!(stdin, "{line}")?;
+        stdin.flush()?;
+        Ok(())
+    }
+
+    /// Waits for a line matching `pred` and returns it.
+    pub fn wait_for(&self, what: &str, pred: impl Fn(&str) -> bool) -> anyhow::Result<String> {
+        wait_until(what, || self.lines().into_iter().find(|l| pred(l)))
+    }
+
+    /// Kills the client, as when an application crashes.
+    pub fn kill(&mut self) -> anyhow::Result<()> {
+        self.child.kill()?;
+        self.child.wait()?;
+        Ok(())
+    }
+}
+
+impl Drop for FcitxClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 

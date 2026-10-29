@@ -12,12 +12,14 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 omime-sdk.workspace = true
+tokio.workspace = true
 xkbcommon.workspace = true
 rustix = { workspace = true, features = ["process"] }
 wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-misc.workspace = true
 wayland-protocols-wlr.workspace = true
+zbus = { workspace = true, features = ["tokio"] }
 
 [dev-dependencies]
 rustix = { workspace = true, features = ["process"] }

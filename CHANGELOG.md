@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Applications using the Fcitx5 GTK or Qt input method module (`GTK_IM_MODULE=fcitx`,
+  `QT_IM_MODULE=fcitx`), such as X11 applications under XWayland, type through omimed's
+  engines: omimed serves the Fcitx5 module protocol under `org.fcitx.Fcitx5` and
+  `org.freedesktop.portal.Fcitx` whenever fcitx5 does not hold those names. Engine
+  windows do not follow these applications' text cursor yet.
+
 ## [0.2.0] - 2026-10-30
 
 ### Added

@@ -2857,11 +2857,13 @@ dependencies = [
  "anyhow",
  "omime-sdk",
  "rustix 1.1.6",
+ "tokio",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "xkbcommon",
+ "zbus 6.1.0",
 ]
 
 [[package]]
