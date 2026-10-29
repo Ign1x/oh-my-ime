@@ -119,11 +119,12 @@ flowchart LR
 | Wayland 前端：`input-method-v2`、键盘抓取、虚拟键盘、按键重复 | ✅ |
 | 引擎宿主：发现、启动、监护、崩溃重启、协议 v1 | ✅ |
 | Rust SDK（`omime-sdk`）与 `echo` 测试引擎 | ✅ |
-| 切换：热键、`omime` 命令行、D-Bus 控制接口 | ✅ |
+| 切换：热键、`omime` 命令行、D-Bus 控制接口，记住上次使用的引擎 | ✅ |
+| 配置：启用的引擎、热键、超时；`omime enable/disable/reload` | ✅ |
 | 密码与 PIN 输入框绕过引擎 | ✅ |
 | UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
-| 配置文件、按应用记忆、安装/卸载 | 🚧 M4 / v0.2 |
+| 按应用记忆引擎、`omime install/doctor`、多 seat 验证 | 📅 v0.2 |
 | X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 阶段 2 |
 | 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 阶段 3 · 🧩 兼容 |
 | 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
@@ -142,39 +143,36 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 | KDE Plasma（KWin） | 仅 IM v1 | 需要 IM v1 前端（后续） |
 | GNOME（Mutter） | 无 IM 协议（仅 IBus D-Bus） | 暂无计划 |
 
-## 试用
-
-oh-my-ime 是一个 Rust workspace。用 Nix 开发环境可以一次性获得全部原生依赖和测试用合成器：
+## 快速开始
 
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop                       # 或：direnv allow
-cargo build --workspace
+nix develop                       # 或者准备 Rust 工具链，以及 wayland、libxkbcommon、
+                                  # dbus、fontconfig 的开发文件
+scripts/install.sh                # 编译并安装到 ~/.local
 ```
 
-如果不用 Nix，需要准备：
+先停止其他输入法（fcitx5、IBus），再让 omimed 随 Hyprland 启动：
 
-- Rust 工具链（版本固定在 `rust-toolchain.toml` 中）；
-- `pkg-config`；
-- `wayland`、`libxkbcommon`、`dbus` 的开发文件。
-
-然后在没有运行其他输入法的 Hyprland（或 sway）会话中执行：
-
-```sh
-PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
-omime list                        # 已安装的引擎
-omime switch sparkle              # 或按 Ctrl+Shift+Space
+```lua
+-- ~/.config/hypr/hyprland.lua
+hl.on("hyprland.start", function()
+    hl.exec_cmd("omimed")
+end)
 ```
 
-在任意 Wayland 应用中输入 `:rocket`，然后从 Sparkle 的卡片中挑选。
-`omime switch echo` 会切换到测试引擎，它把单词以大写形式上屏。
+如果使用旧版 `hyprland.conf`，写 `exec-once = omimed` 即可。之后在任意 Wayland 应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。
 
-- `Ctrl+Space`：在直接输入和上一个引擎之间切换。
-- `Ctrl+Shift+Space`：轮换引擎。
-- `omime status --json`：可供状态栏使用。
+| 操作 | 方式 |
+|---|---|
+| 在直接输入与上一个引擎之间切换 | `Ctrl+Space` |
+| 下一个引擎 | `Ctrl+Shift+Space` 或 `omime next` |
+| 指定引擎 | `omime switch sparkle`、`omime switch direct` |
+| 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload` |
+| 状态栏 | `omime status --json`（可直接用作 waybar 模块） |
 
-把 omimed 安装到 `PATH` 后，在 Hyprland 配置中加入 `exec-once = omimed` 即可随 Hyprland 自动启动。
+omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排查见 [docs/hyprland.md](docs/hyprland.md)（英文）。
 
 - 编写自己的引擎：[docs/writing-an-engine.md](docs/writing-an-engine.md)（英文）
 - 参与开发：[docs/development.md](docs/development.md)（英文）
@@ -186,7 +184,7 @@ omime switch sparkle              # 或按 Ctrl+Shift+Space
    - M1：Wayland 前端 + UI Bridge 验证 ✅
    - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
    - M3：完整 UI Bridge + Slint 示例输入法 ✅
-   - M4：管理功能与健壮性
+   - M4：管理功能与健壮性 ✅ → `v0.1.0`
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证
 4. **阶段 2**：X11/XWayland：XIM 桥与 Fcitx IM 模块 D-Bus 协议
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus

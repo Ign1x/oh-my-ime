@@ -84,18 +84,28 @@ compositor's point of view, the input method's own surfaces.
   removed so toolkits cannot silently fall back to X11. The daemon accepts connections itself,
   so it always knows which engine a client belongs to.
 - **Global filtering.** Engines see a virtual registry. It contains the globals a UI needs
-  (compositor, subcompositor, shm, seat without keyboard capability, outputs, linux-dmabuf,
-  viewporter, fractional scale, cursor shape, single-pixel buffer, presentation time) and hides
-  everything else (data devices, text input, input method, virtual keyboard, layer shell,
-  capture protocols).
-- **Virtual `xdg_shell`.** Engines create an ordinary frameless `xdg_toplevel`. The bridge never
-  forwards xdg objects. It answers the initial commit with `configure(0, 0, [])` and dismisses
-  `xdg_popup`s immediately.
-- **Popup lifecycle.** Each engine surface receives the input-popup role once, right before the
-  commit that should map it, and keeps that role for life. To hide it, the bridge injects
-  `attach(NULL)` + `commit`. While hidden, it answers frame callbacks and releases buffers on
-  the compositor's behalf, so toolkits never stall. To show it again, the bridge sends a
-  configure and forwards the engine's next commit. Only the active engine's popup is visible.
+  (compositor, subcompositor, shm, seat without keyboard capability, outputs, xdg-output,
+  linux-dmabuf, viewporter, fractional scale, cursor shape, single-pixel buffer,
+  presentation time) and hides everything else (text input, input method, virtual
+  keyboard, layer shell, capture protocols). Binds are checked against the advertised
+  version and performed on the daemon's own registry. The daemon learns about globals
+  synchronously, so an engine never finishes its first roundtrip with an incomplete
+  registry.
+- **Virtual protocols.** `xdg_wm_base` is answered by the bridge: an engine creates an
+  ordinary frameless `xdg_toplevel`, the bridge answers the initial commit with
+  `configure(0, 0, [])` and dismisses `xdg_popup`s. A virtual
+  `zxdg_decoration_manager_v1` always says "server side", so toolkits drop their title
+  bars, and a virtual `wl_data_device_manager` gives toolkits that insist on one an empty
+  clipboard: engines never see the user's clipboard.
+- **Popup lifecycle.** Each engine surface receives the input-popup role once, right
+  before the commit that should map it, and keeps it for life. Windows are hidden until
+  their engine calls `SetPopupVisible(true)`, and only the active engine's windows are
+  shown. To hide a window, the bridge injects `attach(NULL)` + `commit` and swallows the
+  compositor's release of the last buffer, holding it on the compositor's behalf; showing
+  the window again re-attaches that buffer instantly, without waiting for the toolkit to
+  draw. Buffers committed while hidden replace the held one.
+- **Scale.** Compositors report an input popup's fractional scale only once it is
+  mapped; the bridge hands the last known scale to new engine surfaces right away.
 - **Input routing.** Pointer `enter`, `motion`, `button`, `axis` and `frame` go only to the
   engine whose surface the pointer entered. `wl_surface.enter(output)` and similar events are
   filtered by owner.
@@ -103,9 +113,11 @@ compositor's point of view, the input method's own surfaces.
   dependency order: popup role, then surface extensions, subsurfaces, surfaces, buffers and
   pools, and finally seat and output objects. If an engine destroys a surface itself, the popup
   role is destroyed first.
-- **Failure handling.** A protocol error on a virtual object only disconnects that engine. A
-  protocol error on the shared connection is fatal to it; the daemon then rebuilds the
-  connection, binds the input method again and restarts the engines.
+- **Failure handling.** Requests that compositors treat as fatal and that are easy to
+  check (shm pools and buffers, bind versions, virtual objects) are validated, and a
+  broken engine is disconnected on its own. Anything else that makes the compositor
+  close the shared connection makes the daemon reconnect, bind the input method again
+  and restart the engines; the end-to-end tests cover this.
 
 ## Engine protocol (v1)
 

@@ -116,11 +116,12 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Wayland frontend: `input-method-v2`, keyboard grab, virtual keyboard, key repeat | ✅ |
 | Engine host: discovery, launch, supervision, crash restart, protocol v1 | ✅ |
 | Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
-| Switching: hotkeys, `omime` CLI, D-Bus control API | ✅ |
+| Switching: hotkeys, `omime` CLI, D-Bus control API, last engine remembered | ✅ |
+| Configuration: enabled engines, hotkeys, timeouts; `omime enable/disable/reload` | ✅ |
 | Password and PIN fields bypass engines | ✅ |
 | UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
-| Config file, per-app memory, install/uninstall | 🚧 M4 / v0.2 |
+| Per-app engine memory, `omime install/doctor`, multi-seat validation | 📅 v0.2 |
 | X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 Phase 2 |
 | Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
 | Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
@@ -139,35 +140,38 @@ and `zwp_virtual_keyboard_v1`.
 | KDE Plasma (KWin) | IM v1 only | needs an IM v1 frontend (later) |
 | GNOME (Mutter) | no IM protocol (IBus D-Bus only) | not planned yet |
 
-## Try it
-
-oh-my-ime is a Rust workspace. The Nix dev shell provides every native dependency and
-the compositors used for testing:
+## Getting started
 
 ```sh
 git clone https://github.com/Ign1x/oh-my-ime
 cd oh-my-ime
-nix develop                       # or: direnv allow
-cargo build --workspace
+nix develop                       # or a Rust toolchain plus the wayland, libxkbcommon,
+                                  # dbus and fontconfig development files
+scripts/install.sh                # builds and installs into ~/.local
 ```
 
-Without Nix you need a Rust toolchain (pinned in `rust-toolchain.toml`), `pkg-config`,
-and the development files of `wayland`, `libxkbcommon` and `dbus`.
+Stop any other input method (fcitx5, IBus), then start omimed with Hyprland:
 
-Then, inside a Hyprland (or sway) session where no other input method is running:
-
-```sh
-PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
-omime list                        # installed engines
-omime switch sparkle              # or press Ctrl+Shift+Space
+```lua
+-- ~/.config/hypr/hyprland.lua
+hl.on("hyprland.start", function()
+    hl.exec_cmd("omimed")
+end)
 ```
 
-Type `:rocket` into any Wayland application and pick from Sparkle's deck; `omime switch
-echo` selects the test engine, which commits words in UPPERCASE. `Ctrl+Space` toggles between direct input and the last engine,
-`Ctrl+Shift+Space` cycles through engines, `omime status --json` feeds status bars.
+(or `exec-once = omimed` in a legacy `hyprland.conf`). Then type `:rocket` into any
+Wayland application and pick from Sparkle's deck.
 
-To run omimed with Hyprland automatically, add `exec-once = omimed` to your Hyprland
-configuration once it is installed in your `PATH`.
+| What | How |
+|---|---|
+| Toggle direct input ↔ last engine | `Ctrl+Space` |
+| Next engine | `Ctrl+Shift+Space` or `omime next` |
+| Pick an engine | `omime switch sparkle`, `omime switch direct` |
+| Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload` |
+| Status bars | `omime status --json` (works as a waybar module) |
+
+omimed remembers the engine you used last. The full setup, a waybar snippet and
+troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 
 - Writing your own engine: [docs/writing-an-engine.md](docs/writing-an-engine.md)
 - Hacking on oh-my-ime: [docs/development.md](docs/development.md)
@@ -179,7 +183,7 @@ configuration once it is installed in your `PATH`.
    - M1: Wayland frontend + UI Bridge spike ✅
    - M2: engine host, protocol v1, Rust SDK, basic switching ✅
    - M3: complete UI Bridge + Slint demo engine ✅
-   - M4: management and robustness
+   - M4: management and robustness ✅ → `v0.1.0`
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat validation
 4. **Phase 2** — X11/XWayland: XIM bridge and the Fcitx IM-module D-Bus protocol
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2`
