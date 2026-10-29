@@ -15,6 +15,12 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/images/sparkle-in-foot.png" alt="示例引擎 Sparkle：用 Slint 自绘的 emoji 卡片跟随文本光标（Hyprland 上的 foot 终端）" width="760">
+  <br>
+  <sub>示例引擎 <a href="engines/sparkle">Sparkle</a>：界面完全由它自己用 Slint 绘制，oh-my-ime 将其变成输入法弹窗（Hyprland 上的 foot 终端）。</sub>
+</p>
+
 > [!WARNING]
 > **oh-my-ime 仍处于早期开发阶段，目前还不能替代你正在使用的输入法。**
 > 本文介绍我们正在构建的架构；哪些功能已经可用，以[开发状态](#开发状态)表格为准。
@@ -115,8 +121,8 @@ flowchart LR
 | Rust SDK（`omime-sdk`）与 `echo` 测试引擎 | ✅ |
 | 切换：热键、`omime` 命令行、D-Bus 控制接口 | ✅ |
 | 密码与 PIN 输入框绕过引擎 | ✅ |
-| UI Bridge：引擎窗口成为输入法弹窗（切换、点击、崩溃清理） | ✅ 已在 sway 与 Hyprland 验证，M3 继续完善 |
-| 拥有独立动画 UI 的示例输入法（Slint） | 🚧 下一步（M3） |
+| UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
+| 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
 | 配置文件、按应用记忆、安装/卸载 | 🚧 M4 / v0.2 |
 | X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 阶段 2 |
 | 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 阶段 3 · 🧩 兼容 |
@@ -158,10 +164,11 @@ cargo build --workspace
 ```sh
 PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
 omime list                        # 已安装的引擎
-omime switch echo                 # 或按 Ctrl+Space
+omime switch sparkle              # 或按 Ctrl+Shift+Space
 ```
 
-在任意 Wayland 应用中打字：单词会先以行内预编辑显示，再以大写形式上屏。
+在任意 Wayland 应用中输入 `:rocket`，然后从 Sparkle 的卡片中挑选。
+`omime switch echo` 会切换到测试引擎，它把单词以大写形式上屏。
 
 - `Ctrl+Space`：在直接输入和上一个引擎之间切换。
 - `Ctrl+Shift+Space`：轮换引擎。
@@ -178,7 +185,7 @@ omime switch echo                 # 或按 Ctrl+Space
 2. **阶段 1：Hyprland MVP**（`v0.1.0`）
    - M1：Wayland 前端 + UI Bridge 验证 ✅
    - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
-   - M3：完整 UI Bridge + Slint 示例输入法
+   - M3：完整 UI Bridge + Slint 示例输入法 ✅
    - M4：管理功能与健壮性
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证
 4. **阶段 2**：X11/XWayland：XIM 桥与 Fcitx IM 模块 D-Bus 协议
@@ -211,3 +218,7 @@ omime switch echo                 # 或按 Ctrl+Space
 
 除非你另有明确声明，你有意提交并被本项目收录的任何贡献（依 Apache-2.0 许可证的定义），
 均按上述双许可证授权，不附加任何其他条款或条件。
+
+示例引擎 [Sparkle](engines/sparkle) 依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；平台本身不依赖 Slint。
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

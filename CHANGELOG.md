@@ -27,4 +27,8 @@ All notable changes to this project are documented here. The format follows
   `omime-sdk`.
 - `omime` CLI: `list`, `status [--json]`, `switch`, `next`, `toggle`.
 - `echo` engine for tests and as a tutorial.
+- `sparkle` demo engine: emoji by `:shortcode` from an animated deck drawn with Slint,
+  with mouse selection and an arrow that follows the text cursor.
+- UI bridge: engine windows are hidden until their engine calls `SetPopupVisible(true)`;
+  the last fractional scale is handed to new engine windows.
 - End-to-end tests in a private headless sway session, run in CI.

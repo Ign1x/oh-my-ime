@@ -15,6 +15,12 @@ English · [简体中文](README.zh-CN.md)
 
 </div>
 
+<p align="center">
+  <img src="docs/images/sparkle-in-foot.png" alt="The Sparkle demo engine: a Slint-drawn emoji deck following the text cursor in foot on Hyprland" width="760">
+  <br>
+  <sub><a href="engines/sparkle">Sparkle</a>, a demo engine: its own Slint UI, turned into an input-method popup by oh-my-ime (foot on Hyprland).</sub>
+</p>
+
 > [!WARNING]
 > **oh-my-ime is in early development.** It cannot replace your current input method yet.
 > This README describes the architecture we are building, and the [status table](#status)
@@ -112,8 +118,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
 | Switching: hotkeys, `omime` CLI, D-Bus control API | ✅ |
 | Password and PIN fields bypass engines | ✅ |
-| UI Bridge: engine windows become IME popups (switching, clicks, crash cleanup) | ✅ verified on sway and Hyprland, polishing in M3 |
-| Demo engine with its own animated UI (Slint) | 🚧 next (M3) |
+| UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
+| Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
 | Config file, per-app memory, install/uninstall | 🚧 M4 / v0.2 |
 | X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 Phase 2 |
 | Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
@@ -153,11 +159,11 @@ Then, inside a Hyprland (or sway) session where no other input method is running
 ```sh
 PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed &
 omime list                        # installed engines
-omime switch echo                 # or press Ctrl+Space
+omime switch sparkle              # or press Ctrl+Shift+Space
 ```
 
-Type into any Wayland application: words appear as an inline preedit and are committed
-in UPPERCASE. `Ctrl+Space` toggles between direct input and the last engine,
+Type `:rocket` into any Wayland application and pick from Sparkle's deck; `omime switch
+echo` selects the test engine, which commits words in UPPERCASE. `Ctrl+Space` toggles between direct input and the last engine,
 `Ctrl+Shift+Space` cycles through engines, `omime status --json` feeds status bars.
 
 To run omimed with Hyprland automatically, add `exec-once = omimed` to your Hyprland
@@ -172,7 +178,7 @@ configuration once it is installed in your `PATH`.
 2. **Phase 1 — Hyprland MVP** (`v0.1.0`)
    - M1: Wayland frontend + UI Bridge spike ✅
    - M2: engine host, protocol v1, Rust SDK, basic switching ✅
-   - M3: complete UI Bridge + Slint demo engine
+   - M3: complete UI Bridge + Slint demo engine ✅
    - M4: management and robustness
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat validation
 4. **Phase 2** — X11/XWayland: XIM bridge and the Fcitx IM-module D-Bus protocol
@@ -200,7 +206,7 @@ Contributions are very welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) f
 
 ## License
 
-Licensed under either of
+oh-my-ime is licensed under either of
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
@@ -210,3 +216,8 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
 in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
 without any additional terms or conditions.
+
+The [Sparkle](engines/sparkle) demo engine uses [Slint](https://slint.dev) under the
+Slint Royalty-free License; the platform itself does not depend on Slint.
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
