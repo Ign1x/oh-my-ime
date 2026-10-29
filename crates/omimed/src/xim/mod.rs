@@ -425,36 +425,54 @@ impl XimFrontend {
 
     /// Handles everything the X server sent.
     pub fn dispatch(&mut self) -> anyhow::Result<()> {
-        while let Some(event) = self.server.conn().poll_for_event()? {
-            match &event {
-                Event::MappingNotify(_) => {
-                    self.handler.keymap = Keymap::load(self.server.conn())?;
-                }
-                Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
-                    self.monitors = load_monitors(self.server.conn(), self.handler.root);
-                }
-                // The `xim` crate ignores this answer; it lets the next request out.
-                Event::ClientMessage(msg)
-                    if msg.type_ == self.xim_protocol && is_sync_reply(self.server.conn(), msg) =>
-                {
-                    self.waiting = None;
-                }
-                Event::DestroyNotify(notify) => self.client_gone(notify.window),
-                _ => {}
+        self.process()
+    }
+
+    /// Handles what the X server sent and sends what is queued, until neither is left.
+    ///
+    /// Sending can wait for a reply (the `xim` crate interns an atom for every long
+    /// message), and x11rb queues whatever arrives meanwhile. The socket does not wake us
+    /// again for that, so an application's request could wait for the next unrelated
+    /// event, and the application with it.
+    fn process(&mut self) -> anyhow::Result<()> {
+        loop {
+            while let Some(event) = self.server.conn().poll_for_event()? {
+                self.handle_event(&event)?;
             }
-            self.handler.com_win = match &event {
-                Event::ClientMessage(msg) if msg.type_ == self.xim_protocol => Some(msg.window),
-                _ => None,
-            };
-            if let Err(e) =
-                self.server
-                    .filter_event(&event, &mut self.connections, &mut self.handler)
-            {
-                debug!("XIM: {e}");
+            if !self.send_queued() {
+                return self.flush();
             }
         }
-        self.send_queued();
-        self.flush()
+    }
+
+    fn handle_event(&mut self, event: &Event) -> anyhow::Result<()> {
+        match event {
+            Event::MappingNotify(_) => {
+                self.handler.keymap = Keymap::load(self.server.conn())?;
+            }
+            Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
+                self.monitors = load_monitors(self.server.conn(), self.handler.root);
+            }
+            // The `xim` crate ignores this answer; it lets the next request out.
+            Event::ClientMessage(msg)
+                if msg.type_ == self.xim_protocol && is_sync_reply(self.server.conn(), msg) =>
+            {
+                self.waiting = None;
+            }
+            Event::DestroyNotify(notify) => self.client_gone(notify.window),
+            _ => {}
+        }
+        self.handler.com_win = match event {
+            Event::ClientMessage(msg) if msg.type_ == self.xim_protocol => Some(msg.window),
+            _ => None,
+        };
+        if let Err(e) = self
+            .server
+            .filter_event(event, &mut self.connections, &mut self.handler)
+        {
+            debug!("XIM: {e}");
+        }
+        Ok(())
     }
 
     /// Ends the input contexts of an application whose client window is gone.
@@ -487,27 +505,28 @@ impl XimFrontend {
         if self.deadline().is_some_and(|deadline| deadline <= now) {
             debug!("XIM: an application did not answer in time");
             self.waiting = None;
-            self.send_queued();
         }
-        self.flush()
+        self.process()
     }
 
-    /// Queues `request` for `client_win`. A `sync` request holds back what follows until
-    /// the application consumed it.
+    /// Queues `request` for `client_win`, for [`Self::process`] to send. A `sync` request
+    /// holds back what follows until the application consumed it.
     fn send(&mut self, client_win: u32, request: Request, sync: bool) {
         self.queue.push_back(Queued {
             client_win,
             request,
             sync,
         });
-        self.send_queued();
     }
 
-    fn send_queued(&mut self) {
+    /// Sends queued requests up to the next synchronous one. Returns whether it sent any.
+    fn send_queued(&mut self) -> bool {
+        let mut sent = false;
         while self.waiting.is_none() {
             let Some(queued) = self.queue.pop_front() else {
                 break;
             };
+            sent = true;
             if let Err(e) = self.server.send_req(queued.client_win, queued.request) {
                 debug!("XIM: {e}");
                 continue;
@@ -516,6 +535,7 @@ impl XimFrontend {
                 self.waiting = Some((Instant::now(), queued.client_win));
             }
         }
+        sent
     }
 
     fn flush(&self) -> anyhow::Result<()> {
@@ -563,7 +583,7 @@ impl XimFrontend {
         };
         if !handled {
             self.forward(pending.ic, pending.event);
-            let _ = self.flush();
+            let _ = self.process();
         }
     }
 
@@ -623,14 +643,14 @@ impl XimFrontend {
                 }
             }
         }
-        let _ = self.flush();
+        let _ = self.process();
     }
 
     /// Removes any preedit from the field `ctx`.
     pub fn clear_preedit(&mut self, ctx: ContextId) {
         if let Some(key) = self.find(ctx) {
             self.draw_preedit(key, &Preedit::default());
-            let _ = self.flush();
+            let _ = self.process();
         }
     }
 
