@@ -75,6 +75,9 @@ impl App {
         let Some(ti) = &self.text_input else { return };
         let cursor = self.text.len() as i32;
         ti.set_surrounding_text(self.text.clone(), cursor, cursor);
+        // Pretend to be a monospace editor: 8 px per character on a 20 px line.
+        let column = self.text.chars().count() as i32;
+        ti.set_cursor_rectangle(12 + 8 * column, 20, 2, 18);
         ti.set_text_change_cause(zwp_text_input_v3::ChangeCause::InputMethod);
         ti.set_content_type(
             zwp_text_input_v3::ContentHint::from_bits_truncate(self.hints),

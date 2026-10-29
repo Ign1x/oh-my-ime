@@ -56,6 +56,15 @@ pub struct TestEngine {
     pub args: Vec<String>,
 }
 
+/// The `sparkle` engine from `engines/sparkle`.
+pub fn sparkle_engine() -> TestEngine {
+    TestEngine {
+        id: "sparkle",
+        binary: "omime-sparkle",
+        args: Vec::new(),
+    }
+}
+
 /// The `echo` engine from `engines/echo`.
 pub fn echo_engine() -> TestEngine {
     TestEngine {
@@ -111,9 +120,11 @@ impl TestEnv {
                 ),
             )?;
         }
+        // No borders or title bars: windows start at the output's origin, so tests can
+        // compute where popups appear.
         std::fs::write(
             dir.join("sway.conf"),
-            "output HEADLESS-1 resolution 1280x720\n",
+            "output HEADLESS-1 resolution 1280x720\ndefault_border none\n",
         )?;
 
         let mut env = TestEnv {
@@ -167,13 +178,32 @@ impl TestEnv {
         })?;
         env.env.push(("WAYLAND_DISPLAY".into(), socket));
 
+        // A private bus without service activation, so that clients asking for portals
+        // and the like cannot launch the developer's desktop services.
+        let bus_config = env.dir.join("bus.conf");
+        std::fs::write(
+            &bus_config,
+            format!(
+                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:path={}</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#,
+                env.dir.join("bus").display()
+            ),
+        )?;
         let bus = env
             .command("dbus-daemon")
-            .args(["--session", "--nofork", "--nopidfile"])
-            .arg(format!(
-                "--address=unix:path={}",
-                env.dir.join("bus").display()
-            ))
+            .args(["--nofork", "--nopidfile"])
+            .arg(format!("--config-file={}", bus_config.display()))
             .stdout(Stdio::null())
             .spawn()
             .context("cannot start dbus-daemon")?;
@@ -187,6 +217,8 @@ impl TestEnv {
         }
         let daemon = omimed
             .env("OMIME_LOG", "debug")
+            // Headless sway renders with pixman and has no GPU buffers to offer.
+            .env("SLINT_BACKEND", "winit-software")
             .stderr(std::fs::File::create(&env.daemon_log)?)
             .spawn()
             .context("cannot start omimed (build the workspace first)")?;
@@ -294,6 +326,21 @@ impl TestEnv {
             command.args(["-m", m]);
         }
         self.run(&mut command)
+    }
+
+    /// Clicks at `(x, y)` on the output with a virtual pointer.
+    pub fn click(&self, x: u32, y: u32) -> anyhow::Result<()> {
+        self.run(self.command(target_dir().join("omime-pointer")).args([
+            "HEADLESS-1",
+            &x.to_string(),
+            &y.to_string(),
+            "left",
+        ]))
+    }
+
+    /// Takes a screenshot of the output.
+    pub fn screenshot(&self, path: &Path) -> anyhow::Result<()> {
+        self.run(self.command("grim").arg(path))
     }
 
     /// Runs the `omime` CLI and returns its output.

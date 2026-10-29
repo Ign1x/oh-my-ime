@@ -130,3 +130,42 @@ fn a_crashing_engine_is_restarted() -> anyhow::Result<()> {
     editor.wait_for_text("AB cd EF ")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn sparkle_inserts_emoji_with_keys_and_clicks() -> anyhow::Result<()> {
+    use omime_e2e::harness::sparkle_engine;
+
+    let env = TestEnv::start(&[sparkle_engine()], Some("sparkle"))?;
+    env.wait_for_log("engine window created")?;
+    let editor = env.editor(&[])?;
+
+    env.type_text(":rocket")?;
+    editor.wait_for("the :rocket preedit", |l| {
+        l.starts_with("preedit \":rocket\"")
+    })?;
+    env.key(&[], "space")?;
+    editor.wait_for_text("🚀")?;
+
+    env.type_text(":heart")?;
+    editor.wait_for("the :heart preedit", |l| {
+        l.starts_with("preedit \":heart\"")
+    })?;
+    // The popup opens below the text cursor, which the test editor puts at
+    // x = 12 + 8 × column, y = 20, height 18. Sparkle's fourth card is centred at
+    // (251, 93) inside its window.
+    if std::env::var_os("OMIME_E2E_SCREENSHOT").is_some() {
+        env.screenshot(&env.dir().join("sparkle.png"))?;
+    }
+    let column = 1; // after "🚀"
+    env.click(12 + 8 * column + 251, 20 + 18 + 93)?;
+    editor.wait_for("a click on a card", |l| {
+        l.starts_with("commit \"") && !l.contains(':')
+    })?;
+    let text = editor.text();
+    assert!(
+        text.starts_with('🚀') && text.chars().count() == 2,
+        "{text:?}"
+    );
+    Ok(())
+}
