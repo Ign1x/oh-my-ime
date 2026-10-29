@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  oh-my-ime engine protocol, version 1.
+
+  Each engine process talks to the daemon over its own peer-to-peer D-Bus connection.
+  The address is passed in the OMIME_ENGINE_ADDRESS environment variable, and the
+  engine's id in OMIME_ENGINE_ID.
+
+  The engine exports io.github.ign1x.OhMyIme.Engine1 at /io/github/ign1x/OhMyIme/Engine.
+  The daemon exports io.github.ign1x.OhMyIme.EngineHost1 at /io/github/ign1x/OhMyIme.
+
+  Conventions
+  - Offsets and lengths into text are UTF-8 byte counts, as in zwp_text_input_v3.
+  - Dictionaries (a{sv}) may gain keys in minor versions. Ignore keys you don't know.
+  - Methods that return actions (a(uv)) apply them in order, before anything that
+    happens later. An action is (kind, payload):
+      0 commit              s       insert text, replacing the preedit
+      1 preedit             (sii)   text, cursor begin, cursor end (-1 hides the cursor);
+                                    empty text clears the preedit
+      2 delete-surrounding  (uu)    bytes before and after the cursor
+      3 forward-key         (ub)    evdev key code, pressed
+    Unknown kinds must be ignored by the daemon.
+
+  Context dictionary keys (Activate, UpdateContext)
+    app-id              s     application id, when known
+    content-purpose     u     zwp_text_input_v3 content_purpose
+    content-hints       u     zwp_text_input_v3 content_hint bits
+    surrounding-text    s     text around the cursor
+    surrounding-cursor  u     cursor, bytes into surrounding-text
+    surrounding-anchor  u     selection anchor, bytes into surrounding-text
+    cursor-rect         (iiii) text cursor relative to the engine's popup window
+-->
+<node>
+  <interface name="io.github.ign1x.OhMyIme.Engine1">
+    <!--
+      The engine is now responsible for a focused text field. Fields with sensitive
+      content (passwords, PINs) are never given to engines.
+    -->
+    <method name="Activate">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="info" type="a{sv}" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
+    <!--
+      The text field lost focus, or another engine was selected. The daemon removes any
+      preedit from the field itself.
+    -->
+    <method name="Deactivate">
+      <arg name="context" type="t" direction="in"/>
+    </method>
+
+    <!-- Some properties of the text field changed; only changed keys are present. -->
+    <method name="UpdateContext">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="changes" type="a{sv}" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
+    <!--
+      A key was pressed or released.
+      key: (keysym, evdev keycode, modifiers, time in ms, text, released, repeat).
+      Modifier bits: Shift 1, CapsLock 2, Control 4, Alt 8, NumLock 16, Super 64.
+      Return handled=true to consume the key. Releases are routed like their presses
+      regardless of the answer, so applications never see stuck keys.
+      If the engine does not answer within the daemon's timeout (200 ms by default),
+      the key is passed to the application and the late answer is discarded.
+    -->
+    <method name="ProcessKey">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="key" type="(uuuusbb)" direction="in"/>
+      <arg name="extras" type="a{sv}" direction="in"/>
+      <arg name="handled" type="b" direction="out"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
+    <!-- The application changed the text on its own; drop any composition. -->
+    <method name="Reset">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
+    <!-- The daemon asks the engine to exit. -->
+    <method name="Shutdown"/>
+  </interface>
+
+  <interface name="io.github.ign1x.OhMyIme.EngineHost1">
+    <!--
+      Must be the first call. id must equal OMIME_ENGINE_ID. Returns the session
+      parameters, currently "api-major" (q), "api-minor" (q) and "daemon-version" (s).
+    -->
+    <method name="Register">
+      <arg name="id" type="s" direction="in"/>
+      <arg name="api_major" type="q" direction="in"/>
+      <arg name="api_minor" type="q" direction="in"/>
+      <arg name="capabilities" type="a{sv}" direction="in"/>
+      <arg name="session" type="a{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Out-of-band actions, for example after the user clicked a candidate in the
+      engine's window. They are ignored if the context is no longer focused.
+    -->
+    <method name="Commit">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="text" type="s" direction="in"/>
+    </method>
+    <method name="SetPreedit">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="text" type="s" direction="in"/>
+      <arg name="cursor_begin" type="i" direction="in"/>
+      <arg name="cursor_end" type="i" direction="in"/>
+    </method>
+    <method name="DeleteSurrounding">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="before" type="u" direction="in"/>
+      <arg name="after" type="u" direction="in"/>
+    </method>
+    <method name="ForwardKey">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="keycode" type="u" direction="in"/>
+      <arg name="pressed" type="b" direction="in"/>
+    </method>
+
+    <!--
+      Whether the engine's windows should be shown while it is active. Engines must
+      not hide their toolkit windows themselves; the platform shows and hides them.
+      Defaults to true.
+    -->
+    <method name="SetPopupVisible">
+      <arg name="visible" type="b" direction="in"/>
+    </method>
+
+    <!-- Status for panels and the CLI: "label" (s), "icon" (s), "tooltip" (s). -->
+    <method name="SetStatus">
+      <arg name="status" type="a{sv}" direction="in"/>
+    </method>
+
+    <!-- Ask the daemon to switch to another engine; "" selects direct input. -->
+    <method name="RequestSwitch">
+      <arg name="engine" type="s" direction="in"/>
+    </method>
+  </interface>
+</node>

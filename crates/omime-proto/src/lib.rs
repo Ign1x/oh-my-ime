@@ -1,11 +1,15 @@
 //! Shared vocabulary of the oh-my-ime platform.
 //!
-//! This crate is used by the daemon (`omimed`), the CLI and the engine SDK. It contains
-//! no I/O; it only defines names, versions and plain data types so that every component
-//! agrees on them.
+//! This crate is used by the daemon (`omimed`), the CLI and the engine SDK. It defines
+//! names, versions, wire types, manifests and configuration so that every component
+//! agrees on them. Apart from reading manifest directories it performs no I/O.
 
+pub mod config;
 pub mod content;
+pub mod engine;
+pub mod manifest;
 pub mod names;
+pub mod paths;
 
 pub use content::{ContentHints, ContentPurpose, ContentType};
 

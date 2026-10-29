@@ -1,0 +1,15 @@
+[package]
+name = "omime-echo"
+description = "Echo: an oh-my-ime test and tutorial engine that commits words in UPPERCASE"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+omime-sdk.workspace = true
+
+[lints]
+workspace = true

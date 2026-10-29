@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "tests/e2e"]
+members = ["crates/*", "engines/*", "tests/e2e"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,8 +12,13 @@ repository = "https://github.com/Ign1x/oh-my-ime"
 homepage = "https://github.com/Ign1x/oh-my-ime"
 
 [workspace.dependencies]
-omime-proto = { path = "crates/omime-proto" }
+omime-proto = { path = "crates/omime-proto", version = "0.1.0" }
+omime-sdk = { path = "crates/omime-sdk", version = "0.1.0" }
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+# Members enable what they need; `omime-proto` only uses the wire types.
+zbus = { version = "6.1", default-features = false }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "tracing-log"] }
@@ -22,7 +27,7 @@ rustix = { version = "1", features = ["fs", "process", "net", "pipe", "time", "e
 xkbcommon = { version = "0.9", default-features = false }
 wl-proxy = { version = "=0.1.5", default-features = false, features = ["logging"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 
 [workspace.lints.rust]

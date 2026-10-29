@@ -1,0 +1,11 @@
+[engine]
+id = "echo"
+name = "Echo"
+description = "Commits every word in UPPERCASE. A test and tutorial engine without a UI."
+languages = ["en"]
+exec = ["omime-echo"]
+api = "1.0"
+
+[engine.i18n.zh-CN]
+name = "回声"
+description = "把每个单词以大写形式上屏。用于测试和教学，没有界面。"
