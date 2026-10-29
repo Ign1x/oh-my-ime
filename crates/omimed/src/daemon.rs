@@ -16,7 +16,7 @@ use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::control::{self, ControlRequest, ControlService};
 use crate::core::{Core, CoreEvent};
@@ -24,6 +24,7 @@ use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
 use crate::state::State;
 use crate::wayland::{EngineId, Frontend};
+use crate::xim::XimFrontend;
 
 /// Options for [`run`].
 #[derive(Debug, Default)]
@@ -35,7 +36,7 @@ pub struct Options {
 }
 
 /// The wl-proxy poll fd, shared with the state that owns it.
-struct PollFd(Rc<OwnedFd>);
+pub struct PollFd(pub Rc<OwnedFd>);
 
 impl AsRawFd for PollFd {
     fn as_raw_fd(&self) -> RawFd {
@@ -44,7 +45,7 @@ impl AsRawFd for PollFd {
 }
 
 #[allow(unsafe_code)]
-fn watch(fd: PollFd) -> std::io::Result<AsyncFd<PollFd>> {
+pub fn watch(fd: PollFd) -> std::io::Result<AsyncFd<PollFd>> {
     // SAFETY: `PollFd` keeps its own reference to the `OwnedFd`, so the descriptor stays
     // open for as long as the `AsyncFd` exists, and `as_raw_fd` always returns it.
     unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE) }.map_err(Into::into)
@@ -117,6 +118,10 @@ struct Daemon {
     /// Applications using the Fcitx5 module; they outlive compositor connections.
     fcitx: FcitxFrontend,
     fcitx_rx: mpsc::UnboundedReceiver<fcitx::Request>,
+    /// X11 applications using XIM, while there is an X display.
+    xim: Option<XimFrontend>,
+    /// When to connect to the X display again, and the wait after that.
+    xim_retry: Option<(Instant, Duration)>,
 }
 
 impl Daemon {
@@ -139,6 +144,18 @@ impl Daemon {
         let context_ids = ContextIds::default();
         let (fcitx_tx, fcitx_rx) = mpsc::unbounded_channel();
         let fcitx = FcitxFrontend::new(fcitx::start(fcitx_tx).await, context_ids.clone());
+        let (xim, xim_retry) = if std::env::var_os("DISPLAY").is_some() {
+            match XimFrontend::connect(context_ids.clone()) {
+                Ok(xim) => (Some(xim), None),
+                Err(e) => {
+                    warn!("XIM is not available yet: {e:#}");
+                    (None, Some((Instant::now() + XIM_RETRY_MIN, XIM_RETRY_MIN)))
+                }
+            }
+        } else {
+            info!("no X display ($DISPLAY is unset); XIM is off");
+            (None, None)
+        };
 
         let config = load_config();
         let installed = discover_engines();
@@ -181,6 +198,8 @@ impl Daemon {
             context_ids,
             fcitx,
             fcitx_rx,
+            xim,
+            xim_retry,
         })
     }
 
@@ -239,9 +258,10 @@ impl Daemon {
             // that its UI connection finds a complete registry.
             if frontend.is_ready()
                 && let Some(engine) = startup_engine.take()
-                && let Err(e) = self
-                    .core
-                    .set_current(Some(engine), &mut Outputs::new(frontend, &mut self.fcitx))
+                && let Err(e) = self.core.set_current(
+                    Some(engine),
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                )
             {
                 warn!("{e:#}");
             }
@@ -249,18 +269,28 @@ impl Daemon {
                 .take_events()
                 .into_iter()
                 .chain(self.fcitx.take_events())
+                .chain(self.xim.iter_mut().flat_map(XimFrontend::take_events))
                 .collect();
             for event in events {
-                self.core
-                    .on_frontend_event(event, &mut Outputs::new(frontend, &mut self.fcitx));
+                self.core.on_frontend_event(
+                    event,
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                );
             }
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
             }
-            let deadline = [frontend.next_deadline(), self.core.deadline()]
-                .into_iter()
-                .flatten()
-                .min();
+            let xim_retry = self.xim_retry.map(|(at, _)| at);
+            let xim_deadline = self.xim.as_ref().and_then(XimFrontend::deadline);
+            let deadline = [
+                frontend.next_deadline(),
+                self.core.deadline(),
+                xim_retry,
+                xim_deadline,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             tokio::select! {
                 ready = poll_fd.readable() => {
                     let mut guard = match ready {
@@ -277,10 +307,16 @@ impl Daemon {
                     if let Err(e) = frontend.on_timer(now) {
                         break SessionEnd::Lost(e);
                     }
-                    self.core.on_timer(now, &mut Outputs::new(frontend, &mut self.fcitx));
+                    self.core.on_timer(now, &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()));
+                    if self.xim_retry.is_some_and(|(at, _)| at <= now) {
+                        self.connect_xim();
+                    }
+                    if let Some(Err(e)) = self.xim.as_mut().map(|xim| xim.on_timer(now)) {
+                        self.lose_xim(&e, frontend);
+                    }
                 }
                 Some(event) = self.core_rx.recv() => {
-                    self.core.on_event(event, &mut Outputs::new(frontend, &mut self.fcitx)).await;
+                    self.core.on_event(event, &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut())).await;
                 }
                 Some((engine, fd)) = self.ui_rx.recv() => {
                     if let Err(e) = frontend.add_ui_client(engine.as_str().into(), fd) {
@@ -291,6 +327,15 @@ impl Daemon {
                     self.on_control(request, frontend);
                 }
                 Some(request) = self.fcitx_rx.recv() => self.fcitx.handle(request),
+                ready = xim_readable(self.xim.as_ref()) => {
+                    let result = ready.map_err(anyhow::Error::from).and_then(|()| match &mut self.xim {
+                        Some(xim) => xim.dispatch(),
+                        None => Ok(()),
+                    });
+                    if let Err(e) = result {
+                        self.lose_xim(&e, frontend);
+                    }
+                }
                 _ = self.signals.term.recv() => break SessionEnd::Shutdown,
                 _ = self.signals.int.recv() => break SessionEnd::Shutdown,
             }
@@ -306,6 +351,36 @@ impl Daemon {
         Ok(end)
     }
 
+    /// Connects to the X display again after the XIM server failed.
+    fn connect_xim(&mut self) {
+        let Some((_, wait)) = self.xim_retry else {
+            return;
+        };
+        match XimFrontend::connect(self.context_ids.clone()) {
+            Ok(xim) => {
+                self.xim = Some(xim);
+                self.xim_retry = None;
+            }
+            Err(e) => {
+                let wait = (wait * 2).min(XIM_RETRY_MAX);
+                debug!(retry_in = ?wait, "XIM is not available yet: {e:#}");
+                self.xim_retry = Some((Instant::now() + wait, wait));
+            }
+        }
+    }
+
+    /// Ends the contexts of a failed XIM server and tries again later.
+    fn lose_xim(&mut self, error: &anyhow::Error, frontend: &mut Frontend) {
+        warn!("the XIM server stopped: {error:#}");
+        if let Some(mut xim) = self.xim.take() {
+            for event in xim.end_contexts() {
+                self.core
+                    .on_frontend_event(event, &mut Outputs::new(frontend, &mut self.fcitx, None));
+            }
+        }
+        self.xim_retry = Some((Instant::now() + XIM_RETRY_MIN, XIM_RETRY_MIN));
+    }
+
     fn on_control(&mut self, request: ControlRequest, frontend: &mut Frontend) {
         let result = |r: anyhow::Result<()>| r.map_err(|e| format!("{e:#}"));
         match request {
@@ -319,21 +394,24 @@ impl Daemon {
                 ));
             }
             ControlRequest::Switch(target, reply) => {
-                let _ = reply.send(result(
-                    self.core
-                        .switch_to(target, &mut Outputs::new(frontend, &mut self.fcitx)),
-                ));
+                let _ = reply.send(result(self.core.switch_to(
+                    target,
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                )));
             }
             ControlRequest::Next(reply) => {
-                let _ = reply.send(result(
-                    self.core.next(&mut Outputs::new(frontend, &mut self.fcitx)),
-                ));
+                let _ = reply.send(result(self.core.next(&mut Outputs::new(
+                    frontend,
+                    &mut self.fcitx,
+                    self.xim.as_mut(),
+                ))));
             }
             ControlRequest::Toggle(reply) => {
-                let _ = reply.send(result(
-                    self.core
-                        .toggle(&mut Outputs::new(frontend, &mut self.fcitx)),
-                ));
+                let _ = reply.send(result(self.core.toggle(&mut Outputs::new(
+                    frontend,
+                    &mut self.fcitx,
+                    self.xim.as_mut(),
+                ))));
             }
             ControlRequest::Diagnose(reply) => {
                 let display = self
@@ -354,7 +432,7 @@ impl Daemon {
                 self.core.reconfigure(
                     &config,
                     installed,
-                    &mut Outputs::new(frontend, &mut self.fcitx),
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 );
                 let _ = reply.send(Ok(()));
             }
@@ -369,15 +447,36 @@ async fn sleep_until(deadline: Option<Instant>) {
     }
 }
 
+/// Waits until the XIM server has something to read; forever without one.
+async fn xim_readable(xim: Option<&XimFrontend>) -> std::io::Result<()> {
+    match xim {
+        Some(xim) => xim.readable().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The first and the longest wait before connecting to the X display again.
+const XIM_RETRY_MIN: Duration = Duration::from_secs(2);
+const XIM_RETRY_MAX: Duration = Duration::from_secs(60);
+
 /// The frontends of one compositor session, as the core sees them.
 struct Outputs<'a> {
     wayland: &'a mut Frontend,
     fcitx: &'a mut FcitxFrontend,
+    xim: Option<&'a mut XimFrontend>,
 }
 
 impl<'a> Outputs<'a> {
-    fn new(wayland: &'a mut Frontend, fcitx: &'a mut FcitxFrontend) -> Self {
-        Self { wayland, fcitx }
+    fn new(
+        wayland: &'a mut Frontend,
+        fcitx: &'a mut FcitxFrontend,
+        xim: Option<&'a mut XimFrontend>,
+    ) -> Self {
+        Self {
+            wayland,
+            fcitx,
+            xim,
+        }
     }
 }
 
@@ -386,6 +485,11 @@ impl Frontends for Outputs<'_> {
         match key {
             KeyRef::Wayland(key) => self.wayland.finish_key(key, handled),
             KeyRef::Fcitx(key) => self.fcitx.finish_key(key, handled),
+            KeyRef::Xim(key) => {
+                if let Some(xim) = &mut self.xim {
+                    xim.finish_key(key, handled);
+                }
+            }
         }
     }
 
@@ -393,6 +497,11 @@ impl Frontends for Outputs<'_> {
         match origin {
             Origin::Wayland(seat) => self.wayland.apply_actions(seat, ctx, actions),
             Origin::Fcitx => self.fcitx.apply_actions(ctx, actions),
+            Origin::Xim => {
+                if let Some(xim) = &mut self.xim {
+                    xim.apply_actions(ctx, actions);
+                }
+            }
         }
     }
 
@@ -400,6 +509,11 @@ impl Frontends for Outputs<'_> {
         match origin {
             Origin::Wayland(seat) => self.wayland.clear_preedit(seat, ctx),
             Origin::Fcitx => self.fcitx.clear_preedit(ctx),
+            Origin::Xim => {
+                if let Some(xim) = &mut self.xim {
+                    xim.clear_preedit(ctx);
+                }
+            }
         }
     }
 

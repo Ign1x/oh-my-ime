@@ -10,6 +10,7 @@ mod keyboard;
 mod runtime_dir;
 mod state;
 mod wayland;
+mod xim;
 
 use std::process::ExitCode;
 

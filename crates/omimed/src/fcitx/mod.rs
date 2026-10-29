@@ -386,7 +386,7 @@ impl FcitxFrontend {
         );
         self.events.push_back(FrontendEvent::Key {
             key: frontend::KeyRef::Fcitx(KeyRef { ctx, id }),
-            event: convert::key_event(keyval, keycode, mods, released, time),
+            event: crate::keyboard::x11_key_event(keyval, keycode, mods, released, time),
         });
     }
 

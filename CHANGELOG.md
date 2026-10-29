@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format follows
   engines: omimed serves the Fcitx5 module protocol under `org.fcitx.Fcitx5` and
   `org.freedesktop.portal.Fcitx` whenever fcitx5 does not hold those names. Engine
   windows do not follow these applications' text cursor yet.
+- X11 applications using XIM (`XMODIFIERS=@im=omime`), such as xterm, Java, Wine or
+  GTK with `GTK_IM_MODULE=xim`, type through omimed's engines too: omimed serves XIM on
+  the X display in `$DISPLAY` when it starts. Engine windows do not follow these
+  applications' text cursor yet.
 
 ## [0.2.0] - 2026-10-30
 

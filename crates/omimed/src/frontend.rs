@@ -9,8 +9,8 @@ use std::rc::Rc;
 
 use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent, Rect};
 
-use crate::fcitx;
 use crate::wayland::{self, EngineId, SeatId};
+use crate::{fcitx, xim};
 
 /// Where a text field comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub enum Origin {
     Wayland(SeatId),
     /// An application using the Fcitx5 module protocol.
     Fcitx,
+    /// An X11 application using XIM.
+    Xim,
 }
 
 /// A key the core has to decide about; it goes back to the frontend that reported it.
@@ -26,6 +28,7 @@ pub enum Origin {
 pub enum KeyRef {
     Wayland(wayland::KeyRef),
     Fcitx(fcitx::KeyRef),
+    Xim(xim::KeyRef),
 }
 
 impl KeyRef {
@@ -34,6 +37,7 @@ impl KeyRef {
         match self {
             Self::Wayland(key) => key.ctx,
             Self::Fcitx(key) => key.ctx,
+            Self::Xim(key) => key.ctx,
         }
     }
 }

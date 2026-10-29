@@ -3,9 +3,8 @@
 //! The protocol counts surrounding text in characters but the preedit cursor in bytes;
 //! omimed counts everything in bytes.
 
-use omime_proto::engine::{KeyEvent, Preedit, modifiers};
+use omime_proto::engine::Preedit;
 use omime_proto::{ContentHints, ContentPurpose, ContentType};
-use xkbcommon::xkb;
 
 /// `fcitx::CapabilityFlag` bits this frontend reads.
 pub mod capability {
@@ -33,17 +32,6 @@ pub mod capability {
     pub const KEY_EVENT_ORDER_FIX: u64 = 1 << 37;
 }
 
-/// `fcitx::KeyState::Repeat`: the press comes from key repeat.
-const STATE_REPEAT: u32 = 1 << 31;
-/// The modifiers of [`modifiers`], whose bits are the X11 ones the protocol uses.
-const MODIFIER_MASK: u32 = modifiers::SHIFT
-    | modifiers::CAPS_LOCK
-    | modifiers::CONTROL
-    | modifiers::ALT
-    | modifiers::NUM_LOCK
-    | modifiers::SUPER;
-/// X11 key codes are evdev key codes plus 8.
-const X11_KEYCODE_OFFSET: u32 = 8;
 /// `fcitx::TextFormatFlag::Underline`.
 const FORMAT_UNDERLINE: i32 = 1 << 3;
 
@@ -94,29 +82,6 @@ pub fn content_type(caps: u64) -> ContentType {
     ContentType {
         purpose,
         hints: ContentHints(hints),
-    }
-}
-
-/// A key as an application reports it: an X11 keysym, key code and modifier state.
-pub fn key_event(keyval: u32, keycode: u32, state: u32, released: bool, time: u32) -> KeyEvent {
-    let modifiers = state & MODIFIER_MASK;
-    // As from the Wayland frontend: keys typed with Control have no text, and control
-    // characters are never text.
-    let text = if modifiers & modifiers::CONTROL != 0 {
-        String::new()
-    } else {
-        let mut text = xkb::keysym_to_utf8(xkb::Keysym::new(keyval));
-        text.retain(|c| !c.is_control());
-        text
-    };
-    KeyEvent {
-        keysym: keyval,
-        keycode: keycode.saturating_sub(X11_KEYCODE_OFFSET),
-        modifiers,
-        time,
-        text,
-        released,
-        repeat: state & STATE_REPEAT != 0,
     }
 }
 
@@ -188,22 +153,6 @@ mod tests {
         assert_eq!(content_type(0), ContentType::default());
         // The bits fcitx 4 reserved and newer ones this frontend ignores change nothing.
         assert_eq!(content_type(1 << 25 | 1 << 39), ContentType::default());
-    }
-
-    #[test]
-    fn keys_follow_the_wayland_conventions() {
-        // `a` with Shift and NumLock, from key code 38 (evdev 30), auto-repeated.
-        let key = key_event(0x41, 38, 1 | 16 | STATE_REPEAT, false, 7);
-        assert_eq!(key.keysym, 0x41);
-        assert_eq!(key.keycode, 30);
-        assert_eq!(key.modifiers, modifiers::SHIFT | modifiers::NUM_LOCK);
-        assert_eq!(key.text, "A");
-        assert!(key.repeat && !key.released);
-        assert_eq!(key_event(0x61, 38, modifiers::CONTROL, false, 0).text, "");
-        // Return (0xff0d) and Escape produce control characters.
-        assert_eq!(key_event(0xff0d, 36, 0, false, 0).text, "");
-        assert_eq!(key_event(0xff1b, 9, 0, true, 0).text, "");
-        assert_eq!(key_event(0x0100_4e2d, 0, 0, false, 0).text, "中");
     }
 
     #[test]

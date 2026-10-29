@@ -288,6 +288,45 @@ impl KeyTracker {
     }
 }
 
+/// `fcitx::KeyState::Repeat`: the press comes from key repeat (X11 has no such bit).
+const STATE_REPEAT: u32 = 1 << 31;
+/// The modifiers of `omime_proto::engine::modifiers`, whose bits are X11's.
+const X11_MODIFIER_MASK: u32 = {
+    use omime_proto::engine::modifiers as m;
+    m::SHIFT | m::CAPS_LOCK | m::CONTROL | m::ALT | m::NUM_LOCK | m::SUPER
+};
+/// X11 key codes are evdev key codes plus 8.
+const X11_KEYCODE_OFFSET: u32 = 8;
+/// A key as X11 applications report it: keysym, key code and modifier state, as the
+/// Fcitx5 module protocol and XIM give them.
+pub fn x11_key_event(
+    keyval: u32,
+    keycode: u32,
+    state: u32,
+    released: bool,
+    time: u32,
+) -> omime_proto::engine::KeyEvent {
+    let modifiers = state & X11_MODIFIER_MASK;
+    // As from the Wayland frontend: keys typed with Control have no text, and control
+    // characters are never text.
+    let text = if modifiers & omime_proto::engine::modifiers::CONTROL != 0 {
+        String::new()
+    } else {
+        let mut text = xkb::keysym_to_utf8(xkb::Keysym::new(keyval));
+        text.retain(|c| !c.is_control());
+        text
+    };
+    omime_proto::engine::KeyEvent {
+        keysym: keyval,
+        keycode: keycode.saturating_sub(X11_KEYCODE_OFFSET),
+        modifiers,
+        time,
+        text,
+        released,
+        repeat: state & STATE_REPEAT != 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +425,27 @@ mod tests {
         assert_eq!(keys.take_forwarded(), vec![KEY_A, KEY_LEFTSHIFT]);
         assert!(keys.take_forwarded().is_empty());
         assert_eq!(keys.release(KEY_1), ReleaseAction::Forward);
+    }
+
+    #[test]
+    fn keys_follow_the_wayland_conventions() {
+        // `a` with Shift and NumLock, from key code 38 (evdev 30), auto-repeated.
+        let key = x11_key_event(0x41, 38, 1 | 16 | STATE_REPEAT, false, 7);
+        assert_eq!(key.keysym, 0x41);
+        assert_eq!(key.keycode, 30);
+        assert_eq!(
+            key.modifiers,
+            omime_proto::engine::modifiers::SHIFT | omime_proto::engine::modifiers::NUM_LOCK
+        );
+        assert_eq!(key.text, "A");
+        assert!(key.repeat && !key.released);
+        assert_eq!(
+            x11_key_event(0x61, 38, omime_proto::engine::modifiers::CONTROL, false, 0).text,
+            ""
+        );
+        // Return (0xff0d) and Escape produce control characters.
+        assert_eq!(x11_key_event(0xff0d, 36, 0, false, 0).text, "");
+        assert_eq!(x11_key_event(0xff1b, 9, 0, true, 0).text, "");
+        assert_eq!(x11_key_event(0x0100_4e2d, 0, 0, false, 0).text, "中");
     }
 }

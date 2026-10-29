@@ -21,6 +21,9 @@ rustix.workspace = true
 xkbcommon.workspace = true
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 futures-core = "0.3"
+x11rb = "0.14"
+xim = { version = "0.6", default-features = false, features = ["std", "x11rb-server"] }
+xim-ctext = "0.5"
 wl-proxy = { workspace = true, features = [
   "protocol-cursor_shape_v1",
   "protocol-fractional_scale_v1",
