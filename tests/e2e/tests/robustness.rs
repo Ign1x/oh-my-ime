@@ -3,12 +3,12 @@
 //!
 //! See `typing.rs` for how to run them.
 
-use omime_e2e::harness::{TIMEOUT, TestEngine, TestEnv};
+use omime_e2e::harness::{TIMEOUT, TestEngine, TestEnv, target_dir};
 
 fn dummy(args: &[&str]) -> TestEngine {
     TestEngine {
         id: "dummy",
-        binary: "omime-dummy-ui",
+        program: target_dir().join("omime-dummy-ui"),
         args: args.iter().map(|a| (*a).to_owned()).collect(),
     }
 }

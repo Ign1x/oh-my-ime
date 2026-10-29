@@ -41,6 +41,22 @@ jobs:
           nix develop .#e2e --command bash -c \
             'cargo build --workspace --locked && cargo test -p omime-e2e --locked -- --ignored'
 
+  nix:
+    name: Nix package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build the package (runs the unit tests)
+        run: nix build --print-build-logs
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the end-to-end tests against the package
+        run: |
+          nix develop .#e2e --command bash -c \
+            'cargo build -p omime-e2e --locked && OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e --locked -- --ignored'
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04

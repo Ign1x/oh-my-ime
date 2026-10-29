@@ -5,7 +5,9 @@
 //! touch the developer's session and can run in parallel.
 //!
 //! The binaries under test are taken from the cargo target directory; build the whole
-//! workspace first (`cargo build --workspace`).
+//! workspace first (`cargo build --workspace`). To test an installed build instead, point
+//! `OMIME_E2E_INSTALL_DIR` at its `bin` directory (for example `result/bin` of the Nix
+//! package); the test tools still come from the target directory.
 
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -47,12 +49,18 @@ pub fn target_dir() -> PathBuf {
     }
 }
 
+const INSTALL_DIR_ENV: &str = "OMIME_E2E_INSTALL_DIR";
+
+/// The directory with the programs under test: omimed, omime and the bundled engines.
+pub fn program_dir() -> PathBuf {
+    std::env::var_os(INSTALL_DIR_ENV).map_or_else(target_dir, PathBuf::from)
+}
+
 /// An engine to install into the test environment.
 #[derive(Debug, Clone)]
 pub struct TestEngine {
     pub id: &'static str,
-    /// Binary name in the target directory.
-    pub binary: &'static str,
+    pub program: PathBuf,
     pub args: Vec<String>,
 }
 
@@ -60,7 +68,7 @@ pub struct TestEngine {
 pub fn sparkle_engine() -> TestEngine {
     TestEngine {
         id: "sparkle",
-        binary: "omime-sparkle",
+        program: program_dir().join("omime-sparkle"),
         args: Vec::new(),
     }
 }
@@ -69,7 +77,7 @@ pub fn sparkle_engine() -> TestEngine {
 pub fn echo_engine() -> TestEngine {
     TestEngine {
         id: "echo",
-        binary: "omime-echo",
+        program: program_dir().join("omime-echo"),
         args: Vec::new(),
     }
 }
@@ -103,12 +111,11 @@ impl TestEnv {
         std::fs::create_dir_all(&dir)?;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
 
-        let target = target_dir();
         let engine_dir = dir.join("engines");
         for engine in engines {
             let path = engine_dir.join(engine.id);
             std::fs::create_dir_all(&path)?;
-            let mut exec = vec![target.join(engine.binary).display().to_string()];
+            let mut exec = vec![engine.program.display().to_string()];
             exec.extend(engine.args.iter().cloned());
             let exec: Vec<String> = exec.iter().map(|a| format!("{a:?}")).collect();
             std::fs::write(
@@ -218,9 +225,13 @@ impl TestEnv {
     }
 
     fn start_daemon(&mut self, engine: Option<&str>) -> anyhow::Result<()> {
-        let mut omimed = self.command(target_dir().join("omimed"));
+        let mut omimed = self.command(program_dir().join("omimed"));
         if let Some(engine) = engine {
             omimed.args(["--engine", engine]);
+        }
+        if std::env::var_os(INSTALL_DIR_ENV).is_some() {
+            // An installed build must find its libraries without the dev shell's help.
+            omimed.env_remove("LD_LIBRARY_PATH");
         }
         let daemon = omimed
             .env("OMIME_LOG", "debug")
@@ -373,7 +384,7 @@ impl TestEnv {
     /// Runs the `omime` CLI and returns its output.
     pub fn omime(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = self
-            .command(target_dir().join("omime"))
+            .command(program_dir().join("omime"))
             .args(args)
             .output()
             .context("cannot run omime")?;

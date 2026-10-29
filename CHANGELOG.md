@@ -10,7 +10,8 @@ All notable changes to this project are documented here. The format follows
 
 - A Nix package: `nix profile install github:Ign1x/oh-my-ime`, or the flake's package and
   overlay in a NixOS configuration. It contains the systemd user unit, and works without
-  a dev shell: omimed finds the bundled engines and Sparkle its graphics libraries.
+  a dev shell: omimed finds the bundled engines and Sparkle its graphics libraries. CI
+  runs the end-to-end tests against it.
 
 ### Fixed
 
