@@ -235,16 +235,18 @@ impl Frontend {
         let display = state.display();
         let registry = display.new_send_get_registry();
         registry.set_forward_to_client(false);
+        let bridge = Bridge::new(state.clone(), registry.clone(), queue.clone());
+        // Engines may connect at any moment; they must see globals no later than their
+        // first roundtrip completes, so the bridge learns about them right away.
         registry.set_handler(RegistryEvents {
             queue: queue.clone(),
+            bridge: bridge.clone(),
         });
         let sync = display.new_send_sync();
         sync.set_forward_to_client(false);
         sync.set_handler(SyncEvents {
             queue: queue.clone(),
         });
-
-        let bridge = Bridge::new(state.clone(), registry.clone(), queue.clone());
         Ok(Self {
             state,
             queue,
@@ -295,6 +297,11 @@ impl Frontend {
             }
         }
         self.process_events()
+    }
+
+    /// Whether the initial roundtrip finished and input method sessions exist.
+    pub fn is_ready(&self) -> bool {
+        self.initial_sync_done
     }
 
     /// The last context id handed out, to continue numbering after a reconnect.
@@ -452,7 +459,6 @@ impl Frontend {
     }
 
     fn on_global(&mut self, name: u32, interface: ObjectInterface, version: u32) {
-        self.bridge.add_global(name, interface, version);
         match interface {
             ObjectInterface::ZwpInputMethodManagerV2 => {
                 let object = self.state.create_object::<ZwpInputMethodManagerV2>(1);
@@ -486,7 +492,6 @@ impl Frontend {
     }
 
     fn on_global_remove(&mut self, name: u32) {
-        self.bridge.remove_global(name);
         if let Some(mut session) = self.seats.remove(&name) {
             info!(seat = session.name(), "seat removed");
             session.shutdown();
@@ -556,6 +561,7 @@ impl StateHandler for StateEvents {
 
 struct RegistryEvents {
     queue: EventQueue,
+    bridge: Bridge,
 }
 
 impl WlRegistryHandler for RegistryEvents {
@@ -566,6 +572,7 @@ impl WlRegistryHandler for RegistryEvents {
         interface: ObjectInterface,
         version: u32,
     ) {
+        self.bridge.add_global(name, interface, version);
         self.queue.borrow_mut().push_back(Event::Global {
             name,
             interface,
@@ -574,6 +581,7 @@ impl WlRegistryHandler for RegistryEvents {
     }
 
     fn handle_global_remove(&mut self, _slf: &Rc<WlRegistry>, name: u32) {
+        self.bridge.remove_global(name);
         self.queue
             .borrow_mut()
             .push_back(Event::GlobalRemove { name });

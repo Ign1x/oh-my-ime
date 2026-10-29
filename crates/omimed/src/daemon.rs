@@ -163,18 +163,15 @@ impl Daemon {
             // A failure to connect means the compositor is gone: that ends the daemon.
             let mut frontend = Frontend::connect(self.options.display.as_deref(), self.last_ctx)?;
             info!("connected to the compositor");
-            if first {
+            let startup_engine = if first {
                 first = false;
-                if let Some(engine) = self.options.engine.clone()
-                    && let Err(e) = self.core.switch_to(Some(engine), &mut frontend)
-                {
-                    warn!("{e:#}");
-                }
+                self.options.engine.clone()
             } else {
                 let current = self.core.current().map(Into::into);
                 frontend.set_active_engine(current);
-            }
-            let end = self.session(&mut frontend).await?;
+                None
+            };
+            let end = self.session(&mut frontend, startup_engine).await?;
             self.last_ctx = frontend.last_context_id();
             self.core.forget_contexts();
             match end {
@@ -201,11 +198,23 @@ impl Daemon {
     }
 
     /// Runs until the compositor connection ends or we are asked to stop.
-    async fn session(&mut self, frontend: &mut Frontend) -> anyhow::Result<SessionEnd> {
+    async fn session(
+        &mut self,
+        frontend: &mut Frontend,
+        mut startup_engine: Option<String>,
+    ) -> anyhow::Result<SessionEnd> {
         let poll_fd = watch(PollFd(frontend.state().poll_fd().clone()))
             .context("failed to watch the Wayland connection")?;
 
         let end = loop {
+            // Launch the startup engine once the compositor's globals are known, so
+            // that its UI connection finds a complete registry.
+            if frontend.is_ready()
+                && let Some(engine) = startup_engine.take()
+                && let Err(e) = self.core.switch_to(Some(engine), frontend)
+            {
+                warn!("{e:#}");
+            }
             for event in frontend.take_events() {
                 self.core.on_frontend_event(event, frontend);
             }

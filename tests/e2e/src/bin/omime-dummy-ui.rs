@@ -11,7 +11,11 @@
 //! ```
 //!
 //! With `--misbehave <kind>` it sends an invalid request a moment after mapping, to
-//! check that the daemon survives broken engines.
+//! check that the daemon survives broken engines; `--misbehave-once <file>` only does
+//! so if `file` does not exist yet (and creates it).
+//!
+//! When started by omimed (`OMIME_ENGINE_ADDRESS` is set) it also registers as an
+//! engine that passes every key through, after `--slow-ms` milliseconds if given.
 
 use std::time::{Duration, Instant};
 
@@ -26,7 +30,28 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 const USAGE: &str = "\
-Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]";
+Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]
+                      [--misbehave-once FILE] [--slow-ms N]";
+
+/// An engine that consumes nothing, optionally slowly.
+struct PassThrough {
+    slow: Duration,
+}
+
+impl omime_sdk::Engine for PassThrough {
+    fn activate(&mut self, ctx: &mut omime_sdk::Context<'_>) {
+        ctx.host().set_popup_visible(true);
+    }
+
+    fn process_key(
+        &mut self,
+        _ctx: &mut omime_sdk::Context<'_>,
+        _key: &omime_sdk::KeyEvent,
+    ) -> bool {
+        std::thread::sleep(self.slow);
+        false
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Misbehave {
@@ -243,6 +268,8 @@ fn main() -> anyhow::Result<()> {
     let mut color = 0xffff_cc00;
     let mut size = (240, 80);
     let mut misbehave = None;
+    let mut once: Option<std::path::PathBuf> = None;
+    let mut slow = Duration::ZERO;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -260,9 +287,24 @@ fn main() -> anyhow::Result<()> {
                     other => bail!("unknown misbehaviour `{other}`"),
                 });
             }
+            "--misbehave-once" => once = Some(value()?.into()),
+            "--slow-ms" => slow = Duration::from_millis(value()?.parse()?),
             _ => bail!("{USAGE}"),
         }
     }
+    if let Some(marker) = &once {
+        if marker.exists() {
+            misbehave = None;
+        } else {
+            std::fs::write(marker, b"")?;
+        }
+    }
+    // Keep the engine connection alive for as long as the window exists.
+    let _engine = if std::env::var_os(omime_sdk::ENGINE_ADDRESS_ENV).is_some() {
+        Some(omime_sdk::spawn(PassThrough { slow })?)
+    } else {
+        None
+    };
 
     let conn = Connection::connect_to_env().context("cannot connect to the Wayland display")?;
     let mut queue = conn.new_event_queue();

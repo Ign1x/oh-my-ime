@@ -155,7 +155,8 @@ impl BridgeShared {
     }
 }
 
-/// The bridge, owned by the [`Frontend`](super::Frontend).
+/// The bridge, owned by the [`Frontend`](super::Frontend). Clones share state.
+#[derive(Clone)]
 pub struct Bridge {
     state: Rc<State>,
     shared: Shared,

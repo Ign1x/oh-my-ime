@@ -347,6 +347,9 @@ impl EngineObject {
     }
 }
 
+/// The environment variable that tells a process it was started as an engine.
+pub const ENGINE_ADDRESS_ENV: &str = ENV_ENGINE_ADDRESS;
+
 /// The engine protocol version implemented by this SDK.
 pub const API_VERSION: ApiVersion = ApiVersion::CURRENT;
 
