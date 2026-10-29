@@ -30,8 +30,8 @@ cargo build --workspace
 cargo test -p omime-e2e -- --ignored
 ```
 
-On failure the test's runtime directory is kept and printed; it contains
-`omimed.log` and `sway.log`.
+A failing test prints the end of `omimed.log` and `sway.log`. Set `OMIME_E2E_KEEP=1`
+to keep each test's runtime directory with the full logs.
 
 ## Running omimed by hand
 

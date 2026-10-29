@@ -288,6 +288,9 @@ impl TestEnv {
 
     /// Opens the test editor and waits until it is focused.
     pub fn editor(&self, args: &[&str]) -> anyhow::Result<Editor> {
+        const GRABBED: &str = "keyboard grabbed";
+        const SENSITIVE: &str = "sensitive text field focused";
+        let before = (self.count_in_log(GRABBED), self.count_in_log(SENSITIVE));
         let mut child = self
             .command(target_dir().join("omime-ti-client"))
             .args(args)
@@ -304,8 +307,12 @@ impl TestEnv {
         });
         let editor = Editor { child, lines };
         editor.wait_for("the editor to get focus", |l| l == "ready")?;
-        // Give the daemon a moment to grab the keyboard after activation.
-        std::thread::sleep(Duration::from_millis(300));
+        // Typing only goes through omimed once it holds the keyboard (or decided to
+        // stay out of a sensitive field).
+        wait_until("omimed to take the focused field", || {
+            let now = (self.count_in_log(GRABBED), self.count_in_log(SENSITIVE));
+            (now.0 > before.0 || now.1 > before.1).then_some(())
+        })?;
         Ok(editor)
     }
 
@@ -378,10 +385,20 @@ impl Drop for TestEnv {
             let _ = child.kill();
             let _ = child.wait();
         }
-        if !std::thread::panicking() {
-            let _ = std::fs::remove_dir_all(&self.dir);
+        // The test harness only shows this output for failing tests.
+        for log in ["omimed.log", "sway.log"] {
+            if let Ok(text) = std::fs::read_to_string(self.dir.join(log)) {
+                let tail: Vec<&str> = text.lines().rev().take(80).collect();
+                eprintln!("----- {log} (last {} lines)", tail.len());
+                for line in tail.iter().rev() {
+                    eprintln!("{line}");
+                }
+            }
+        }
+        if std::env::var_os("OMIME_E2E_KEEP").is_some() {
+            eprintln!("keeping {}", self.dir.display());
         } else {
-            eprintln!("keeping {} for inspection", self.dir.display());
+            let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
 }
