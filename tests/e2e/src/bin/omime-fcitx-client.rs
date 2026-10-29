@@ -5,7 +5,9 @@
 //! arrives, in arrival order, so tests can check that text reaches the application
 //! before the reply to the key that produced it.
 //!
-//! `--batch` sends keys with `ProcessKeyEventBatch` instead of `ProcessKeyEvent`.
+//! `--batch` sends keys with `ProcessKeyEventBatch` instead of `ProcessKeyEvent`;
+//! `--display x11:` makes the client an X11 application, whose text cursor (the
+//! `cursor X Y WIDTH HEIGHT` command) is in X screen coordinates.
 
 use std::io::{BufRead as _, Write};
 use std::time::{Duration, Instant};
@@ -182,6 +184,14 @@ async fn command(
         "focus-out" => context_call(conn, stream, path, "FocusOut").await,
         "reset" => context_call(conn, stream, path, "Reset").await,
         "destroy" => context_call(conn, stream, path, "DestroyIC").await,
+        "cursor" => {
+            let mut numbers = rest.split_whitespace().map(str::parse::<i32>);
+            let mut next = || -> anyhow::Result<i32> {
+                Ok(numbers.next().context("cursor needs x y width height")??)
+            };
+            let body = (next()?, next()?, next()?, next()?);
+            context_call_with(conn, stream, path, "SetCursorRect", &body).await
+        }
         "caps" => {
             let capability: u64 = take_word(rest)
                 .context("caps needs a capability mask")?

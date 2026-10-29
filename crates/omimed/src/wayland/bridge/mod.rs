@@ -11,10 +11,17 @@
 //!   the daemon's registry after validating the version.
 //! - `xdg_wm_base` is virtual. A toplevel is configured immediately with `0x0` (the
 //!   client picks its size) and its surface becomes an input popup when it is mapped.
-//! - Only the active engine's windows are mapped. Hiding injects `attach(NULL)`; while
-//!   hidden, buffers and frame callbacks are held by the bridge instead of the compositor.
+//! - Only the active engine's windows are mapped, once the engine asked for it. Hiding
+//!   injects `attach(NULL)`; while hidden, buffers and frame callbacks are held by the
+//!   bridge instead of the compositor.
+//! - For X11 applications, which have no Wayland text field for a popup to follow, a
+//!   window is shown on a layer surface of the daemon's own instead (see [`mirror`]).
+//!   Frame callbacks of windows are always answered by the bridge, so they follow a
+//!   window between its popup and its mirror.
 //! - Popup roles are destroyed before their surfaces, and everything an engine leaves
 //!   behind is destroyed in dependency order when it disconnects.
+
+mod mirror;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -37,14 +44,21 @@ use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::ZwpInput
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_popup_surface_v2::{
     ZwpInputPopupSurfaceV2, ZwpInputPopupSurfaceV2Handler,
 };
-use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1;
+use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_buffer_params_v1::{
+    ZwpLinuxBufferParamsV1, ZwpLinuxBufferParamsV1Flags, ZwpLinuxBufferParamsV1Handler,
+};
 use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1;
-use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
+use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_dmabuf_v1::{
+    ZwpLinuxDmabufV1, ZwpLinuxDmabufV1Handler,
+};
 use wl_proxy::protocols::presentation_time::wp_presentation::WpPresentation;
-use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
-use wl_proxy::protocols::viewporter::wp_viewport::WpViewport;
-use wl_proxy::protocols::viewporter::wp_viewporter::WpViewporter;
+use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::{
+    WpSinglePixelBufferManagerV1, WpSinglePixelBufferManagerV1Handler,
+};
+use wl_proxy::protocols::viewporter::wp_viewport::{WpViewport, WpViewportHandler};
+use wl_proxy::protocols::viewporter::wp_viewporter::{WpViewporter, WpViewporterHandler};
 use wl_proxy::protocols::wayland::wl_buffer::{WlBuffer, WlBufferHandler};
+use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
 use wl_proxy::protocols::wayland::wl_compositor::{WlCompositor, WlCompositorHandler};
 use wl_proxy::protocols::wayland::wl_data_device::{WlDataDevice, WlDataDeviceHandler};
 use wl_proxy::protocols::wayland::wl_data_device_manager::{
@@ -53,7 +67,7 @@ use wl_proxy::protocols::wayland::wl_data_device_manager::{
 use wl_proxy::protocols::wayland::wl_data_source::{WlDataSource, WlDataSourceHandler};
 use wl_proxy::protocols::wayland::wl_display::{WlDisplay, WlDisplayHandler};
 use wl_proxy::protocols::wayland::wl_keyboard::WlKeyboard;
-use wl_proxy::protocols::wayland::wl_output::WlOutput;
+use wl_proxy::protocols::wayland::wl_output::{WlOutput, WlOutputTransform};
 use wl_proxy::protocols::wayland::wl_pointer::{
     WlPointer, WlPointerAxis, WlPointerAxisRelativeDirection, WlPointerAxisSource,
     WlPointerButtonState, WlPointerHandler,
@@ -67,6 +81,7 @@ use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::wayland::wl_subsurface::WlSubsurface;
 use wl_proxy::protocols::wayland::wl_surface::{WlSurface, WlSurfaceHandler};
 use wl_proxy::protocols::wayland::wl_touch::WlTouch;
+use wl_proxy::protocols::wlr_layer_shell_unstable_v1::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use wl_proxy::protocols::xdg_decoration_unstable_v1::zxdg_decoration_manager_v1::{
     ZxdgDecorationManagerV1, ZxdgDecorationManagerV1Handler,
 };
@@ -83,6 +98,9 @@ use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
 
 use super::{Event, EventQueue};
+use crate::placement::Rect;
+pub use mirror::X11Target;
+use mirror::{Mirror, OwnGlobals, SurfaceState};
 
 /// Identifies an engine.
 pub type EngineId = Rc<str>;
@@ -132,6 +150,10 @@ pub(super) struct BridgeShared {
     /// Engines that asked for their windows to be shown (`SetPopupVisible(true)`).
     /// Windows stay hidden until their engine asks.
     shown_engines: std::collections::HashSet<EngineId>,
+    /// Where windows go while an X11 application has focus.
+    x11: Option<X11Target>,
+    /// The daemon's own globals, for mirrors.
+    own: OwnGlobals,
     /// Surfaces that have been given an `xdg_toplevel`, i.e. engine windows.
     windows: Vec<Weak<WlSurface>>,
     configure_serial: u32,
@@ -144,12 +166,27 @@ pub(super) struct BridgeShared {
 
 type Shared = Rc<RefCell<BridgeShared>>;
 
+/// How an engine window is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Presentation {
+    Hidden,
+    /// As an input popup, which the compositor places at the focused text field.
+    Popup,
+    /// On a mirror at the text cursor of an X11 application.
+    Mirror,
+}
+
 impl BridgeShared {
-    fn window_visible(&self, engine: &EngineId) -> bool {
-        self.im_active
-            && self.popup_host.is_some()
-            && self.active_engine.as_ref() == Some(engine)
-            && self.shown_engines.contains(engine)
+    fn presentation(&self, engine: &EngineId) -> Presentation {
+        if self.active_engine.as_ref() != Some(engine) || !self.shown_engines.contains(engine) {
+            Presentation::Hidden
+        } else if self.im_active && self.popup_host.is_some() {
+            Presentation::Popup
+        } else if self.x11.is_some() && self.own.can_mirror() {
+            Presentation::Mirror
+        } else {
+            Presentation::Hidden
+        }
     }
 
     fn next_serial(&mut self) -> u32 {
@@ -181,6 +218,8 @@ impl Bridge {
             im_active: false,
             active_engine: None,
             shown_engines: std::collections::HashSet::new(),
+            x11: None,
+            own: OwnGlobals::default(),
             windows: Vec::new(),
             configure_serial: 0,
             last_scale: None,
@@ -203,6 +242,21 @@ impl Bridge {
         };
         for registry in registries.iter().filter_map(Weak::upgrade) {
             registry.send_global(name, interface, version);
+        }
+    }
+
+    /// Hands the bridge a global the daemon bound for its own surfaces: `wl_compositor`,
+    /// `zwlr_layer_shell_v1`, `wp_viewporter` or `wp_fractional_scale_manager_v1`.
+    pub fn add_own_global(&self, object: Rc<dyn Object>) {
+        let own = &mut self.shared.borrow_mut().own;
+        if let Some(compositor) = object.clone().try_downcast::<WlCompositor>() {
+            own.compositor = Some(compositor);
+        } else if let Some(layer_shell) = object.clone().try_downcast::<ZwlrLayerShellV1>() {
+            own.layer_shell = Some(layer_shell);
+        } else if let Some(viewporter) = object.clone().try_downcast::<WpViewporter>() {
+            own.viewporter = Some(viewporter);
+        } else if let Some(manager) = object.try_downcast::<WpFractionalScaleManagerV1>() {
+            own.fractional_scale = Some(manager);
         }
     }
 
@@ -250,12 +304,14 @@ impl Bridge {
         }
     }
 
-    /// Updates who may show windows and refreshes their visibility.
+    /// Updates who may show windows and where, and refreshes them. `x11` is where
+    /// windows go while no Wayland text field but an X11 application has focus.
     pub fn set_policy(
         &self,
         popup_host: Option<Rc<ZwpInputMethodV2>>,
         im_active: bool,
         active_engine: Option<EngineId>,
+        x11: Option<X11Target>,
     ) {
         let (host_changed, windows) = {
             let mut shared = self.shared.borrow_mut();
@@ -267,6 +323,7 @@ impl Bridge {
             shared.popup_host = popup_host;
             shared.im_active = im_active;
             shared.active_engine = active_engine;
+            shared.x11 = x11;
             shared.windows.retain(|w| w.strong_count() > 0);
             (host_changed, shared.windows.clone())
         };
@@ -351,6 +408,7 @@ fn destroy_upstream(object: &Rc<dyn Object>) {
     if let Some(surface) = object.try_downcast::<WlSurface>() {
         if let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() {
             handler.drop_popup(&surface);
+            handler.drop_mirror(false);
         }
         surface.send_destroy();
         return;
@@ -522,6 +580,12 @@ impl WlRegistryHandler for BridgeRegistry {
             manager.set_handler(BridgeFractionalScaleManager {
                 shared: self.shared.clone(),
             });
+        } else if let Some(viewporter) = id.try_downcast::<WpViewporter>() {
+            viewporter.set_handler(BridgeViewporter);
+        } else if let Some(dmabuf) = id.try_downcast::<ZwpLinuxDmabufV1>() {
+            dmabuf.set_handler(BridgeDmabuf);
+        } else if let Some(manager) = id.try_downcast::<WpSinglePixelBufferManagerV1>() {
+            manager.set_handler(BridgeSinglePixelBuffers);
         }
     }
 }
@@ -552,7 +616,11 @@ impl WpFractionalScaleManagerV1Handler for BridgeFractionalScaleManager {
         slf.send_get_fractional_scale(id, surface);
         id.set_handler(BridgeFractionalScale {
             shared: self.shared.clone(),
+            preferred: None,
         });
+        if let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() {
+            handler.fractional_scale = Some(Rc::downgrade(id));
+        }
         if let Some(scale) = self.shared.borrow().last_scale {
             id.send_preferred_scale(scale);
         }
@@ -561,11 +629,14 @@ impl WpFractionalScaleManagerV1Handler for BridgeFractionalScaleManager {
 
 struct BridgeFractionalScale {
     shared: Shared,
+    /// The scale the compositor prefers for the engine's surface.
+    preferred: Option<u32>,
 }
 
 impl WpFractionalScaleV1Handler for BridgeFractionalScale {
     fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
         self.shared.borrow_mut().last_scale = Some(scale);
+        self.preferred = Some(scale);
         slf.send_preferred_scale(scale);
     }
 }
@@ -625,6 +696,7 @@ impl WlShmPoolHandler for BridgeShmPool {
             return kill_client(&**slf, "invalid wl_shm_pool.create_buffer");
         }
         slf.send_create_buffer(id, offset, width, height, stride, format);
+        id.set_handler(BufferShim::sized(width, height));
     }
 
     fn handle_resize(&mut self, slf: &Rc<WlShmPool>, size: i32) {
@@ -658,16 +730,17 @@ impl WlSeatHandler for BridgeSeat {
 /// includes the pointers of all engines.
 #[derive(Default)]
 struct BridgePointer {
-    focused: bool,
+    /// The engine's surface the pointer entered, as far as the engine knows.
+    entered: Option<Rc<WlSurface>>,
     frame_pending: bool,
 }
 
 impl BridgePointer {
     fn forwarding(&mut self) -> bool {
-        if self.focused {
+        if self.entered.is_some() {
             self.frame_pending = true;
         }
-        self.focused
+        self.entered.is_some()
     }
 }
 
@@ -680,17 +753,25 @@ impl WlPointerHandler for BridgePointer {
         surface_x: Fixed,
         surface_y: Fixed,
     ) {
-        self.focused = same_client(&**slf, &**surface);
-        if self.forwarding() {
+        // A mirror stands for the engine window it shows, at the same size.
+        let surface = mirror::mirrored_window(surface).unwrap_or_else(|| surface.clone());
+        self.entered = same_client(&**slf, &*surface).then_some(surface);
+        if self.forwarding()
+            && let Some(surface) = &self.entered
+        {
             slf.send_enter(serial, surface, surface_x, surface_y);
         }
     }
 
-    fn handle_leave(&mut self, slf: &Rc<WlPointer>, serial: u32, surface: &Rc<WlSurface>) {
-        if self.forwarding() && same_client(&**slf, &**surface) {
-            slf.send_leave(serial, surface);
+    fn handle_leave(&mut self, slf: &Rc<WlPointer>, serial: u32, _surface: &Rc<WlSurface>) {
+        // The surface left may be a mirror that is gone by now; the engine learns that
+        // the pointer left the surface it entered.
+        if let Some(surface) = self.entered.take()
+            && surface.client().is_some()
+        {
+            self.frame_pending = true;
+            slf.send_leave(serial, &surface);
         }
-        self.focused = false;
     }
 
     fn handle_motion(&mut self, slf: &Rc<WlPointer>, time: u32, x: Fixed, y: Fixed) {
@@ -780,6 +861,22 @@ struct PendingAttach {
 struct BufferShim {
     /// A release from the compositor is in flight for an attachment we undid; drop it.
     swallow_release: bool,
+    /// The size in pixels, if the bridge saw the buffer being created.
+    size: Option<(i32, i32)>,
+}
+
+impl BufferShim {
+    fn sized(width: i32, height: i32) -> Self {
+        Self {
+            swallow_release: false,
+            size: Some((width, height)),
+        }
+    }
+}
+
+/// The size of `buffer` in pixels, if known.
+fn buffer_size(buffer: &Rc<WlBuffer>) -> Option<(i32, i32)> {
+    buffer.try_get_handler_ref::<BufferShim>().ok()?.size
 }
 
 impl WlBufferHandler for BufferShim {
@@ -808,8 +905,39 @@ struct BridgeSurface {
     pending_attach: Option<PendingAttach>,
     /// The buffer attached on the compositor side; `Some` means the popup is mapped.
     current: Option<Rc<WlBuffer>>,
-    /// The engine's newest buffer while the window is hidden; shown when we map again.
+    /// The engine's newest buffer while the window is hidden, or not yet on its mirror.
     held: Option<Rc<WlBuffer>>,
+    /// The state set since the last commit, and as of the last commit.
+    pending_state: PendingState,
+    state: SurfaceState,
+    /// The frame callbacks of a window: requested since the last commit, then waiting
+    /// until the window is shown, then handed to the surface showing it.
+    pending_frames: Vec<Rc<WlCallback>>,
+    frames: Vec<Rc<WlCallback>>,
+    armed: Vec<Rc<WlCallback>>,
+    /// The engine's fractional scale object for this surface.
+    fractional_scale: Option<Weak<WpFractionalScaleV1>>,
+    /// Whether the engine last got a scale meant for the mirror.
+    mirror_scale: bool,
+    /// The mirror showing the window while an X11 application has focus.
+    mirror: Option<Mirror>,
+    /// What the compositor closed a mirror for; no new mirror until the target changes.
+    closed_for: Option<X11Target>,
+}
+
+/// Changes to a surface's [`SurfaceState`] since its last commit.
+#[derive(Default)]
+struct PendingState {
+    scale: Option<i32>,
+    transform: Option<WlOutputTransform>,
+    source: Option<Option<[Fixed; 4]>>,
+    destination: Option<Option<(i32, i32)>>,
+}
+
+/// The size of a window showing `buffer`, in surface coordinates.
+fn window_size(state: &SurfaceState, buffer: &Rc<WlBuffer>) -> (i32, i32) {
+    // A buffer the bridge did not see being created is placed as if it were tiny.
+    buffer_size(buffer).map_or((1, 1), |size| state.logical_size(size))
 }
 
 impl BridgeSurface {
@@ -822,6 +950,15 @@ impl BridgeSurface {
             pending_attach: None,
             current: None,
             held: None,
+            pending_state: PendingState::default(),
+            state: SurfaceState::default(),
+            pending_frames: Vec::new(),
+            frames: Vec::new(),
+            armed: Vec::new(),
+            fractional_scale: None,
+            mirror_scale: false,
+            mirror: None,
+            closed_for: None,
         }
     }
 
@@ -829,8 +966,12 @@ impl BridgeSurface {
         self.window.as_ref().is_some_and(|w| w.toplevel.is_some())
     }
 
-    fn visible(&self) -> bool {
-        self.is_toplevel() && self.shared.borrow().window_visible(&self.engine)
+    fn presentation(&self) -> Presentation {
+        if self.is_toplevel() {
+            self.shared.borrow().presentation(&self.engine)
+        } else {
+            Presentation::Hidden
+        }
     }
 
     fn ensure_popup(&mut self, surface: &Rc<WlSurface>) -> bool {
@@ -856,6 +997,7 @@ impl BridgeSurface {
         let Some(buffer) = self.current.take() else {
             return;
         };
+        self.disarm_frames();
         surface.send_attach(None, 0, 0);
         surface.send_commit();
         if let Some(mut shim) = shim(&buffer) {
@@ -872,8 +1014,10 @@ impl BridgeSurface {
         match self.held.take() {
             Some(buffer) if buffer.server_id().is_some() && self.ensure_popup(surface) => {
                 surface.send_attach(Some(&buffer), 0, 0);
+                self.arm_frames(surface);
                 surface.send_commit();
                 self.current = Some(buffer);
+                self.restore_popup_reports();
             }
             held => {
                 self.held = held;
@@ -921,10 +1065,211 @@ impl BridgeSurface {
 
     /// Hides or shows the window to match the bridge policy.
     fn refresh(&mut self, surface: &Rc<WlSurface>) {
-        if self.visible() {
-            self.show(surface);
-        } else {
-            self.hide(surface);
+        match self.presentation() {
+            Presentation::Popup => {
+                self.drop_mirror(true);
+                self.show(surface);
+            }
+            Presentation::Mirror => {
+                self.hide(surface);
+                self.update_mirror(surface);
+            }
+            Presentation::Hidden => {
+                self.hide(surface);
+                self.drop_mirror(true);
+            }
+        }
+    }
+
+    /// Hands the window's committed frame callbacks to `target`, the surface that shows
+    /// the window with its next commit.
+    fn arm_frames(&mut self, target: &Rc<WlSurface>) {
+        self.armed.retain(|request| {
+            request
+                .try_get_handler_ref::<FrameRequest>()
+                .is_ok_and(|request| !request.frames.is_empty())
+        });
+        if self.frames.is_empty() {
+            return;
+        }
+        let request = target.new_send_frame();
+        request.set_forward_to_client(false);
+        request.set_handler(FrameRequest {
+            frames: std::mem::take(&mut self.frames),
+        });
+        self.armed.push(request);
+    }
+
+    /// Takes back the frame callbacks handed to a surface that stops showing the window.
+    fn disarm_frames(&mut self) {
+        let mut frames = Vec::new();
+        for request in self.armed.drain(..) {
+            if let Ok(mut request) = request.try_get_handler_mut::<FrameRequest>() {
+                frames.append(&mut request.frames);
+            }
+        }
+        frames.append(&mut self.frames);
+        self.frames = frames;
+    }
+
+    /// Answers every frame callback, for a window that goes away.
+    fn finish_frames(&mut self) {
+        self.disarm_frames();
+        self.frames.append(&mut self.pending_frames);
+        FrameRequest::done(std::mem::take(&mut self.frames), 0);
+    }
+
+    /// Tells the engine where the text cursor is relative to its window.
+    fn report_cursor(&self, (x, y, width, height): Rect) {
+        let shared = self.shared.borrow();
+        shared
+            .events
+            .borrow_mut()
+            .push_back(Event::PopupCursorRect {
+                engine: self.engine.clone(),
+                x,
+                y,
+                width,
+                height,
+            });
+    }
+
+    /// Tells the engine again what the compositor said about the popup (where the text
+    /// cursor is relative to it, and the scale to draw at), which a mirror may have
+    /// contradicted since.
+    fn restore_popup_reports(&mut self) {
+        let last = self.popup.as_ref().and_then(|popup| {
+            popup
+                .try_get_handler_ref::<PopupEvents>()
+                .ok()
+                .and_then(|events| events.last)
+        });
+        if let Some(cursor) = last {
+            self.report_cursor(cursor);
+        }
+        if std::mem::take(&mut self.mirror_scale)
+            && let Some(scale) = self.fractional_scale.as_ref().and_then(Weak::upgrade)
+            && let Some(preferred) = scale
+                .try_get_handler_ref::<BridgeFractionalScale>()
+                .ok()
+                .and_then(|handler| handler.preferred)
+        {
+            scale.send_preferred_scale(preferred);
+        }
+    }
+
+    /// Shows the window on a mirror at the X11 application's text cursor: creates the
+    /// mirror there, then shows the engine's newest buffer on it.
+    fn update_mirror(&mut self, window: &Rc<WlSurface>) {
+        let (target, own) = {
+            let shared = self.shared.borrow();
+            (shared.x11.clone(), shared.own.clone())
+        };
+        let Some(target) = target else {
+            return self.drop_mirror(true);
+        };
+        if self
+            .mirror
+            .as_ref()
+            .is_some_and(|mirror| !Rc::ptr_eq(&mirror.target.output, &target.output))
+        {
+            // A layer surface stays on its output.
+            self.drop_mirror(true);
+        }
+        let Some(mirror) = &mut self.mirror else {
+            if self.closed_for.as_ref() == Some(&target) {
+                return;
+            }
+            self.closed_for = None;
+            match &self.held {
+                Some(buffer) => {
+                    let size = window_size(&self.state, buffer);
+                    self.mirror = Mirror::create(&own, &self.shared, window, target, size);
+                }
+                // Nothing to show: ask the engine for a frame.
+                None => self.send_configure(),
+            }
+            return;
+        };
+        mirror.target = target;
+        if !mirror.configured {
+            return;
+        }
+        let buffer = self
+            .held
+            .take()
+            .filter(|buffer| buffer.server_id().is_some());
+        let Some(shown) = buffer.clone().or_else(|| mirror.current.clone()) else {
+            return self.send_configure();
+        };
+        let changed = mirror.present(buffer, &self.state, window_size(&self.state, &shown));
+        let surface = mirror.surface.clone();
+        let cursor = mirror.cursor();
+        let moved = mirror.reported_cursor.replace(cursor) != Some(cursor);
+        let frames = !self.frames.is_empty();
+        self.arm_frames(&surface);
+        if changed || frames {
+            surface.send_commit();
+        }
+        if moved {
+            self.report_cursor(cursor);
+        }
+    }
+
+    /// Destroys the mirror. With `keep_buffer`, the buffer it showed is held for showing
+    /// the window again.
+    fn drop_mirror(&mut self, keep_buffer: bool) {
+        let Some(mirror) = self.mirror.take() else {
+            return;
+        };
+        self.disarm_frames();
+        if let Some(buffer) = mirror.destroy()
+            && keep_buffer
+            && self.held.is_none()
+        {
+            // The compositor releases the buffer of a destroyed surface.
+            if let Some(mut shim) = shim(&buffer) {
+                shim.swallow_release = true;
+            }
+            self.held = Some(buffer);
+        }
+    }
+
+    /// The compositor configured the mirror: it may get a buffer now.
+    fn mirror_configured(&mut self, window: &Rc<WlSurface>) {
+        let Some(mirror) = &mut self.mirror else {
+            return;
+        };
+        if mirror.configured {
+            // Later configures only answer changes of the size.
+            return;
+        }
+        mirror.configured = true;
+        if self.presentation() == Presentation::Mirror {
+            self.update_mirror(window);
+        }
+    }
+
+    /// The compositor will not show the mirror any more, for example because its output
+    /// went away.
+    fn mirror_closed(&mut self) {
+        self.closed_for = self.mirror.as_ref().map(|mirror| mirror.target.clone());
+        self.drop_mirror(true);
+    }
+
+    fn apply_pending_state(&mut self) {
+        let pending = std::mem::take(&mut self.pending_state);
+        if let Some(scale) = pending.scale {
+            self.state.scale = scale;
+        }
+        if let Some(transform) = pending.transform {
+            self.state.transform = transform;
+        }
+        if let Some(source) = pending.source {
+            self.state.source = source;
+        }
+        if let Some(destination) = pending.destination {
+            self.state.destination = destination;
         }
     }
 
@@ -953,34 +1298,48 @@ impl BridgeSurface {
             // The initial commit of a new toplevel: answer with a configure.
             self.send_configure();
         }
-        let Some(attach) = self.pending_attach.take() else {
-            return surface.send_commit();
-        };
-        match attach.buffer {
-            Some(buffer) if self.visible() && self.ensure_popup(surface) => {
-                self.release_held();
-                surface.send_attach(Some(&buffer), attach.x, attach.y);
-                self.current = Some(buffer);
-            }
-            Some(buffer) => {
-                // Hidden: keep the newest frame for when we are shown again.
-                self.hold(buffer);
-            }
-            None => {
-                self.release_held();
-                if self.current.take().is_some() {
-                    surface.send_attach(None, attach.x, attach.y);
+        self.apply_pending_state();
+        self.frames.append(&mut self.pending_frames);
+        let presentation = self.presentation();
+        let mut unmapped = false;
+        if let Some(attach) = self.pending_attach.take() {
+            match attach.buffer {
+                Some(buffer)
+                    if presentation == Presentation::Popup && self.ensure_popup(surface) =>
+                {
+                    self.release_held();
+                    surface.send_attach(Some(&buffer), attach.x, attach.y);
+                    self.current = Some(buffer);
+                }
+                // Hidden, or shown on a mirror, which takes the newest frame from here.
+                Some(buffer) => self.hold(buffer),
+                None => {
+                    // The engine unmapped its window.
+                    unmapped = true;
+                    self.release_held();
+                    if self.current.take().is_some() {
+                        surface.send_attach(None, attach.x, attach.y);
+                    }
+                    self.drop_mirror(false);
                 }
             }
         }
+        if presentation == Presentation::Popup && self.current.is_some() {
+            self.arm_frames(surface);
+        }
         surface.send_commit();
+        if presentation == Presentation::Mirror && !unmapped {
+            self.update_mirror(surface);
+        }
     }
 }
 
 impl WlSurfaceHandler for BridgeSurface {
     fn handle_destroy(&mut self, slf: &Rc<WlSurface>) {
         self.drop_popup(slf);
+        self.drop_mirror(false);
         self.release_held();
+        self.finish_frames();
         slf.send_destroy();
     }
 
@@ -1005,10 +1364,30 @@ impl WlSurfaceHandler for BridgeSurface {
         }
     }
 
+    fn handle_frame(&mut self, slf: &Rc<WlSurface>, callback: &Rc<WlCallback>) {
+        if self.is_toplevel() {
+            // Answered once the window is shown, on its popup or on its mirror.
+            self.pending_frames.push(callback.clone());
+        } else {
+            slf.send_frame(callback);
+        }
+    }
+
+    fn handle_set_buffer_transform(&mut self, slf: &Rc<WlSurface>, transform: WlOutputTransform) {
+        self.pending_state.transform = Some(transform);
+        slf.send_set_buffer_transform(transform);
+    }
+
+    fn handle_set_buffer_scale(&mut self, slf: &Rc<WlSurface>, scale: i32) {
+        self.pending_state.scale = Some(scale);
+        slf.send_set_buffer_scale(scale);
+    }
+
     fn handle_commit(&mut self, slf: &Rc<WlSurface>) {
         if self.is_toplevel() {
             self.commit_window(slf);
         } else {
+            self.apply_pending_state();
             slf.send_commit();
         }
     }
@@ -1023,6 +1402,29 @@ impl WlSurfaceHandler for BridgeSurface {
         if same_client(&**slf, &**output) {
             slf.send_leave(output);
         }
+    }
+}
+
+/// A frame callback the bridge asked for on the surface showing an engine window; when
+/// it is done, so are the window's frame callbacks it stands for.
+struct FrameRequest {
+    frames: Vec<Rc<WlCallback>>,
+}
+
+impl FrameRequest {
+    fn done(frames: Vec<Rc<WlCallback>>, time: u32) {
+        for frame in frames {
+            if frame.client().is_some() {
+                frame.send_done(time);
+                frame.delete_id();
+            }
+        }
+    }
+}
+
+impl WlCallbackHandler for FrameRequest {
+    fn handle_done(&mut self, _slf: &Rc<WlCallback>, time: u32) {
+        Self::done(std::mem::take(&mut self.frames), time);
     }
 }
 
@@ -1054,6 +1456,140 @@ impl ZwpInputPopupSurfaceV2Handler for PopupEvents {
                 height,
             });
         }
+    }
+}
+
+/// Records the viewports of engine surfaces, which mirrors copy.
+struct BridgeViewporter;
+
+impl WpViewporterHandler for BridgeViewporter {
+    fn handle_get_viewport(
+        &mut self,
+        slf: &Rc<WpViewporter>,
+        id: &Rc<WpViewport>,
+        surface: &Rc<WlSurface>,
+    ) {
+        slf.send_get_viewport(id, surface);
+        id.set_handler(BridgeViewport {
+            surface: Rc::downgrade(surface),
+        });
+    }
+}
+
+struct BridgeViewport {
+    surface: Weak<WlSurface>,
+}
+
+impl BridgeViewport {
+    fn pending(&self, f: impl FnOnce(&mut PendingState)) {
+        if let Some(surface) = self.surface.upgrade()
+            && let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>()
+        {
+            f(&mut handler.pending_state);
+        }
+    }
+}
+
+impl WpViewportHandler for BridgeViewport {
+    fn handle_destroy(&mut self, slf: &Rc<WpViewport>) {
+        // The surface loses its viewport with its next commit.
+        self.pending(|state| {
+            state.source = Some(None);
+            state.destination = Some(None);
+        });
+        slf.send_destroy();
+    }
+
+    fn handle_set_source(
+        &mut self,
+        slf: &Rc<WpViewport>,
+        x: Fixed,
+        y: Fixed,
+        width: Fixed,
+        height: Fixed,
+    ) {
+        let source = [x, y, width, height];
+        let unset = source == [Fixed::from_i32_saturating(-1); 4];
+        self.pending(|state| state.source = Some((!unset).then_some(source)));
+        slf.send_set_source(x, y, width, height);
+    }
+
+    fn handle_set_destination(&mut self, slf: &Rc<WpViewport>, width: i32, height: i32) {
+        let unset = (width, height) == (-1, -1);
+        self.pending(|state| state.destination = Some((!unset).then_some((width, height))));
+        slf.send_set_destination(width, height);
+    }
+}
+
+/// Records the sizes of dmabuf buffers.
+struct BridgeDmabuf;
+
+impl ZwpLinuxDmabufV1Handler for BridgeDmabuf {
+    fn handle_create_params(
+        &mut self,
+        slf: &Rc<ZwpLinuxDmabufV1>,
+        params_id: &Rc<ZwpLinuxBufferParamsV1>,
+    ) {
+        slf.send_create_params(params_id);
+        params_id.set_handler(BridgeBufferParams::default());
+    }
+}
+
+#[derive(Default)]
+struct BridgeBufferParams {
+    /// The size passed to `create`, for the buffer that `created` brings.
+    size: Option<(i32, i32)>,
+}
+
+impl ZwpLinuxBufferParamsV1Handler for BridgeBufferParams {
+    fn handle_create(
+        &mut self,
+        slf: &Rc<ZwpLinuxBufferParamsV1>,
+        width: i32,
+        height: i32,
+        format: u32,
+        flags: ZwpLinuxBufferParamsV1Flags,
+    ) {
+        self.size = Some((width, height));
+        slf.send_create(width, height, format, flags);
+    }
+
+    fn handle_created(&mut self, slf: &Rc<ZwpLinuxBufferParamsV1>, buffer: &Rc<WlBuffer>) {
+        if let Some((width, height)) = self.size {
+            buffer.set_handler(BufferShim::sized(width, height));
+        }
+        slf.send_created(buffer);
+    }
+
+    fn handle_create_immed(
+        &mut self,
+        slf: &Rc<ZwpLinuxBufferParamsV1>,
+        buffer_id: &Rc<WlBuffer>,
+        width: i32,
+        height: i32,
+        format: u32,
+        flags: ZwpLinuxBufferParamsV1Flags,
+    ) {
+        slf.send_create_immed(buffer_id, width, height, format, flags);
+        buffer_id.set_handler(BufferShim::sized(width, height));
+    }
+}
+
+/// Records the size of single-pixel buffers.
+struct BridgeSinglePixelBuffers;
+
+impl WpSinglePixelBufferManagerV1Handler for BridgeSinglePixelBuffers {
+    fn handle_create_u32_rgba_buffer(
+        &mut self,
+        slf: &Rc<WpSinglePixelBufferManagerV1>,
+        id: &Rc<WlBuffer>,
+        r: u32,
+        g: u32,
+        b: u32,
+        a: u32,
+    ) {
+        slf.send_create_u32_rgba_buffer(id, r, g, b, a);
+        id.set_handler(BufferShim::sized(1, 1));
     }
 }
 
@@ -1177,7 +1713,9 @@ impl XdgToplevelHandler for VirtualToplevel {
             && let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>()
         {
             handler.hide(&surface);
+            handler.drop_mirror(false);
             handler.release_held();
+            handler.finish_frames();
             handler.pending_attach = None;
             if let Some(window) = &mut handler.window {
                 window.toplevel = None;

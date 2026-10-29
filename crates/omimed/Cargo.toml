@@ -21,7 +21,7 @@ rustix.workspace = true
 xkbcommon.workspace = true
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 futures-core = "0.3"
-x11rb = "0.14"
+x11rb = { version = "0.14", features = ["randr"] }
 xim = { version = "0.6", default-features = false, features = ["std", "x11rb-server"] }
 xim-ctext = "0.5"
 wl-proxy = { workspace = true, features = [
@@ -34,6 +34,7 @@ wl-proxy = { workspace = true, features = [
   "protocol-viewporter",
   "protocol-virtual_keyboard_unstable_v1",
   "protocol-wlr_foreign_toplevel_management_unstable_v1",
+  "protocol-wlr_layer_shell_unstable_v1",
   "protocol-xdg_decoration_unstable_v1",
   "protocol-xdg_output_unstable_v1",
   "protocol-xdg_shell",

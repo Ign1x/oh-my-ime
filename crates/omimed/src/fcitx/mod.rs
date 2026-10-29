@@ -53,6 +53,11 @@ pub enum Request {
     FocusIn(IcId),
     FocusOut(IcId),
     Reset(IcId),
+    /// The text cursor; in X screen coordinates for X11 applications.
+    CursorRect {
+        ic: IcId,
+        rect: (i32, i32, i32, i32),
+    },
     Capability {
         ic: IcId,
         capability: u64,
@@ -124,6 +129,10 @@ struct Ic {
     owner: String,
     path: OwnedObjectPath,
     program: Option<String>,
+    /// Whether the application runs on X11 (`display` is `x11:`).
+    x11: bool,
+    /// The text cursor, for X11 applications.
+    cursor_rect: Option<(i32, i32, i32, i32)>,
     capability: u64,
     focused: bool,
     /// The core's context while the field has focus and is not sensitive.
@@ -189,6 +198,15 @@ impl FcitxFrontend {
         self.events.drain(..).collect()
     }
 
+    /// The text cursor of the focused field of an X11 application, in X screen
+    /// coordinates.
+    pub fn focused_x11_cursor(&self) -> Option<(i32, i32, i32, i32)> {
+        self.ics
+            .values()
+            .find(|ic| ic.ctx.is_some() && ic.x11)
+            .and_then(|ic| ic.cursor_rect)
+    }
+
     pub fn handle(&mut self, request: Request) {
         match request {
             Request::Created {
@@ -212,6 +230,8 @@ impl FcitxFrontend {
                         owner,
                         path,
                         program: arg("program").filter(|p| !p.is_empty()),
+                        x11: arg("display").is_some_and(|d| d.starts_with("x11:")),
+                        cursor_rect: None,
                         capability: 0,
                         focused: false,
                         ctx: None,
@@ -228,6 +248,11 @@ impl FcitxFrontend {
                 self.end_context(ic);
             }
             Request::Reset(ic) => self.updated(ic, true),
+            Request::CursorRect { ic, rect } => {
+                if let Some(state) = self.ics.get_mut(&ic) {
+                    state.cursor_rect = Some(rect);
+                }
+            }
             Request::Capability { ic, capability } => {
                 let Some(state) = self.ics.get_mut(&ic) else {
                     return;

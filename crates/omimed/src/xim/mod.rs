@@ -25,6 +25,7 @@ use tokio::io::unix::AsyncFd;
 use tracing::{debug, info};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
+use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, KeyPressEvent};
 use x11rb::rust_connection::RustConnection;
 use xim::x11rb::{HasConnection as _, X11rbServer};
@@ -36,6 +37,7 @@ use xim::{
 
 use crate::daemon::{PollFd, watch};
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
+use crate::placement::{self, Monitor};
 use keymap::Keymap;
 
 /// The name applications ask for with `XMODIFIERS=@im=omime`.
@@ -76,6 +78,9 @@ struct Ic {
     preedit_len: usize,
     /// The last key the application forwarded, a template for keys sent to it.
     last_event: Option<XEvent>,
+    /// Where the application draws text, in X screen coordinates (the start of the
+    /// baseline).
+    spot: Option<(i32, i32)>,
 }
 
 /// A key the engine has not answered yet.
@@ -88,6 +93,8 @@ struct Pending {
 /// The `xim` crate's callbacks.
 struct Handler {
     context_ids: ContextIds,
+    /// The root window of the screen.
+    root: u32,
     keymap: Keymap,
     ics: BTreeMap<IcKey, Ic>,
     pending: BTreeMap<u64, Pending>,
@@ -120,6 +127,22 @@ impl Handler {
             ctx,
             info: ContextInfo::default(),
         });
+    }
+
+    /// Learns where the field draws text, from its spot in its window.
+    fn update_spot(&mut self, server: &Server, ic: &InputContext) {
+        let Some(window) = ic.app_focus_win().or(ic.app_win()) else {
+            return;
+        };
+        let spot = ic.preedit_spot();
+        let translated = server
+            .conn()
+            .translate_coordinates(window.get(), self.root, spot.x, spot.y)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok());
+        if let (Some(reply), Some(state)) = (translated, self.ics.get_mut(&ic_key(ic))) {
+            state.spot = Some((i32::from(reply.dst_x), i32::from(reply.dst_y)));
+        }
     }
 
     fn focus_out(&mut self, key: IcKey) {
@@ -213,9 +236,10 @@ impl ServerHandler<Server> for Handler {
 
     fn handle_set_focus(
         &mut self,
-        _server: &mut Server,
+        server: &mut Server,
         user_ic: &mut UserInputContext<()>,
     ) -> Result<(), ServerError> {
+        self.update_spot(server, &user_ic.ic);
         self.focus_in(ic_key(&user_ic.ic));
         Ok(())
     }
@@ -231,9 +255,10 @@ impl ServerHandler<Server> for Handler {
 
     fn handle_set_ic_values(
         &mut self,
-        _server: &mut Server,
-        _user_ic: &mut UserInputContext<()>,
+        server: &mut Server,
+        user_ic: &mut UserInputContext<()>,
     ) -> Result<(), ServerError> {
+        self.update_spot(server, &user_ic.ic);
         Ok(())
     }
 
@@ -302,6 +327,8 @@ pub struct XimFrontend {
     fd: AsyncFd<PollFd>,
     /// The `_XIM_PROTOCOL` atom, the type of protocol messages.
     xim_protocol: u32,
+    /// The monitors of the screen, as RandR describes them.
+    monitors: Vec<Monitor>,
     queue: VecDeque<Queued>,
     /// Since when a synchronous request waits for `XIM_SYNC_REPLY`.
     waiting_since: Option<Instant>,
@@ -331,6 +358,18 @@ impl XimFrontend {
             RustConnection::connect(None).context("cannot connect to the X server")?;
         let keymap = Keymap::load(&conn).context("cannot read the keyboard mapping")?;
         let xim_protocol = conn.intern_atom(false, b"_XIM_PROTOCOL")?.reply()?.atom;
+        let root = conn
+            .setup()
+            .roots
+            .get(screen)
+            .context("no such screen")?
+            .root;
+        let mask = randr::NotifyMask::SCREEN_CHANGE
+            | randr::NotifyMask::CRTC_CHANGE
+            | randr::NotifyMask::OUTPUT_CHANGE;
+        // Without RandR, X11 coordinates are taken for compositor coordinates.
+        let _ = conn.randr_select_input(root, mask);
+        let monitors = load_monitors(&conn, root);
         let fd = rustix::io::dup(conn.stream().as_fd())?;
         let server = Server::init(conn, screen, SERVER_NAME, xim::ALL_LOCALES)
             .map_err(|e| anyhow::anyhow!("cannot register the XIM server: {e}"))?;
@@ -340,6 +379,7 @@ impl XimFrontend {
             connections: XimConnections::new(),
             handler: Handler {
                 context_ids,
+                root,
                 keymap,
                 ics: BTreeMap::new(),
                 pending: BTreeMap::new(),
@@ -348,6 +388,7 @@ impl XimFrontend {
             },
             fd: watch(PollFd(Rc::new(fd)))?,
             xim_protocol,
+            monitors,
             queue: VecDeque::new(),
             waiting_since: None,
         })
@@ -366,6 +407,9 @@ impl XimFrontend {
             match &event {
                 Event::MappingNotify(_) => {
                     self.handler.keymap = Keymap::load(self.server.conn())?;
+                }
+                Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
+                    self.monitors = load_monitors(self.server.conn(), self.handler.root);
                 }
                 // The `xim` crate ignores this answer; it lets the next request out.
                 Event::ClientMessage(msg)
@@ -434,6 +478,24 @@ impl XimFrontend {
     /// Takes the events for the core.
     pub fn take_events(&mut self) -> Vec<FrontendEvent> {
         self.handler.events.drain(..).collect()
+    }
+
+    /// The monitors of the X screen.
+    pub fn monitors(&self) -> &[Monitor] {
+        &self.monitors
+    }
+
+    /// The text cursor of the focused field, in X screen coordinates. XIM only tells
+    /// where the baseline starts; the rectangle assumes a common line height.
+    pub fn focused_cursor(&self) -> Option<placement::Rect> {
+        const ASCENT: i32 = 16;
+        const LINE_HEIGHT: i32 = 20;
+        self.handler
+            .ics
+            .values()
+            .find(|ic| ic.ctx.is_some())
+            .and_then(|ic| ic.spot)
+            .map(|(x, y)| (x, y - ASCENT, 1, LINE_HEIGHT))
     }
 
     /// Ends every context, before the connection goes away.
@@ -610,4 +672,31 @@ fn is_sync_reply(conn: &RustConnection, msg: &ClientMessageEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// The monitors of the screen of `root`, or none if RandR cannot tell.
+fn load_monitors(conn: &RustConnection, root: u32) -> Vec<Monitor> {
+    let Ok(reply) = conn
+        .randr_get_monitors(root, true)
+        .map_err(anyhow::Error::from)
+        .and_then(|cookie| cookie.reply().map_err(Into::into))
+    else {
+        return Vec::new();
+    };
+    reply
+        .monitors
+        .iter()
+        .filter_map(|m| {
+            let name = conn.get_atom_name(m.name).ok()?.reply().ok()?.name;
+            Some(Monitor {
+                name: String::from_utf8_lossy(&name).into_owned(),
+                rect: (
+                    i32::from(m.x),
+                    i32::from(m.y),
+                    i32::from(m.width),
+                    i32::from(m.height),
+                ),
+            })
+        })
+        .collect()
 }

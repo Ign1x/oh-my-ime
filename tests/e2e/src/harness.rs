@@ -441,8 +441,8 @@ impl TestEnv {
 
     /// Opens the XIM test client, an X11 application, and waits until it has an input
     /// context. Sway gives the new window the keyboard focus.
-    pub fn xim_client(&self) -> anyhow::Result<Editor> {
-        let client = self.spawn_capturing("omime-xim-client", &[])?;
+    pub fn xim_client(&self, args: &[&str]) -> anyhow::Result<Editor> {
+        let client = self.spawn_capturing("omime-xim-client", args)?;
         client.wait_for("the XIM client to be ready", |l| l == "ready")?;
         Ok(client)
     }

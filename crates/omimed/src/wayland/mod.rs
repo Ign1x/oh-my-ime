@@ -10,6 +10,7 @@
 //! [`Frontend::apply_actions`].
 
 mod bridge;
+mod outputs;
 mod seat;
 mod toplevels;
 
@@ -25,6 +26,7 @@ use tracing::{debug, error, info, warn};
 use wl_proxy::baseline::Baseline;
 use wl_proxy::object::{Object, ObjectCoreApi};
 use wl_proxy::protocols::ObjectInterface;
+use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_keyboard_grab_v2::{
     ZwpInputMethodKeyboardGrabV2, ZwpInputMethodKeyboardGrabV2Handler,
 };
@@ -35,18 +37,24 @@ use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::{
 use wl_proxy::protocols::text_input_unstable_v3::zwp_text_input_v3::{
     ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint, ZwpTextInputV3ContentPurpose,
 };
+use wl_proxy::protocols::viewporter::wp_viewporter::WpViewporter;
 use wl_proxy::protocols::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
+use wl_proxy::protocols::wayland::wl_compositor::WlCompositor;
 use wl_proxy::protocols::wayland::wl_keyboard::{WlKeyboardKeyState, WlKeyboardKeymapFormat};
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
+use wl_proxy::protocols::wayland::wl_output::WlOutput;
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatCapability, WlSeatHandler};
+use wl_proxy::protocols::xdg_output_unstable_v1::zxdg_output_manager_v1::ZxdgOutputManagerV1;
 use wl_proxy::protocols::wlr_foreign_toplevel_management_unstable_v1::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1;
+use wl_proxy::protocols::wlr_layer_shell_unstable_v1::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use wl_proxy::state::{State, StateError, StateHandler};
 
 use crate::frontend::{ContextIds, FrontendEvent};
 use crate::keyboard::{ModifierState, RepeatInfo};
-use bridge::Bridge;
+use crate::placement::{self, Rect};
 pub use bridge::EngineId;
+use bridge::{Bridge, X11Target};
 use seat::SeatSession;
 use toplevels::{ToplevelEvent, Toplevels};
 
@@ -81,6 +89,8 @@ pub enum Event {
     },
     /// A window's state changed (see [`toplevels`]).
     Toplevel(ToplevelEvent),
+    /// An output's name or geometry changed.
+    Output(outputs::OutputEvent),
     /// The text cursor rectangle relative to an engine's popup changed.
     PopupCursorRect {
         engine: EngineId,
@@ -181,12 +191,15 @@ pub struct Frontend {
     toplevel_manager: Option<BoundGlobal<ZwlrForeignToplevelManagerV1>>,
     toplevels: Toplevels,
     focused_app: Option<String>,
+    output_set: outputs::OutputSet,
     /// Bound `wl_seat`s by registry name, before and after a session exists.
     seat_objects: BTreeMap<SeatId, Rc<WlSeat>>,
     seats: BTreeMap<SeatId, SeatSession>,
     initial_sync_done: bool,
     bridge: Bridge,
     active_engine: Option<EngineId>,
+    /// The text cursor of the focused X11 application, in compositor coordinates.
+    x11_cursor: Option<Rect>,
     outputs: Outputs,
     context_ids: ContextIds,
 }
@@ -240,11 +253,13 @@ impl Frontend {
             toplevel_manager: None,
             toplevels: Toplevels::default(),
             focused_app: None,
+            output_set: outputs::OutputSet::default(),
             seat_objects: BTreeMap::new(),
             seats: BTreeMap::new(),
             initial_sync_done: false,
             bridge,
             active_engine: None,
+            x11_cursor: None,
             outputs: Outputs::default(),
             context_ids,
         })
@@ -299,6 +314,11 @@ impl Frontend {
             .collect()
     }
 
+    /// The compositor's outputs with their names and logical geometry.
+    pub fn monitors(&self) -> Vec<crate::placement::Monitor> {
+        self.output_set.monitors()
+    }
+
     /// Whether the compositor reports which window has focus.
     pub fn reports_focused_app(&self) -> bool {
         self.toplevel_manager.is_some()
@@ -347,7 +367,17 @@ impl Frontend {
         self.update_bridge();
     }
 
-    /// Tells the bridge which input method hosts popups and whether it is active.
+    /// Sets the text cursor of the focused X11 application (in compositor coordinates),
+    /// where engine windows go while no Wayland text field has focus.
+    pub fn set_x11_cursor(&mut self, cursor: Option<Rect>) {
+        if self.x11_cursor != cursor {
+            self.x11_cursor = cursor;
+            self.update_bridge();
+        }
+    }
+
+    /// Tells the bridge which input method hosts popups, whether it is active, and
+    /// where windows go for an X11 application.
     fn update_bridge(&self) {
         let focused = |s: &&SeatSession| s.context().is_some();
         let host = self
@@ -355,11 +385,37 @@ impl Frontend {
             .values()
             .find(focused)
             .or_else(|| self.seats.values().find(|s| s.input_method().is_some()));
+        let im_active = host.is_some_and(|s| s.context().is_some());
+        let x11 = self
+            .x11_cursor
+            .filter(|_| !im_active)
+            .and_then(|cursor| self.x11_target(cursor));
         self.bridge.set_policy(
             host.and_then(|s| s.input_method().cloned()),
-            host.is_some_and(|s| s.context().is_some()),
+            im_active,
             self.active_engine.clone(),
+            x11,
         );
+    }
+
+    /// Where engine windows go for the X11 text cursor `cursor`: the output it is on.
+    fn x11_target(&self, cursor: Rect) -> Option<X11Target> {
+        let monitors = self.output_set.monitors();
+        let monitor = placement::output_at(&monitors, (cursor.0, cursor.1))?;
+        let (output, output_rect) = self.output_set.find(&monitor.name)?;
+        Some(X11Target {
+            output,
+            output_rect,
+            cursor,
+        })
+    }
+
+    /// Binds a global for the bridge's own surfaces.
+    fn bind_for_bridge<T: Object>(&self, name: u32, version: u32) {
+        let object = self.state.create_object::<T>(version);
+        object.set_forward_to_client(false);
+        self.registry.send_bind(name, object.clone());
+        self.bridge.add_own_global(object);
     }
 
     /// Releases everything we hold on the compositor (keys, grabs, input methods).
@@ -437,6 +493,7 @@ impl Frontend {
             // moves as two changes (one window loses it, another gets it), and in between
             // no window has it.
             Event::Toplevel(event) => self.toplevels.handle(event),
+            Event::Output(event) => self.output_set.handle(event),
             Event::PopupCursorRect {
                 engine,
                 x,
@@ -481,6 +538,32 @@ impl Frontend {
                 self.registry.send_bind(name, object.clone());
                 self.toplevel_manager = Some(BoundGlobal { name, object });
             }
+            ObjectInterface::WlOutput => {
+                let object = self
+                    .state
+                    .create_object::<WlOutput>(version.min(outputs::OUTPUT_VERSION));
+                // Bound first: its xdg_output needs it on the compositor.
+                self.registry.send_bind(name, object.clone());
+                self.output_set.add_output(name, object, &self.queue);
+            }
+            // The bridge shows engine windows for X11 applications on surfaces of its own.
+            ObjectInterface::WlCompositor => {
+                self.bind_for_bridge::<WlCompositor>(name, version.min(6));
+            }
+            ObjectInterface::ZwlrLayerShellV1 => {
+                self.bind_for_bridge::<ZwlrLayerShellV1>(name, version.min(4));
+            }
+            ObjectInterface::WpViewporter => self.bind_for_bridge::<WpViewporter>(name, 1),
+            ObjectInterface::WpFractionalScaleManagerV1 => {
+                self.bind_for_bridge::<WpFractionalScaleManagerV1>(name, 1);
+            }
+            ObjectInterface::ZxdgOutputManagerV1 => {
+                let object = self
+                    .state
+                    .create_object::<ZxdgOutputManagerV1>(version.min(outputs::XDG_OUTPUT_VERSION));
+                self.registry.send_bind(name, object.clone());
+                self.output_set.set_manager(object, &self.queue);
+            }
             ObjectInterface::WlSeat => {
                 let seat = self
                     .state
@@ -501,6 +584,7 @@ impl Frontend {
     }
 
     fn on_global_remove(&mut self, name: u32) {
+        self.output_set.remove(name);
         if let Some(mut session) = self.seats.remove(&name) {
             info!(seat = session.name(), "seat removed");
             session.shutdown();

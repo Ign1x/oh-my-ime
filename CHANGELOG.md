@@ -11,12 +11,21 @@ All notable changes to this project are documented here. The format follows
 - Applications using the Fcitx5 GTK or Qt input method module (`GTK_IM_MODULE=fcitx`,
   `QT_IM_MODULE=fcitx`), such as X11 applications under XWayland, type through omimed's
   engines: omimed serves the Fcitx5 module protocol under `org.fcitx.Fcitx5` and
-  `org.freedesktop.portal.Fcitx` whenever fcitx5 does not hold those names. Engine
-  windows do not follow these applications' text cursor yet.
+  `org.freedesktop.portal.Fcitx` whenever fcitx5 does not hold those names.
 - X11 applications using XIM (`XMODIFIERS=@im=omime`), such as xterm, Java, Wine or
   GTK with `GTK_IM_MODULE=xim`, type through omimed's engines too: omimed serves XIM on
-  the X display in `$DISPLAY` when it starts. Engine windows do not follow these
-  applications' text cursor yet.
+  the X display in `$DISPLAY` when it starts.
+- Engine windows open at the text cursor of X11 applications as well. Compositors show
+  input popups only for Wayland text fields, so omimed shows the window on a layer
+  surface of its own (namespace `omime-popup`, for compositor rules), placed below the
+  cursor (above it near the bottom of the screen). X11 coordinates are mapped to the
+  compositor's by output names, which also covers Hyprland's
+  `xwayland:force_zero_scaling`.
+
+### Fixed
+
+- `SetPopupVisible` had no effect: an engine's window showed whenever a text field had
+  focus, before the engine asked for it, and the engine could not hide it.
 
 ## [0.2.0] - 2026-10-30
 

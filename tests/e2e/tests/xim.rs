@@ -30,7 +30,7 @@ const SYNC_TIMEOUT: &str = "did not answer in time";
 #[ignore = "end-to-end test; see the module docs"]
 fn xim_clients_type_through_engines() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
-    let client = env.xim_client()?;
+    let client = env.xim_client(&[])?;
 
     env.type_on_seat("seat0", "ab ")?;
     client.wait_for_text("AB ")?;
@@ -54,7 +54,7 @@ fn xim_clients_type_through_engines() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see the module docs"]
 fn fast_typing_keeps_the_order() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
-    let client = env.xim_client()?;
+    let client = env.xim_client(&[])?;
 
     env.type_on_seat("seat0", "1ab 2")?;
     client.wait_for_text("1AB 2")?;
@@ -66,7 +66,7 @@ fn fast_typing_keeps_the_order() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see the module docs"]
 fn direct_input_sends_keys_back() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
-    let client = env.xim_client()?;
+    let client = env.xim_client(&[])?;
 
     env.omime(&["switch", "direct"])?;
     env.wait_for_status("direct input")?;
@@ -83,13 +83,13 @@ fn direct_input_sends_keys_back() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see the module docs"]
 fn xim_survives_a_client_restart() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
-    let first = env.xim_client()?;
+    let first = env.xim_client(&[])?;
     env.type_on_seat("seat0", "ab ")?;
     first.wait_for_text("AB ")?;
     // Dropping the client kills it, as when an application crashes.
     drop(first);
 
-    let second = env.xim_client()?;
+    let second = env.xim_client(&[])?;
     env.type_on_seat("seat0", "cd ")?;
     second.wait_for_text("CD ")?;
     Ok(())

@@ -7,6 +7,7 @@ mod fcitx;
 mod frontend;
 mod ime_state;
 mod keyboard;
+mod placement;
 mod runtime_dir;
 mod state;
 mod wayland;

@@ -279,11 +279,24 @@ impl InputContextObject {
         self.send(&header, Request::Reset(self.ic));
     }
 
-    // Engine windows do not follow the text cursor of these applications yet.
-    fn set_cursor_rect(&self, _x: i32, _y: i32, _w: i32, _h: i32) {}
+    fn set_cursor_rect(&self, x: i32, y: i32, w: i32, h: i32, #[zbus(header)] header: Header<'_>) {
+        let rect = (x, y, w, h);
+        self.send(&header, Request::CursorRect { ic: self.ic, rect });
+    }
 
     #[zbus(name = "SetCursorRectV2")]
-    fn set_cursor_rect_v2(&self, _x: i32, _y: i32, _w: i32, _h: i32, _scale: f64) {}
+    fn set_cursor_rect_v2(
+        &self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        _scale: f64,
+        #[zbus(header)] header: Header<'_>,
+    ) {
+        let rect = (x, y, w, h);
+        self.send(&header, Request::CursorRect { ic: self.ic, rect });
+    }
 
     fn set_capability(&self, capability: u64, #[zbus(header)] header: Header<'_>) {
         let request = Request::Capability {

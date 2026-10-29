@@ -22,6 +22,7 @@ use crate::control::{self, ControlRequest, ControlService};
 use crate::core::{Core, CoreEvent};
 use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
+use crate::placement::{self, Rect};
 use crate::state::State;
 use crate::wayland::{EngineId, Frontend};
 use crate::xim::XimFrontend;
@@ -277,6 +278,7 @@ impl Daemon {
                     &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 );
             }
+            frontend.set_x11_cursor(self.x11_cursor(frontend));
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
             }
@@ -349,6 +351,22 @@ impl Daemon {
         let _ = frontend.flush();
         frontend.state().destroy();
         Ok(end)
+    }
+
+    /// The text cursor of the focused X11 application, in compositor coordinates.
+    fn x11_cursor(&self, frontend: &Frontend) -> Option<Rect> {
+        let xim = self.xim.as_ref();
+        let cursor = self
+            .fcitx
+            .focused_x11_cursor()
+            .or_else(|| xim.and_then(XimFrontend::focused_cursor))?;
+        // XIM's connection describes the X screen's monitors, which map X11 coordinates.
+        let x11_monitors = xim.map_or(&[][..], XimFrontend::monitors);
+        Some(placement::x11_to_layout(
+            cursor,
+            x11_monitors,
+            &frontend.monitors(),
+        ))
     }
 
     /// Connects to the X display again after the XIM server failed.
