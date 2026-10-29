@@ -90,10 +90,23 @@ enum Request {
     Key(KeyRef, KeyEvent),
 }
 
+impl Request {
+    /// The engine method that carries this request, for logs.
+    fn method(&self) -> &'static str {
+        match self {
+            Self::Activate => "Activate",
+            Self::Update(_) => "UpdateContext",
+            Self::Reset => "Reset",
+            Self::Key(..) => "ProcessKey",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct InFlight {
     token: u64,
     engine: String,
+    method: &'static str,
     deadline: Instant,
     /// The key waiting for the answer, if the request was a key.
     key: Option<KeyRef>,
@@ -283,7 +296,9 @@ impl Core {
             };
             warn!(
                 engine = flight.engine,
-                ctx, "the engine did not answer in time"
+                method = flight.method,
+                ctx,
+                "the engine did not answer in time"
             );
             self.stale_tokens.insert(flight.token);
             if let Some(key) = flight.key {
@@ -497,7 +512,11 @@ impl Core {
             Reply::Actions(Ok(actions)) => (false, actions),
             Reply::Key(Ok((handled, actions))) => (handled, actions),
             Reply::Actions(Err(e)) | Reply::Key(Err(e)) => {
-                warn!(engine = flight.engine, "engine request failed: {e}");
+                warn!(
+                    engine = flight.engine,
+                    method = flight.method,
+                    "engine request failed: {e}"
+                );
                 (false, Vec::new())
             }
         };
@@ -614,6 +633,7 @@ impl Core {
         self.next_token += 1;
         let token = self.next_token;
         let events = self.events.clone();
+        let method = request.method();
         let mut key_ref = None;
         match request {
             Request::Activate => {
@@ -647,6 +667,7 @@ impl Core {
         context.in_flight = Some(InFlight {
             token,
             engine,
+            method,
             deadline: Instant::now() + self.key_timeout,
             key: key_ref,
         });
