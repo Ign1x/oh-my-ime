@@ -20,6 +20,7 @@ tokio = { workspace = true, features = ["process"] }
 rustix.workspace = true
 xkbcommon.workspace = true
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
+futures-core = "0.3"
 wl-proxy = { workspace = true, features = [
   "protocol-cursor_shape_v1",
   "protocol-fractional_scale_v1",

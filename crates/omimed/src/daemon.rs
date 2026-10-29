@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::control::{self, ControlRequest, ControlService};
 use crate::core::{Core, CoreEvent};
+use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
 use crate::state::State;
 use crate::wayland::{EngineId, Frontend};
@@ -113,6 +114,9 @@ struct Daemon {
     /// Kept alive for the control service's lifetime.
     _control: Option<Rc<ControlService>>,
     context_ids: ContextIds,
+    /// Applications using the Fcitx5 module; they outlive compositor connections.
+    fcitx: FcitxFrontend,
+    fcitx_rx: mpsc::UnboundedReceiver<fcitx::Request>,
 }
 
 impl Daemon {
@@ -131,6 +135,10 @@ impl Daemon {
                 None
             }
         };
+
+        let context_ids = ContextIds::default();
+        let (fcitx_tx, fcitx_rx) = mpsc::unbounded_channel();
+        let fcitx = FcitxFrontend::new(fcitx::start(fcitx_tx).await, context_ids.clone());
 
         let config = load_config();
         let installed = discover_engines();
@@ -170,7 +178,9 @@ impl Daemon {
             ui_rx,
             control_rx,
             _control: control,
-            context_ids: ContextIds::default(),
+            context_ids,
+            fcitx,
+            fcitx_rx,
         })
     }
 
@@ -191,7 +201,7 @@ impl Daemon {
                 None
             };
             let end = self.session(&mut frontend, startup_engine).await?;
-            self.core.forget_contexts();
+            self.core.forget_wayland_contexts();
             match end {
                 SessionEnd::Shutdown => {
                     self.core.shutdown();
@@ -231,13 +241,18 @@ impl Daemon {
                 && let Some(engine) = startup_engine.take()
                 && let Err(e) = self
                     .core
-                    .set_current(Some(engine), &mut Outputs::new(frontend))
+                    .set_current(Some(engine), &mut Outputs::new(frontend, &mut self.fcitx))
             {
                 warn!("{e:#}");
             }
-            for event in frontend.take_events() {
+            let events: Vec<_> = frontend
+                .take_events()
+                .into_iter()
+                .chain(self.fcitx.take_events())
+                .collect();
+            for event in events {
                 self.core
-                    .on_frontend_event(event, &mut Outputs::new(frontend));
+                    .on_frontend_event(event, &mut Outputs::new(frontend, &mut self.fcitx));
             }
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
@@ -262,10 +277,10 @@ impl Daemon {
                     if let Err(e) = frontend.on_timer(now) {
                         break SessionEnd::Lost(e);
                     }
-                    self.core.on_timer(now, &mut Outputs::new(frontend));
+                    self.core.on_timer(now, &mut Outputs::new(frontend, &mut self.fcitx));
                 }
                 Some(event) = self.core_rx.recv() => {
-                    self.core.on_event(event, &mut Outputs::new(frontend)).await;
+                    self.core.on_event(event, &mut Outputs::new(frontend, &mut self.fcitx)).await;
                 }
                 Some((engine, fd)) = self.ui_rx.recv() => {
                     if let Err(e) = frontend.add_ui_client(engine.as_str().into(), fd) {
@@ -275,6 +290,7 @@ impl Daemon {
                 Some(request) = self.control_rx.recv() => {
                     self.on_control(request, frontend);
                 }
+                Some(request) = self.fcitx_rx.recv() => self.fcitx.handle(request),
                 _ = self.signals.term.recv() => break SessionEnd::Shutdown,
                 _ = self.signals.int.recv() => break SessionEnd::Shutdown,
             }
@@ -304,14 +320,20 @@ impl Daemon {
             }
             ControlRequest::Switch(target, reply) => {
                 let _ = reply.send(result(
-                    self.core.switch_to(target, &mut Outputs::new(frontend)),
+                    self.core
+                        .switch_to(target, &mut Outputs::new(frontend, &mut self.fcitx)),
                 ));
             }
             ControlRequest::Next(reply) => {
-                let _ = reply.send(result(self.core.next(&mut Outputs::new(frontend))));
+                let _ = reply.send(result(
+                    self.core.next(&mut Outputs::new(frontend, &mut self.fcitx)),
+                ));
             }
             ControlRequest::Toggle(reply) => {
-                let _ = reply.send(result(self.core.toggle(&mut Outputs::new(frontend))));
+                let _ = reply.send(result(
+                    self.core
+                        .toggle(&mut Outputs::new(frontend, &mut self.fcitx)),
+                ));
             }
             ControlRequest::Diagnose(reply) => {
                 let display = self
@@ -329,8 +351,11 @@ impl Daemon {
             ControlRequest::Reload(reply) => {
                 let config = load_config();
                 let installed = discover_engines();
-                self.core
-                    .reconfigure(&config, installed, &mut Outputs::new(frontend));
+                self.core.reconfigure(
+                    &config,
+                    installed,
+                    &mut Outputs::new(frontend, &mut self.fcitx),
+                );
                 let _ = reply.send(Ok(()));
             }
         }
@@ -347,11 +372,12 @@ async fn sleep_until(deadline: Option<Instant>) {
 /// The frontends of one compositor session, as the core sees them.
 struct Outputs<'a> {
     wayland: &'a mut Frontend,
+    fcitx: &'a mut FcitxFrontend,
 }
 
 impl<'a> Outputs<'a> {
-    fn new(wayland: &'a mut Frontend) -> Self {
-        Self { wayland }
+    fn new(wayland: &'a mut Frontend, fcitx: &'a mut FcitxFrontend) -> Self {
+        Self { wayland, fcitx }
     }
 }
 
@@ -359,18 +385,21 @@ impl Frontends for Outputs<'_> {
     fn finish_key(&mut self, key: &KeyRef, handled: bool) {
         match key {
             KeyRef::Wayland(key) => self.wayland.finish_key(key, handled),
+            KeyRef::Fcitx(key) => self.fcitx.finish_key(key, handled),
         }
     }
 
     fn apply_actions(&mut self, origin: Origin, ctx: ContextId, actions: &[Action]) {
         match origin {
             Origin::Wayland(seat) => self.wayland.apply_actions(seat, ctx, actions),
+            Origin::Fcitx => self.fcitx.apply_actions(ctx, actions),
         }
     }
 
     fn clear_preedit(&mut self, origin: Origin, ctx: ContextId) {
         match origin {
             Origin::Wayland(seat) => self.wayland.clear_preedit(seat, ctx),
+            Origin::Fcitx => self.fcitx.clear_preedit(ctx),
         }
     }
 

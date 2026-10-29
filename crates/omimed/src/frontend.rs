@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent, Rect};
 
+use crate::fcitx;
 use crate::wayland::{self, EngineId, SeatId};
 
 /// Where a text field comes from.
@@ -16,12 +17,15 @@ use crate::wayland::{self, EngineId, SeatId};
 pub enum Origin {
     /// A seat of the Wayland compositor.
     Wayland(SeatId),
+    /// An application using the Fcitx5 module protocol.
+    Fcitx,
 }
 
 /// A key the core has to decide about; it goes back to the frontend that reported it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyRef {
     Wayland(wayland::KeyRef),
+    Fcitx(fcitx::KeyRef),
 }
 
 impl KeyRef {
@@ -29,6 +33,7 @@ impl KeyRef {
     pub fn ctx(&self) -> ContextId {
         match self {
             Self::Wayland(key) => key.ctx,
+            Self::Fcitx(key) => key.ctx,
         }
     }
 }

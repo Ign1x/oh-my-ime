@@ -867,8 +867,12 @@ impl Core {
     }
 
     /// Forgets all text fields, e.g. after the compositor connection was lost.
-    pub fn forget_contexts(&mut self) {
-        for (_, context) in std::mem::take(&mut self.contexts) {
+    pub fn forget_wayland_contexts(&mut self) {
+        let (wayland, others) = std::mem::take(&mut self.contexts)
+            .into_iter()
+            .partition(|(_, context)| matches!(context.origin, Origin::Wayland(_)));
+        self.contexts = others;
+        for (_, context) in wayland {
             if let Some(flight) = context.in_flight {
                 self.stale_tokens.insert(flight.token);
             }

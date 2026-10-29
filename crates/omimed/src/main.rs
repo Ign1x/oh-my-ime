@@ -3,6 +3,7 @@
 mod control;
 mod core;
 mod daemon;
+mod fcitx;
 mod frontend;
 mod ime_state;
 mod keyboard;
