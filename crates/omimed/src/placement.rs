@@ -16,19 +16,25 @@ pub struct Monitor {
     pub rect: Rect,
 }
 
-fn contains((x, y, w, h): Rect, (px, py): (i32, i32)) -> bool {
-    px >= x && py >= y && px < x + w && py < y + h
+/// The squared distance from `point` to the nearest pixel of `rect` (0 inside).
+fn distance((x, y, w, h): Rect, (px, py): (i32, i32)) -> i64 {
+    let (right, bottom) = (x + w.max(1) - 1, y + h.max(1) - 1);
+    let dx = i64::from((x - px).max(px - right).max(0));
+    let dy = i64::from((y - py).max(py - bottom).max(0));
+    dx * dx + dy * dy
 }
 
-/// Maps the X11 rectangle `rect` to compositor coordinates, by the X11 monitor its
-/// top-left corner is on. Without monitors (or names that match), X11 and compositor
-/// coordinates are taken to be the same.
+/// Maps the X11 rectangle `rect` to compositor coordinates, by the X11 monitor nearest
+/// to its centre (an application may report a cursor partly off its monitor). Without
+/// monitors (or names that match), X11 and compositor coordinates are taken to be the
+/// same.
 pub fn x11_to_layout(rect: Rect, x11: &[Monitor], outputs: &[Monitor]) -> Rect {
     let (x, y, w, h) = rect;
+    let centre = (x + w / 2, y + h / 2);
     let pair = x11
         .iter()
-        .filter(|m| contains(m.rect, (x, y)))
-        .find_map(|m| outputs.iter().find(|o| o.name == m.name).map(|o| (m, o)));
+        .filter_map(|m| outputs.iter().find(|o| o.name == m.name).map(|o| (m, o)))
+        .min_by_key(|(m, _)| distance(m.rect, centre));
     let Some((from, to)) = pair else {
         return rect;
     };
@@ -49,12 +55,9 @@ pub fn x11_to_layout(rect: Rect, x11: &[Monitor], outputs: &[Monitor]) -> Rect {
     )
 }
 
-/// The output `point` is on, or the first one.
+/// The output `point` is on, or the nearest one.
 pub fn output_at(outputs: &[Monitor], point: (i32, i32)) -> Option<&Monitor> {
-    outputs
-        .iter()
-        .find(|o| contains(o.rect, point))
-        .or_else(|| outputs.first())
+    outputs.iter().min_by_key(|o| distance(o.rect, point))
 }
 
 /// Where a `size` window goes for the text cursor `cursor` on `output`: below the
@@ -113,6 +116,23 @@ mod tests {
     }
 
     #[test]
+    fn cursors_partly_off_their_monitor_map_by_the_nearest_one() {
+        // A spot at the top of the second monitor makes a rectangle that starts above it.
+        let x11 = [
+            monitor("DP-1", (0, 0, 1280, 720)),
+            monitor("DP-2", (1280, 0, 1600, 900)),
+        ];
+        let outputs = [
+            monitor("DP-1", (0, 0, 1280, 720)),
+            monitor("DP-2", (3000, 0, 800, 450)),
+        ];
+        assert_eq!(
+            x11_to_layout((1300, -16, 1, 20), &x11, &outputs),
+            (3010, -8, 1, 10)
+        );
+    }
+
+    #[test]
     fn unknown_monitors_keep_coordinates() {
         let rect = (10, 20, 1, 18);
         assert_eq!(x11_to_layout(rect, &[], &[]), rect);
@@ -148,6 +168,10 @@ mod tests {
         );
         assert_eq!(
             output_at(&outputs, (500, 10)).map(|o| o.name.as_str()),
+            Some("B")
+        );
+        assert_eq!(
+            output_at(&outputs, (-20, -5)).map(|o| o.name.as_str()),
             Some("A")
         );
         assert!(output_at(&[], (0, 0)).is_none());

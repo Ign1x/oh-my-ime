@@ -353,13 +353,18 @@ impl Daemon {
         Ok(end)
     }
 
-    /// The text cursor of the focused X11 application, in compositor coordinates.
+    /// The text cursor of the focused X11 application, in compositor coordinates: of
+    /// the field focused last, through either frontend.
     fn x11_cursor(&self, frontend: &Frontend) -> Option<Rect> {
         let xim = self.xim.as_ref();
-        let cursor = self
-            .fcitx
-            .focused_x11_cursor()
-            .or_else(|| xim.and_then(XimFrontend::focused_cursor))?;
+        let (_, cursor) = [
+            self.fcitx.focused_x11_cursor(),
+            xim.and_then(XimFrontend::focused_cursor),
+        ]
+        .into_iter()
+        .flatten()
+        .max_by_key(|(ctx, _)| *ctx)?;
+        let cursor = cursor?;
         // XIM's connection describes the X screen's monitors, which map X11 coordinates.
         let x11_monitors = xim.map_or(&[][..], XimFrontend::monitors);
         Some(placement::x11_to_layout(

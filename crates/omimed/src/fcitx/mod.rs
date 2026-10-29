@@ -19,6 +19,7 @@ use xkbcommon::xkb;
 use zbus::OwnedObjectPath;
 
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
+use crate::placement::Rect;
 pub use service::start;
 
 /// Identifies an input context of the protocol.
@@ -56,7 +57,7 @@ pub enum Request {
     /// The text cursor; in X screen coordinates for X11 applications.
     CursorRect {
         ic: IcId,
-        rect: (i32, i32, i32, i32),
+        rect: Rect,
     },
     Capability {
         ic: IcId,
@@ -132,7 +133,7 @@ struct Ic {
     /// Whether the application runs on X11 (`display` is `x11:`).
     x11: bool,
     /// The text cursor, for X11 applications.
-    cursor_rect: Option<(i32, i32, i32, i32)>,
+    cursor_rect: Option<Rect>,
     capability: u64,
     focused: bool,
     /// The core's context while the field has focus and is not sensitive.
@@ -198,13 +199,14 @@ impl FcitxFrontend {
         self.events.drain(..).collect()
     }
 
-    /// The text cursor of the focused field of an X11 application, in X screen
-    /// coordinates.
-    pub fn focused_x11_cursor(&self) -> Option<(i32, i32, i32, i32)> {
+    /// The most recently focused field of an X11 application and its text cursor, in X
+    /// screen coordinates, if the application reported one.
+    pub fn focused_x11_cursor(&self) -> Option<(ContextId, Option<Rect>)> {
         self.ics
             .values()
-            .find(|ic| ic.ctx.is_some() && ic.x11)
-            .and_then(|ic| ic.cursor_rect)
+            .filter(|ic| ic.x11)
+            .filter_map(|ic| Some((ic.ctx?, ic.cursor_rect)))
+            .max_by_key(|(ctx, _)| *ctx)
     }
 
     pub fn handle(&mut self, request: Request) {

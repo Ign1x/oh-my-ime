@@ -371,6 +371,7 @@ impl Frontend {
     /// where engine windows go while no Wayland text field has focus.
     pub fn set_x11_cursor(&mut self, cursor: Option<Rect>) {
         if self.x11_cursor != cursor {
+            debug!(?cursor, "X11 text cursor");
             self.x11_cursor = cursor;
             self.update_bridge();
         }

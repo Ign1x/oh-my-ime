@@ -26,7 +26,10 @@ use tracing::{debug, info};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
-use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, KeyPressEvent};
+use x11rb::protocol::xproto::{
+    AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt as _, EventMask,
+    KeyPressEvent,
+};
 use x11rb::rust_connection::RustConnection;
 use xim::x11rb::{HasConnection as _, X11rbServer};
 use xim::{
@@ -95,6 +98,10 @@ struct Handler {
     context_ids: ContextIds,
     /// The root window of the screen.
     root: u32,
+    /// The communication window of the protocol message being handled.
+    com_win: Option<u32>,
+    /// The communication window of each client window with input contexts.
+    clients: BTreeMap<u32, u32>,
     keymap: Keymap,
     ics: BTreeMap<IcKey, Ic>,
     pending: BTreeMap<u64, Pending>,
@@ -198,6 +205,18 @@ impl ServerHandler<Server> for Handler {
             ..Ic::default()
         };
         self.ics.insert(ic_key(&user_ic.ic), ic);
+        // Applications that exit without closing the input method (or crash) never
+        // disconnect: watch their window to end their contexts when it goes away.
+        let client_win = user_ic.ic.client_win();
+        if let Some(com_win) = self.com_win
+            && self.clients.insert(client_win, com_win).is_none()
+        {
+            let watch = ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY);
+            server
+                .conn()
+                .change_window_attributes(client_win, &watch)
+                .map_err(|e| ServerError::Internal(e.to_string()))?;
+        }
         server.set_event_mask(&user_ic.ic, KEY_EVENTS, 0)
     }
 
@@ -330,8 +349,9 @@ pub struct XimFrontend {
     /// The monitors of the screen, as RandR describes them.
     monitors: Vec<Monitor>,
     queue: VecDeque<Queued>,
-    /// Since when a synchronous request waits for `XIM_SYNC_REPLY`.
-    waiting_since: Option<Instant>,
+    /// Since when a synchronous request waits for `XIM_SYNC_REPLY`, and from which
+    /// client window.
+    waiting: Option<(Instant, u32)>,
 }
 
 /// A request waiting for its turn.
@@ -380,6 +400,8 @@ impl XimFrontend {
             handler: Handler {
                 context_ids,
                 root,
+                com_win: None,
+                clients: BTreeMap::new(),
                 keymap,
                 ics: BTreeMap::new(),
                 pending: BTreeMap::new(),
@@ -390,7 +412,7 @@ impl XimFrontend {
             xim_protocol,
             monitors,
             queue: VecDeque::new(),
-            waiting_since: None,
+            waiting: None,
         })
     }
 
@@ -415,10 +437,15 @@ impl XimFrontend {
                 Event::ClientMessage(msg)
                     if msg.type_ == self.xim_protocol && is_sync_reply(self.server.conn(), msg) =>
                 {
-                    self.waiting_since = None;
+                    self.waiting = None;
                 }
+                Event::DestroyNotify(notify) => self.client_gone(notify.window),
                 _ => {}
             }
+            self.handler.com_win = match &event {
+                Event::ClientMessage(msg) if msg.type_ == self.xim_protocol => Some(msg.window),
+                _ => None,
+            };
             if let Err(e) =
                 self.server
                     .filter_event(&event, &mut self.connections, &mut self.handler)
@@ -430,15 +457,36 @@ impl XimFrontend {
         self.flush()
     }
 
+    /// Ends the input contexts of an application whose client window is gone.
+    fn client_gone(&mut self, client_win: u32) {
+        let Some(com_win) = self.handler.clients.remove(&client_win) else {
+            return;
+        };
+        debug!(client_win, "XIM: an application went away");
+        if let Some(connection) = self.connections.get_connection(com_win)
+            && let Err(e) = connection.disconnect(&mut self.server, &mut self.handler)
+        {
+            debug!("XIM: {e}");
+        }
+        self.connections.remove_connection(com_win);
+        self.queue.retain(|queued| queued.client_win != client_win);
+        if self
+            .waiting
+            .is_some_and(|(_, waiting_for)| waiting_for == client_win)
+        {
+            self.waiting = None;
+        }
+    }
+
     /// When to give up on an application that did not answer a synchronous request.
     pub fn deadline(&self) -> Option<Instant> {
-        self.waiting_since.map(|since| since + SYNC_TIMEOUT)
+        self.waiting.map(|(since, _)| since + SYNC_TIMEOUT)
     }
 
     pub fn on_timer(&mut self, now: Instant) -> anyhow::Result<()> {
         if self.deadline().is_some_and(|deadline| deadline <= now) {
             debug!("XIM: an application did not answer in time");
-            self.waiting_since = None;
+            self.waiting = None;
             self.send_queued();
         }
         self.flush()
@@ -456,7 +504,7 @@ impl XimFrontend {
     }
 
     fn send_queued(&mut self) {
-        while self.waiting_since.is_none() {
+        while self.waiting.is_none() {
             let Some(queued) = self.queue.pop_front() else {
                 break;
             };
@@ -465,7 +513,7 @@ impl XimFrontend {
                 continue;
             }
             if queued.sync {
-                self.waiting_since = Some(Instant::now());
+                self.waiting = Some((Instant::now(), queued.client_win));
             }
         }
     }
@@ -485,17 +533,18 @@ impl XimFrontend {
         &self.monitors
     }
 
-    /// The text cursor of the focused field, in X screen coordinates. XIM only tells
-    /// where the baseline starts; the rectangle assumes a common line height.
-    pub fn focused_cursor(&self) -> Option<placement::Rect> {
+    /// The most recently focused field and its text cursor, in X screen coordinates.
+    /// XIM only tells where the baseline starts; the rectangle assumes a common line
+    /// height.
+    pub fn focused_cursor(&self) -> Option<(ContextId, Option<placement::Rect>)> {
         const ASCENT: i32 = 16;
-        const LINE_HEIGHT: i32 = 20;
+        const LINE_HEIGHT: i32 = 22;
         self.handler
             .ics
             .values()
-            .find(|ic| ic.ctx.is_some())
-            .and_then(|ic| ic.spot)
-            .map(|(x, y)| (x, y - ASCENT, 1, LINE_HEIGHT))
+            .filter_map(|ic| Some((ic.ctx?, ic.spot)))
+            .max_by_key(|(ctx, _)| *ctx)
+            .map(|(ctx, spot)| (ctx, spot.map(|(x, y)| (x, y - ASCENT, 1, LINE_HEIGHT))))
     }
 
     /// Ends every context, before the connection goes away.

@@ -170,9 +170,9 @@ know which frontend a key came from.
   opens below the text cursor, above it when there is no room below, and moves left when it
   would leave the output on the right. The cursor comes from `SetCursorRect` for the Fcitx5
   modules, or from the XIM spot location, where the application draws text; omimed assumes
-  a line of 20 pixels around the baseline. X11 coordinates are mapped to the compositor's
-  by matching XWayland's RandR monitors with the compositor's outputs by name (xdg-output),
-  which also handles Hyprland's `xwayland:force_zero_scaling`.
+  a line from 16 pixels above to 6 pixels below the baseline. X11 coordinates are mapped to
+  the compositor's by matching XWayland's RandR monitors with the compositor's outputs by
+  name (xdg-output), which also handles Hyprland's `xwayland:force_zero_scaling`.
 
 ## Engine protocol (v1)
 

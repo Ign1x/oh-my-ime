@@ -78,9 +78,20 @@ fn engine_windows_follow_xim_applications() -> anyhow::Result<()> {
     env.wait_for_log("engine window created")?;
     // The client's window fills the output, so its spot is a position on the output too.
     // XIM gives where the text's baseline starts; omimed assumes a line around it.
-    let _client = env.xim_client(&["--spot", "200,300"])?;
-    let (x, y) = below(200, 300 - 16, 20);
-    env.wait_for_pixel(x, y, RED)
+    let client = env.xim_client(&["--spot", "200,300"])?;
+    let (x, y) = below(200, 300 - 16, 22);
+    env.wait_for_pixel(x, y, RED)?;
+
+    // An application that goes away without closing the input method takes its text
+    // field, and so the window, with it.
+    drop(client);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_ne!(
+        env.pixel(x, y)?,
+        RED,
+        "the window stayed after the client died"
+    );
+    Ok(())
 }
 
 /// Types `keys` (keyval, X11 key code, modifier state) with the Fcitx client.
