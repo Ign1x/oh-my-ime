@@ -108,6 +108,16 @@ impl SeatSession {
         self.name = name;
     }
 
+    /// The input method object, if we currently own one.
+    pub fn input_method(&self) -> Option<&Rc<ZwpInputMethodV2>> {
+        self.im.as_ref()
+    }
+
+    /// Whether a text input is focused on this seat.
+    pub fn is_active(&self) -> bool {
+        self.im.is_some() && self.ime.current().active
+    }
+
     pub fn deadline(&self) -> Option<Instant> {
         self.retry.map(|(at, _)| at)
     }

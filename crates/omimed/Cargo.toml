@@ -18,8 +18,17 @@ tokio.workspace = true
 rustix.workspace = true
 xkbcommon.workspace = true
 wl-proxy = { workspace = true, features = [
+  "protocol-cursor_shape_v1",
+  "protocol-fractional_scale_v1",
   "protocol-input_method_unstable_v2",
+  "protocol-linux_dmabuf_v1",
+  "protocol-presentation_time",
+  "protocol-single_pixel_buffer_v1",
+  "protocol-viewporter",
   "protocol-virtual_keyboard_unstable_v1",
+  "protocol-xdg_decoration_unstable_v1",
+  "protocol-xdg_output_unstable_v1",
+  "protocol-xdg_shell",
 ] }
 
 [lints]

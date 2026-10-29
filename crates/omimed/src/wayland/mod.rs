@@ -5,6 +5,7 @@
 //! drains after every dispatch. This keeps all state changes in one place and avoids
 //! re-entrancy into wl-proxy.
 
+mod bridge;
 mod seat;
 
 use std::cell::RefCell;
@@ -36,6 +37,8 @@ use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatCapability, WlSeatHand
 use wl_proxy::state::{State, StateError, StateHandler};
 
 use crate::keyboard::{ModifierState, RepeatInfo};
+use bridge::Bridge;
+pub use bridge::EngineId;
 use seat::SeatSession;
 
 /// Identifies a seat by the registry name of its `wl_seat` global.
@@ -66,6 +69,14 @@ pub enum Event {
         seat: SeatId,
         generation: u32,
         event: GrabEvent,
+    },
+    /// The text cursor rectangle relative to an engine's popup changed.
+    PopupCursorRect {
+        engine: EngineId,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
     },
     /// The compositor sent a fatal protocol error.
     ProtocolError {
@@ -145,6 +156,8 @@ pub struct Frontend {
     seat_objects: BTreeMap<SeatId, Rc<WlSeat>>,
     seats: BTreeMap<SeatId, SeatSession>,
     initial_sync_done: bool,
+    bridge: Bridge,
+    active_engine: Option<EngineId>,
 }
 
 impl std::fmt::Debug for Frontend {
@@ -184,6 +197,7 @@ impl Frontend {
             queue: queue.clone(),
         });
 
+        let bridge = Bridge::new(state.clone(), registry.clone(), queue.clone());
         Ok(Self {
             state,
             queue,
@@ -193,6 +207,8 @@ impl Frontend {
             seat_objects: BTreeMap::new(),
             seats: BTreeMap::new(),
             initial_sync_done: false,
+            bridge,
+            active_engine: None,
         })
     }
 
@@ -232,6 +248,31 @@ impl Frontend {
         self.process_events()
     }
 
+    /// Hands a UI connection of `engine` to the bridge.
+    pub fn add_ui_client(&self, engine: EngineId, socket: OwnedFd) -> anyhow::Result<()> {
+        self.bridge.add_client(engine, socket)
+    }
+
+    /// Selects the engine whose windows may be shown.
+    pub fn set_active_engine(&mut self, engine: Option<EngineId>) {
+        self.active_engine = engine;
+        self.update_bridge();
+    }
+
+    /// Tells the bridge which input method hosts popups and whether it is active.
+    fn update_bridge(&self) {
+        let host = self
+            .seats
+            .values()
+            .find(|s| s.is_active())
+            .or_else(|| self.seats.values().find(|s| s.input_method().is_some()));
+        self.bridge.set_policy(
+            host.and_then(|s| s.input_method().cloned()),
+            host.is_some_and(SeatSession::is_active),
+            self.active_engine.clone(),
+        );
+    }
+
     /// Releases everything we hold on the compositor (keys, grabs, input methods).
     pub fn shutdown(&mut self) {
         for seat in self.seats.values_mut() {
@@ -241,12 +282,18 @@ impl Frontend {
     }
 
     fn process_events(&mut self) -> anyhow::Result<()> {
+        let mut handled = false;
         loop {
             let Some(event) = self.queue.borrow_mut().pop_front() else {
-                return Ok(());
+                break;
             };
+            handled = true;
             self.handle_event(event)?;
         }
+        if handled {
+            self.update_bridge();
+        }
+        Ok(())
     }
 
     fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
@@ -296,6 +343,18 @@ impl Frontend {
                     session.handle_grab(generation, event);
                 }
             }
+            Event::PopupCursorRect {
+                engine,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                debug!(
+                    engine = &*engine,
+                    x, y, width, height, "text cursor rectangle"
+                );
+            }
             Event::ProtocolError { message } => {
                 bail!("the compositor closed the connection: {message}");
             }
@@ -304,6 +363,7 @@ impl Frontend {
     }
 
     fn on_global(&mut self, name: u32, interface: ObjectInterface, version: u32) {
+        self.bridge.add_global(name, interface, version);
         match interface {
             ObjectInterface::ZwpInputMethodManagerV2 => {
                 let object = self.state.create_object::<ZwpInputMethodManagerV2>(1);
@@ -337,6 +397,7 @@ impl Frontend {
     }
 
     fn on_global_remove(&mut self, name: u32) {
+        self.bridge.remove_global(name);
         if let Some(mut session) = self.seats.remove(&name) {
             info!(seat = session.name(), "seat removed");
             session.shutdown();

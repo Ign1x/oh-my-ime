@@ -44,6 +44,7 @@
                 hyprland
                 foot
                 grim
+                wlrctl
                 wtype
                 jq
               ]);

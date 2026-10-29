@@ -1,0 +1,19 @@
+[package]
+name = "omime-e2e"
+description = "End-to-end tests and test clients for oh-my-ime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+rustix.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+
+[lints]
+workspace = true
