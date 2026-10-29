@@ -27,8 +27,12 @@ use wl_proxy::object::{Object, ObjectCoreApi, ObjectRcUtils, ObjectUtils};
 use wl_proxy::protocols::ObjectInterface;
 use wl_proxy::protocols::cursor_shape_v1::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1;
 use wl_proxy::protocols::cursor_shape_v1::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
-use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
-use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::WpFractionalScaleV1;
+use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
+    WpFractionalScaleManagerV1, WpFractionalScaleManagerV1Handler,
+};
+use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
+    WpFractionalScaleV1, WpFractionalScaleV1Handler,
+};
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::ZwpInputMethodV2;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_popup_surface_v2::{
     ZwpInputPopupSurfaceV2, ZwpInputPopupSurfaceV2Handler,
@@ -125,11 +129,16 @@ pub(super) struct BridgeShared {
     /// Whether a text input is focused and the input method active.
     im_active: bool,
     active_engine: Option<EngineId>,
-    /// Engines that asked for their windows to be hidden (`SetPopupVisible(false)`).
-    hidden_engines: std::collections::HashSet<EngineId>,
+    /// Engines that asked for their windows to be shown (`SetPopupVisible(true)`).
+    /// Windows stay hidden until their engine asks.
+    shown_engines: std::collections::HashSet<EngineId>,
     /// Surfaces that have been given an `xdg_toplevel`, i.e. engine windows.
     windows: Vec<Weak<WlSurface>>,
     configure_serial: u32,
+    /// The last preferred fractional scale the compositor sent for an engine window.
+    /// Compositors send it only once a popup is mapped; handing it to new surfaces
+    /// right away saves engines a blurry first frame.
+    last_scale: Option<u32>,
     events: EventQueue,
 }
 
@@ -167,9 +176,10 @@ impl Bridge {
             popup_host: None,
             im_active: false,
             active_engine: None,
-            hidden_engines: std::collections::HashSet::new(),
+            shown_engines: std::collections::HashSet::new(),
             windows: Vec::new(),
             configure_serial: 0,
+            last_scale: None,
             events,
         }));
         Self { state, shared }
@@ -230,9 +240,9 @@ impl Bridge {
     pub fn set_engine_visible(&self, engine: EngineId, visible: bool) {
         let mut shared = self.shared.borrow_mut();
         if visible {
-            shared.hidden_engines.remove(&engine);
+            shared.shown_engines.insert(engine);
         } else {
-            shared.hidden_engines.insert(engine);
+            shared.shown_engines.remove(&engine);
         }
     }
 
@@ -504,6 +514,10 @@ impl WlRegistryHandler for BridgeRegistry {
             seat.set_handler(BridgeSeat);
         } else if let Some(shm) = id.try_downcast::<WlShm>() {
             shm.set_handler(BridgeShm);
+        } else if let Some(manager) = id.try_downcast::<WpFractionalScaleManagerV1>() {
+            manager.set_handler(BridgeFractionalScaleManager {
+                shared: self.shared.clone(),
+            });
         }
     }
 }
@@ -517,6 +531,38 @@ impl WlCompositorHandler for BridgeCompositor {
     fn handle_create_surface(&mut self, slf: &Rc<WlCompositor>, id: &Rc<WlSurface>) {
         slf.send_create_surface(id);
         id.set_handler(BridgeSurface::new(self.shared.clone(), self.engine.clone()));
+    }
+}
+
+struct BridgeFractionalScaleManager {
+    shared: Shared,
+}
+
+impl WpFractionalScaleManagerV1Handler for BridgeFractionalScaleManager {
+    fn handle_get_fractional_scale(
+        &mut self,
+        slf: &Rc<WpFractionalScaleManagerV1>,
+        id: &Rc<WpFractionalScaleV1>,
+        surface: &Rc<WlSurface>,
+    ) {
+        slf.send_get_fractional_scale(id, surface);
+        id.set_handler(BridgeFractionalScale {
+            shared: self.shared.clone(),
+        });
+        if let Some(scale) = self.shared.borrow().last_scale {
+            id.send_preferred_scale(scale);
+        }
+    }
+}
+
+struct BridgeFractionalScale {
+    shared: Shared,
+}
+
+impl WpFractionalScaleV1Handler for BridgeFractionalScale {
+    fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
+        self.shared.borrow_mut().last_scale = Some(scale);
+        slf.send_preferred_scale(scale);
     }
 }
 

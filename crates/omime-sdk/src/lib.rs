@@ -32,8 +32,8 @@
 //!
 //! - Return actions through the [`Context`] while handling an event; use the [`Host`]
 //!   only for things that happen later (for example a mouse click on a candidate).
-//! - Never hide or close your toolkit window to "hide" it. Call
-//!   [`Host::set_popup_visible`]; the platform maps and unmaps windows.
+//! - Windows are hidden until you call [`Host::set_popup_visible`] with `true`. Never
+//!   hide or close your toolkit window to "hide" it; the platform maps and unmaps it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

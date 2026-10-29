@@ -102,9 +102,9 @@ starts your engine with `WAYLAND_DISPLAY` pointing at a private socket of its UI
 bridge, so the toolkit needs no special code. Your toplevel becomes a popup next to the
 text cursor whenever your engine is the active one.
 
-- Do not hide or close your window to make it disappear. Call
-  `Host::set_popup_visible(false)` and the platform unmaps it; call it with `true` to
-  show it again.
+- Your window stays hidden until you call `Host::set_popup_visible(true)`. Do not
+  hide or close it to make it disappear; call `set_popup_visible(false)` and the
+  platform unmaps it.
 - Clicks on your window reach your engine as usual. React to them through the `Host`
   you get from `omime_sdk::spawn` (or `ctx.host()`), e.g. `host.commit(ctx_id, text)`.
 - Toolkits that own the main thread: run the engine with `omime_sdk::spawn`, which
@@ -112,8 +112,7 @@ text cursor whenever your engine is the active one.
 - For an ordinary window that should not be a popup (a settings dialog), connect to the
   display in `$OMIME_HOST_WAYLAND_DISPLAY` instead, e.g. from a separate process.
 
-The [Sparkle](../engines/sparkle) engine shows all of this with Slint (coming in
-milestone M3).
+The [Sparkle](../engines/sparkle) engine shows all of this with Slint.
 
 ## Other languages
 

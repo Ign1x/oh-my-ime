@@ -406,6 +406,8 @@ impl Core {
                         .get(&engine)
                         .is_some_and(|s| !matches!(s.state, EngineState::Stopped));
                 self.engines.exited(&engine, generation, status, needed);
+                // A new process has to ask for its window again.
+                frontend.set_engine_visible(engine.as_str().into(), false);
                 self.engine_unavailable(&engine, frontend);
             }
             CoreEvent::Host { engine, call } => self.on_host_call(&engine, call, frontend),

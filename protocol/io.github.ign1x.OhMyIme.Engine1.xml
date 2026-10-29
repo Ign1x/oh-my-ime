@@ -125,7 +125,7 @@
     <!--
       Whether the engine's windows should be shown while it is active. Engines must
       not hide their toolkit windows themselves; the platform shows and hides them.
-      Defaults to true.
+      Windows are hidden until the engine asks for them with SetPopupVisible(true).
     -->
     <method name="SetPopupVisible">
       <arg name="visible" type="b" direction="in"/>
