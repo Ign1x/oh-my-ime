@@ -12,7 +12,7 @@
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -484,6 +484,20 @@ impl TestEnv {
             );
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Runs the `omime` CLI and returns its exit status and stdout, also when the status
+    /// is not success (for `omime doctor`, which fails when it finds a problem).
+    pub fn omime_status(&self, args: &[&str]) -> anyhow::Result<(ExitStatus, String)> {
+        let output = self
+            .command(program_dir().join("omime"))
+            .args(args)
+            .output()
+            .context("cannot run omime")?;
+        Ok((
+            output.status,
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ))
     }
 
     fn run(&self, command: &mut Command) -> anyhow::Result<()> {

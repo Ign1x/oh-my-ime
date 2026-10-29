@@ -78,6 +78,7 @@ bind = SUPER, space, exec, omime next
 | 下一个引擎 | `Ctrl+Shift+Space`，或 `omime next` |
 | 指定引擎 | `omime switch sparkle`、`omime switch direct` |
 | 查看已安装的内容 | `omime list`（`*` 标记已启用的引擎） |
+| 排查问题 | `omime doctor`（发现问题时退出状态为 1） |
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
 | 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 重新加载配置 | `omime reload` |
@@ -123,6 +124,7 @@ oh-my-ime 通过合成器的 text-input 协议与应用通信：
 
 ## 故障排查
 
+- **某些功能不正常。** 先运行 `omime doctor`：它检查守护进程、seat、`config.toml`、已安装的引擎和环境，每个发现输出一行（`✓` 正常、`!` 警告、`✗` 问题）。
 - **打字没有任何反应。** 检查 `omime status`。如果 omimed 没有运行，在终端里用 `OMIME_LOG=debug omimed` 启动它，看它输出什么。
 - **`another input method is active on this seat`。** fcitx5、IBus 或其他输入法正在运行；见第 2 步。omimed 会持续重试，一旦 seat 空闲就接管。
 - **某个应用忽略了输入法。** 确保它的环境中 `GTK_IM_MODULE`/`QT_IM_MODULE` 没有设为 `fcitx` 或 `ibus`；这些模块会直接与 fcitx5 或 IBus 通信，绕过合成器。

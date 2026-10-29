@@ -1,5 +1,6 @@
 //! `omime` — manage the oh-my-ime input method platform.
 
+mod doctor;
 mod install;
 mod watch;
 
@@ -26,10 +27,12 @@ Commands:
   install <DIR>    Install an engine from a directory (`--force` to replace it)
   uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
+  doctor           Explain what is wrong with the setup (fails on problems)
   help             Print this help
 
-The other commands talk to a running `omimed` over the session bus; `install` and
-`uninstall` also work without it, and `status --watch` keeps watching for it.";
+The other commands talk to a running `omimed` over the session bus; `install`,
+`uninstall` and `doctor` also work without it, and `status --watch` keeps watching
+for it.";
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Daemon1",
@@ -43,6 +46,9 @@ trait Daemon {
     fn next(&self) -> zbus::Result<()>;
     fn toggle(&self) -> zbus::Result<()>;
     fn reload(&self) -> zbus::Result<()>;
+
+    /// The compositor, the seats and whether focus is reported; see `doctor`.
+    fn diagnose(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// Emitted when what `Status` returns changes. Carries the new status.
     #[zbus(signal)]
@@ -61,6 +67,8 @@ enum Command {
     Watch {
         json: bool,
     },
+    /// Checks the setup; needs neither omimed nor a session bus.
+    Doctor,
 }
 
 enum DaemonCommand {
@@ -87,6 +95,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             force: true,
         },
         ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
+        ["doctor"] => Command::Doctor,
         ["status", "--watch"] => Command::Watch { json: false },
         ["status", "--json", "--watch"] | ["status", "--watch", "--json"] => {
             Command::Watch { json: true }
@@ -172,13 +181,22 @@ fn format_stopped(json: bool) -> String {
     }
 }
 
-async fn run(command: Command) -> anyhow::Result<()> {
+async fn run(command: Command) -> anyhow::Result<ExitCode> {
     match command {
-        Command::Install { dir, force } => install_engine(&dir, force).await,
-        Command::Uninstall(engine) => uninstall_engine(&engine).await,
-        Command::Watch { json } => watch::run(json).await,
-        Command::Daemon(command) => run_daemon(command).await,
+        Command::Install { dir, force } => install_engine(&dir, force).await?,
+        Command::Uninstall(engine) => uninstall_engine(&engine).await?,
+        Command::Watch { json } => watch::run(json).await?,
+        Command::Daemon(command) => run_daemon(command).await?,
+        Command::Doctor => {
+            let clean = doctor::run().await?;
+            return Ok(if clean {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            });
+        }
     }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Installs the engine directory `dir` for the user and lets a running omimed notice.
@@ -388,7 +406,7 @@ fn main() -> ExitCode {
         }
     };
     match runtime.block_on(run(command)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             let message = match e.downcast_ref::<zbus::Error>() {
                 Some(zbus::Error::MethodError(_, Some(detail), _)) => detail.clone(),
@@ -445,6 +463,8 @@ mod tests {
         assert!(
             matches!(parse(&args("uninstall echo")), Ok(Some(Command::Uninstall(e))) if e == "echo")
         );
+        assert!(matches!(parse(&args("doctor")), Ok(Some(Command::Doctor))));
+        assert!(parse(&args("doctor --json")).is_err());
         assert!(parse(&args("install")).is_err());
         assert!(parse(&args("install --force")).is_err());
         assert!(matches!(

@@ -87,6 +87,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Next engine | `Ctrl+Shift+Space`, or `omime next` |
 | Pick an engine | `omime switch sparkle`, `omime switch direct` |
 | See what is installed | `omime list` (`*` marks enabled engines) |
+| Find out what is wrong | `omime doctor` (exit status 1 when it finds a problem) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Reload the configuration | `omime reload` |
@@ -139,6 +140,9 @@ oh-my-ime talks to applications through the compositor's text-input protocol:
 
 ## Troubleshooting
 
+- **Something does not work.** Run `omime doctor` first: it checks the daemon, the seats,
+  `config.toml`, the installed engines and the environment, one line per finding (`✓`
+  fine, `!` warning, `✗` problem).
 - **Nothing happens when I type.** Check `omime status`. If omimed isn't running, start it
   in a terminal with `OMIME_LOG=debug omimed` and read what it says.
 - **`another input method is active on this seat`.** fcitx5, IBus or another input method

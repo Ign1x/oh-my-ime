@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format follows
   config.toml, each application gets back the engine last chosen in it, also after a
   restart. omimed learns the focused application from the compositor's
   `zwlr_foreign_toplevel_manager_v1`, and engines now receive its app id (`app-id`).
+- `omime doctor` explains what is wrong with a setup, one line per finding: whether
+  omimed runs and holds every seat (and which other input method holds one), whether
+  the compositor reports focused windows, `config.toml`, broken engine manifests,
+  engines that cannot start and input method variables in the environment. The
+  control API's new `Diagnose` method provides the daemon's part.
 - `omime status --watch [--json]` prints one line per change of the status, also while
   omimed stops and starts, for status bars such as waybar; the control API's new
   `StatusChanged` signal carries the changes.
