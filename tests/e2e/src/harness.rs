@@ -101,6 +101,15 @@ impl TestEnv {
     /// Starts sway, a session bus and omimed with `engines` installed. `start_engine`
     /// is passed as `--engine`.
     pub fn start(engines: &[TestEngine], start_engine: Option<&str>) -> anyhow::Result<Self> {
+        Self::start_with_seats(engines, start_engine, &[])
+    }
+
+    /// Like [`Self::start`], with more seats than `seat0`.
+    pub fn start_with_seats(
+        engines: &[TestEngine],
+        start_engine: Option<&str>,
+        extra_seats: &[&str],
+    ) -> anyhow::Result<Self> {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "omime-e2e-{}-{}",
@@ -132,7 +141,10 @@ impl TestEnv {
         // compute where popups appear.
         std::fs::write(
             dir.join("sway.conf"),
-            "output HEADLESS-1 resolution 1280x720\ndefault_border none\n",
+            extra_seats.iter().fold(
+                "output HEADLESS-1 resolution 1280x720\ndefault_border none\n".to_owned(),
+                |config, seat| config + &format!("seat {seat} fallback false\n"),
+            ),
         )?;
 
         let mut env = TestEnv {
@@ -194,19 +206,22 @@ impl TestEnv {
         })?;
         env.env.push(("SWAYSOCK".into(), ipc.display().to_string()));
 
-        // Stands in for a physical keyboard: without one, the seat would lose its keyboard
+        // Stand in for physical keyboards: without one, a seat would lose its keyboard
         // capability, and with it the keyboard focus, whenever omimed restarts.
-        let mut keyboard = env
-            .command(target_dir().join("omime-keyboard"))
-            .stdout(Stdio::piped())
-            .spawn()
-            .context("cannot start omime-keyboard (build the workspace first)")?;
-        let stdout = keyboard.stdout.take().context("no stdout")?;
-        env.children.push(keyboard);
-        let mut line = String::new();
-        BufReader::new(stdout).read_line(&mut line)?;
-        if line.trim() != "ready" {
-            bail!("omime-keyboard did not start");
+        for seat in std::iter::once("seat0").chain(extra_seats.iter().copied()) {
+            let mut keyboard = env
+                .command(target_dir().join("omime-keyboard"))
+                .args(["--seat", seat])
+                .stdout(Stdio::piped())
+                .spawn()
+                .context("cannot start omime-keyboard (build the workspace first)")?;
+            let stdout = keyboard.stdout.take().context("no stdout")?;
+            env.children.push(keyboard);
+            let mut line = String::new();
+            BufReader::new(stdout).read_line(&mut line)?;
+            if line.trim() != "ready" {
+                bail!("omime-keyboard did not start on {seat}");
+            }
         }
 
         // A private bus without service activation, so that clients asking for portals
@@ -344,6 +359,19 @@ impl TestEnv {
         const GRABBED: &str = "keyboard grabbed";
         const SENSITIVE: &str = "sensitive text field focused";
         let before = (self.count_in_log(GRABBED), self.count_in_log(SENSITIVE));
+        let editor = self.spawn_editor(args)?;
+        editor.wait_for("the editor to get focus", |l| l == "ready")?;
+        // Typing only goes through omimed once it holds the keyboard (or decided to
+        // stay out of a sensitive field).
+        wait_until("omimed to take the focused field", || {
+            let now = (self.count_in_log(GRABBED), self.count_in_log(SENSITIVE));
+            (now.0 > before.0 || now.1 > before.1).then_some(())
+        })?;
+        Ok(editor)
+    }
+
+    /// Opens the test editor without waiting for it to get focus.
+    pub fn spawn_editor(&self, args: &[&str]) -> anyhow::Result<Editor> {
         let mut child = self
             .command(target_dir().join("omime-ti-client"))
             .args(args)
@@ -358,15 +386,29 @@ impl TestEnv {
                 sink.lock().unwrap_or_else(|p| p.into_inner()).push(line);
             }
         });
-        let editor = Editor { child, lines };
-        editor.wait_for("the editor to get focus", |l| l == "ready")?;
-        // Typing only goes through omimed once it holds the keyboard (or decided to
-        // stay out of a sensitive field).
-        wait_until("omimed to take the focused field", || {
-            let now = (self.count_in_log(GRABBED), self.count_in_log(SENSITIVE));
-            (now.0 > before.0 || now.1 > before.1).then_some(())
-        })?;
-        Ok(editor)
+        Ok(Editor { child, lines })
+    }
+
+    /// Clicks with the cursor of `seat` at (`x`, `y`) of the output, which gives that
+    /// seat's keyboard focus to the window there.
+    pub fn click_on_seat(&self, seat: &str, x: u32, y: u32) -> anyhow::Result<()> {
+        for command in [
+            format!("seat {seat} cursor set {x} {y}"),
+            format!("seat {seat} cursor press button1"),
+            format!("seat {seat} cursor release button1"),
+        ] {
+            self.run(self.command("swaymsg").arg(command).stdout(Stdio::null()))?;
+        }
+        Ok(())
+    }
+
+    /// Types `text` (lowercase letters, digits and spaces) with a virtual keyboard on
+    /// `seat`.
+    pub fn type_on_seat(&self, seat: &str, text: &str) -> anyhow::Result<()> {
+        self.run(
+            self.command(target_dir().join("omime-keyboard"))
+                .args(["--seat", seat, "--type", text]),
+        )
     }
 
     /// Gives keyboard focus to the window with `app_id` and waits until omimed holds the

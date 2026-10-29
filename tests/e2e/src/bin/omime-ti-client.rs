@@ -15,7 +15,8 @@
 //! ```
 //!
 //! `text` follows every change. Options: `--purpose N` and `--hints N` set the content
-//! type (8 = password), `--app-id ID` the window's app id.
+//! type (8 = password), `--app-id ID` the window's app id and `--seat NAME` the seat
+//! whose keyboard and text input it uses (default: the first one).
 
 use std::io::Write as _;
 use std::os::fd::AsFd;
@@ -39,11 +40,20 @@ struct Pending {
     delete: Option<(u32, u32)>,
 }
 
+/// A seat the compositor offers.
+struct Seat {
+    seat: wl_seat::WlSeat,
+    name: String,
+    has_keyboard: bool,
+}
+
 struct App {
     compositor: Option<wl_compositor::WlCompositor>,
     shm: Option<wl_shm::WlShm>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
-    seat: Option<wl_seat::WlSeat>,
+    seats: Vec<Seat>,
+    /// Index of the seat in use, once known.
+    seat: Option<usize>,
     ti_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     surface: Option<wl_surface::WlSurface>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
@@ -124,8 +134,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 }
                 "wl_shm" => app.shm = Some(registry.bind(name, 1, qh, ())),
                 "xdg_wm_base" => app.wm_base = Some(registry.bind(name, 1, qh, ())),
-                "wl_seat" if app.seat.is_none() => {
-                    app.seat = Some(registry.bind(name, version.min(5), qh, ()));
+                "wl_seat" => {
+                    let index = app.seats.len();
+                    app.seats.push(Seat {
+                        seat: registry.bind(name, version.min(5), qh, index),
+                        name: String::new(),
+                        has_keyboard: false,
+                    });
                 }
                 "zwp_text_input_manager_v3" => {
                     app.ti_manager = Some(registry.bind(name, 1, qh, ()));
@@ -172,22 +187,39 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for App {
     }
 }
 
-impl Dispatch<wl_seat::WlSeat, ()> for App {
+impl App {
+    /// Gets the keyboard of the seat in use once it has one.
+    fn ensure_keyboard(&mut self, qh: &QueueHandle<Self>) {
+        if let Some(seat) = self.seat.and_then(|i| self.seats.get(i))
+            && seat.has_keyboard
+            && self.keyboard.is_none()
+        {
+            self.keyboard = Some(seat.seat.get_keyboard(qh, ()));
+        }
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, usize> for App {
     fn event(
         app: &mut Self,
-        seat: &wl_seat::WlSeat,
+        _: &wl_seat::WlSeat,
         event: wl_seat::Event,
-        _: &(),
+        index: &usize,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities {
-            capabilities: WEnum::Value(caps),
-        } = event
-            && caps.contains(wl_seat::Capability::Keyboard)
-            && app.keyboard.is_none()
-        {
-            app.keyboard = Some(seat.get_keyboard(qh, ()));
+        let Some(seat) = app.seats.get_mut(*index) else {
+            return;
+        };
+        match event {
+            wl_seat::Event::Name { name } => seat.name = name,
+            wl_seat::Event::Capabilities {
+                capabilities: WEnum::Value(caps),
+            } => {
+                seat.has_keyboard = caps.contains(wl_seat::Capability::Keyboard);
+                app.ensure_keyboard(qh);
+            }
+            _ => {}
         }
     }
 }
@@ -342,12 +374,14 @@ fn main() -> anyhow::Result<()> {
     let mut purpose = 0;
     let mut hints = 0;
     let mut app_id = "io.github.ign1x.OhMyIme.TestEditor".to_owned();
+    let mut seat_name = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--purpose" => purpose = args.next().context("--purpose N")?.parse()?,
             "--hints" => hints = args.next().context("--hints N")?.parse()?,
             "--app-id" => app_id = args.next().context("--app-id ID")?,
+            "--seat" => seat_name = Some(args.next().context("--seat NAME")?),
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -360,6 +394,7 @@ fn main() -> anyhow::Result<()> {
         compositor: None,
         shm: None,
         wm_base: None,
+        seats: Vec::new(),
         seat: None,
         ti_manager: None,
         surface: None,
@@ -373,8 +408,20 @@ fn main() -> anyhow::Result<()> {
         configured: false,
     };
     queue.roundtrip(&mut app)?;
-    let (Some(compositor), Some(wm_base), Some(seat), Some(ti_manager)) =
-        (&app.compositor, &app.wm_base, &app.seat, &app.ti_manager)
+    // Seat names arrive after the binds.
+    queue.roundtrip(&mut app)?;
+    app.seat = match &seat_name {
+        Some(name) => app.seats.iter().position(|s| s.name == *name),
+        None => (!app.seats.is_empty()).then_some(0),
+    };
+    app.ensure_keyboard(&qh);
+    let seat = app
+        .seat
+        .and_then(|i| app.seats.get(i))
+        .map(|s| s.seat.clone())
+        .with_context(|| format!("no seat {}", seat_name.as_deref().unwrap_or("at all")))?;
+    let (Some(compositor), Some(wm_base), Some(ti_manager)) =
+        (&app.compositor, &app.wm_base, &app.ti_manager)
     else {
         bail!("the compositor lacks a global this client needs");
     };
@@ -384,7 +431,7 @@ fn main() -> anyhow::Result<()> {
     toplevel.set_title("omime test editor".into());
     toplevel.set_app_id(app_id);
     surface.commit();
-    app.text_input = Some(ti_manager.get_text_input(seat, &qh, ()));
+    app.text_input = Some(ti_manager.get_text_input(&seat, &qh, ()));
     app.surface = Some(surface);
 
     loop {
