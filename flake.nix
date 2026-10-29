@@ -11,10 +11,9 @@
         "aarch64-linux"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-    in
-    {
-      devShells = forAllSystems (
-        pkgs:
+
+      shell =
+        pkgs: extraPackages:
         let
           # Libraries that are linked at build time.
           buildLibs = with pkgs; [
@@ -32,33 +31,43 @@
             wayland
           ];
         in
-        {
-          default = pkgs.mkShell {
-            packages =
-              buildLibs
-              ++ (with pkgs; [
-                pkg-config
-                cargo-deny
-                # Compositors and tools for end-to-end and manual testing.
-                sway
-                hyprland
-                foot
-                grim
-                wlrctl
-                wtype
-                jq
-              ]);
+        pkgs.mkShell {
+          packages =
+            buildLibs
+            ++ (with pkgs; [
+              pkg-config
+              # End-to-end tests: a headless compositor and a virtual keyboard.
+              sway
+              wtype
+            ])
+            ++ extraPackages;
 
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
 
-            shellHook = ''
-              # The host session may point GTK/Qt at fcitx; test sessions must use
-              # text-input-v3 so oh-my-ime actually sees the traffic.
-              unset GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
-            '';
-          };
-        }
-      );
+          shellHook = ''
+            # The host session may point GTK/Qt at fcitx; test sessions must use
+            # text-input-v3 so oh-my-ime actually sees the traffic.
+            unset GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
+          '';
+        };
+    in
+    {
+      devShells = forAllSystems (pkgs: {
+        # Everything for development, including Hyprland for manual testing.
+        default = shell pkgs (
+          with pkgs;
+          [
+            cargo-deny
+            hyprland
+            foot
+            grim
+            wlrctl
+            jq
+          ]
+        );
+        # Just enough to build and run the end-to-end tests (used by CI).
+        e2e = shell pkgs [ ];
+      });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };

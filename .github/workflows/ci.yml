@@ -27,6 +27,20 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
 
+  e2e:
+    name: end-to-end (headless sway)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and run the end-to-end tests
+        run: |
+          nix develop .#e2e --command bash -c \
+            'cargo build --workspace --locked && cargo test -p omime-e2e --locked -- --ignored'
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04

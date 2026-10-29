@@ -11,9 +11,14 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+omime-sdk.workspace = true
+xkbcommon.workspace = true
 rustix.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
+
+[dev-dependencies]
+rustix = { workspace = true, features = ["process"] }
 
 [lints]
 workspace = true
