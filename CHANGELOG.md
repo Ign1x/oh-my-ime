@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
 ### Added
 
 - Per-application engines: with `remember = true` in the new `[apps]` section of
@@ -76,5 +78,6 @@ compositors with `input-method-v2`, with engines that draw their own UI.
 - `scripts/install.sh`, Hyprland snippets (Lua and legacy), a systemd user unit, a sample
   configuration and the Hyprland guide (`docs/hyprland.md`).
 
-[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Ign1x/oh-my-ime/releases/tag/v0.1.0

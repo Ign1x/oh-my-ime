@@ -121,7 +121,10 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Password and PIN fields bypass engines | ✅ |
 | UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
-| Per-app engine memory, `omime install/doctor`, multi-seat validation | 📅 v0.2 |
+| One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
+| `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
+| Several seats, each with its own input method session | ✅ tested on sway |
+| Nix package with the systemd user unit | ✅ |
 | X11 / XWayland: XIM bridge, Fcitx IM-module protocol | 📅 Phase 2 |
 | Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
 | Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
@@ -179,7 +182,8 @@ Wayland application and pick from Sparkle's deck.
 | Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Status bars | `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 
-omimed remembers the engine you used last. The full setup, a waybar snippet and
+omimed remembers the engine you used last, or with `remember = true` under `[apps]` in
+`config.toml`, the engine of every application. The full setup, a waybar snippet and
 troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 
 - Writing your own engine: [docs/writing-an-engine.md](docs/writing-an-engine.md)
@@ -193,7 +197,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    - M2: engine host, protocol v1, Rust SDK, basic switching ✅
    - M3: complete UI Bridge + Slint demo engine ✅
    - M4: management and robustness ✅ → `v0.1.0`
-3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat validation
+3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat
+   validation, Nix package, Chinese guides ✅ → `v0.2.0`
 4. **Phase 2** — X11/XWayland: XIM bridge and the Fcitx IM-module D-Bus protocol
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2`
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host

@@ -124,7 +124,10 @@ flowchart LR
 | 密码与 PIN 输入框绕过引擎 | ✅ |
 | UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
-| 按应用记忆引擎、`omime install/doctor`、多 seat 验证 | 📅 v0.2 |
+| 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
+| `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
+| 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
+| 附带 systemd 用户单元的 Nix 包 | ✅ |
 | X11 / XWayland：XIM 桥、Fcitx IM 模块协议 | 📅 阶段 2 |
 | 通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus（≥ 1.5.32） | 📅 阶段 3 · 🧩 兼容 |
 | 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
@@ -180,7 +183,7 @@ end)
 | 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 状态栏 | `omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 
-omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
+omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置 `remember = true` 后，则会记住每个应用各自的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
 
 - 编写自己的引擎：[docs/zh-CN/writing-an-engine.md](docs/zh-CN/writing-an-engine.md)
 - 参与开发：[docs/zh-CN/development.md](docs/zh-CN/development.md)
@@ -193,7 +196,7 @@ omimed 会记住上次使用的引擎。完整配置、waybar 示例和故障排
    - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
    - M3：完整 UI Bridge + Slint 示例输入法 ✅
    - M4：管理功能与健壮性 ✅ → `v0.1.0`
-3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证
+3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证；Nix 包；中文文档 ✅ → `v0.2.0`
 4. **阶段 2**：X11/XWayland：XIM 桥与 Fcitx IM 模块 D-Bus 协议
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主

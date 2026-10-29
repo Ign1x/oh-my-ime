@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "engines/*", "tests/e2e"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -12,8 +12,8 @@ repository = "https://github.com/Ign1x/oh-my-ime"
 homepage = "https://github.com/Ign1x/oh-my-ime"
 
 [workspace.dependencies]
-omime-proto = { path = "crates/omime-proto", version = "0.1.0" }
-omime-sdk = { path = "crates/omime-sdk", version = "0.1.0" }
+omime-proto = { path = "crates/omime-proto", version = "0.2.0" }
+omime-sdk = { path = "crates/omime-sdk", version = "0.2.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
