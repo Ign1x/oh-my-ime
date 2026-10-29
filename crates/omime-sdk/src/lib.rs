@@ -360,11 +360,18 @@ async fn serve(
     let address = std::env::var(ENV_ENGINE_ADDRESS)
         .map_err(|_| Error::MissingEnvironment(ENV_ENGINE_ADDRESS))?;
     let id = std::env::var(ENV_ENGINE_ID).map_err(|_| Error::MissingEnvironment(ENV_ENGINE_ID))?;
+    let builder = zbus::connection::Builder::address(address.as_str());
+    serve_on(builder, &id, engine, ready).await
+}
 
-    let conn = zbus::connection::Builder::address(address.as_str())
-        .p2p()
-        .build()
-        .await?;
+/// Serves `engine` on the connection `builder` sets up and registers it as `id`.
+async fn serve_on(
+    builder: zbus::connection::Builder<'_>,
+    id: &str,
+    engine: Box<dyn Engine>,
+    ready: Option<std::sync::mpsc::Sender<Host>>,
+) -> Result<(), Error> {
+    let conn = builder.p2p().build().await?;
     let proxy = EngineHostProxy::builder(&conn)
         .destination(DAEMON_BUS_NAME)
         .path(DAEMON_OBJECT_PATH)
@@ -386,7 +393,7 @@ async fn serve(
     // Export the engine before registering: the daemon may call it right away.
     conn.object_server().at(ENGINE_OBJECT_PATH, object).await?;
     proxy
-        .register(&id, API_VERSION.major, API_VERSION.minor, &Dict::new())
+        .register(id, API_VERSION.major, API_VERSION.minor, &Dict::new())
         .await?;
     if let Some(ready) = ready {
         // The receiver only goes away if the caller gave up; nothing to do then.
@@ -437,5 +444,165 @@ pub mod util {
     /// Byte length of the last character of `s`, for deleting it from a preedit.
     pub fn last_char_len(s: &str) -> usize {
         s.chars().next_back().map_or(0, char::len_utf8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omime_proto::engine::Rect;
+
+    /// A call the engine received.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Seen {
+        Activate(ContextInfo),
+        Key(KeyEvent),
+    }
+
+    /// Records its calls and composes typed text into the preedit.
+    struct Recorder(Arc<Mutex<Vec<Seen>>>);
+
+    impl Engine for Recorder {
+        fn activate(&mut self, ctx: &mut Context<'_>) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(Seen::Activate(ctx.info().clone()));
+        }
+
+        fn process_key(&mut self, ctx: &mut Context<'_>, key: &KeyEvent) -> bool {
+            self.0.lock().unwrap().push(Seen::Key(key.clone()));
+            if key.released || key.text.is_empty() {
+                return false;
+            }
+            ctx.set_preedit(Preedit::with_cursor_at_end(key.text.clone()));
+            true
+        }
+    }
+
+    /// The daemon's side of `EngineHost1`, as far as the tests need it.
+    struct FakeDaemon {
+        registered: Arc<tokio::sync::Notify>,
+    }
+
+    #[zbus::interface(name = "io.github.ign1x.OhMyIme.EngineHost1")]
+    impl FakeDaemon {
+        fn register(&self, _id: &str, _major: u16, _minor: u16, _capabilities: Dict) -> Dict {
+            self.registered.notify_one();
+            Dict::new()
+        }
+    }
+
+    #[zbus::proxy(
+        interface = "io.github.ign1x.OhMyIme.Engine1",
+        default_service = "io.github.ign1x.OhMyIme",
+        default_path = "/io/github/ign1x/OhMyIme/Engine"
+    )]
+    trait Engine1 {
+        fn activate(&self, context: u64, info: &Dict) -> zbus::Result<Vec<WireAction>>;
+
+        fn process_key(
+            &self,
+            context: u64,
+            key: &KeyEvent,
+            extras: &Dict,
+        ) -> zbus::Result<(bool, Vec<WireAction>)>;
+    }
+
+    /// Serves `engine` like `run` does, over a socket pair, and returns the daemon's
+    /// proxy for it once it registered.
+    async fn connect(engine: impl Engine) -> Engine1Proxy<'static> {
+        let (daemon_end, engine_end) = std::os::unix::net::UnixStream::pair().unwrap();
+        // Tokio needs non-blocking sockets.
+        daemon_end.set_nonblocking(true).unwrap();
+        engine_end.set_nonblocking(true).unwrap();
+        let engine: Box<dyn Engine> = Box::new(engine);
+        let serving = tokio::spawn(async move {
+            let builder = zbus::connection::Builder::unix_stream(engine_end);
+            serve_on(builder, "test", engine, None).await
+        });
+
+        let registered = Arc::new(tokio::sync::Notify::new());
+        let daemon = zbus::connection::Builder::unix_stream(daemon_end)
+            .server(zbus::Guid::generate())
+            .p2p()
+            .serve_at(
+                DAEMON_OBJECT_PATH,
+                FakeDaemon {
+                    registered: registered.clone(),
+                },
+            )
+            .build()
+            .await
+            .unwrap();
+        tokio::select! {
+            () = registered.notified() => {}
+            result = serving => panic!("the engine stopped: {result:?}"),
+        }
+        Engine1Proxy::new(&daemon).await.unwrap()
+    }
+
+    fn run_test(test: impl std::future::Future<Output = ()>) {
+        runtime().unwrap().block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), test)
+                .await
+                .expect("the test timed out");
+        });
+    }
+
+    #[test]
+    fn activate_carries_the_whole_context() {
+        run_test(async {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let engine = connect(Recorder(seen.clone())).await;
+            let info = ContextInfo {
+                app_id: Some("kitty".into()),
+                content_type: ContentType {
+                    purpose: ContentPurpose::Terminal,
+                    hints: ContentHints::COMPLETION,
+                },
+                surrounding: Some(("中文 text".into(), 7, 7)),
+                cursor_rect: Some((10, -20, 2, 18) as Rect),
+            };
+            let actions = engine.activate(7, &info.to_dict()).await.unwrap();
+            assert!(actions.is_empty());
+            assert_eq!(*seen.lock().unwrap(), [Seen::Activate(info)]);
+        });
+    }
+
+    #[test]
+    fn keys_are_answered_with_their_actions() {
+        run_test(async {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let engine = connect(Recorder(seen.clone())).await;
+            let press = KeyEvent {
+                keysym: 0x61,
+                keycode: 30,
+                modifiers: 0,
+                time: 1,
+                text: "a".into(),
+                released: false,
+                repeat: false,
+            };
+            let (handled, actions) = engine.process_key(7, &press, &Dict::new()).await.unwrap();
+            assert!(handled);
+            let actions: Vec<Action> = actions
+                .iter()
+                .map(|wire| Action::from_wire(wire).unwrap())
+                .collect();
+            assert_eq!(actions, [Action::Preedit(Preedit::with_cursor_at_end("a"))]);
+
+            let release = KeyEvent {
+                text: String::new(),
+                released: true,
+                ..press.clone()
+            };
+            let (handled, actions) = engine.process_key(7, &release, &Dict::new()).await.unwrap();
+            assert!(!handled && actions.is_empty());
+            assert_eq!(
+                *seen.lock().unwrap(),
+                [Seen::Key(press), Seen::Key(release)]
+            );
+        });
     }
 }
