@@ -18,6 +18,17 @@
 //!
 //! A relative `exec[0]` that contains a `/` is resolved against the manifest's directory;
 //! a bare name is looked up in `$PATH`.
+//!
+//! An unmodified Wayland input method, such as Fcitx5, runs as an engine too. It speaks
+//! `zwp_input_method_v2` instead of the engine protocol, so its manifest has no `api`:
+//!
+//! ```toml
+//! [engine]
+//! id = "fcitx5"
+//! name = "Fcitx 5"
+//! exec = ["fcitx5"]
+//! protocol = "input-method-v2"
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,6 +46,18 @@ pub struct Manifest {
     pub engine: EngineInfo,
 }
 
+/// How the daemon talks to an engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Protocol {
+    /// The engine protocol, `io.github.ign1x.OhMyIme.Engine1` over D-Bus.
+    #[default]
+    Omime,
+    /// A Wayland input method (`zwp_input_method_v2` and `zwp_virtual_keyboard_v1`),
+    /// hosted on a virtual input method of the daemon's.
+    InputMethodV2,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineInfo {
@@ -50,8 +73,11 @@ pub struct EngineInfo {
     pub icon: Option<String>,
     /// Command line that starts the engine.
     pub exec: Vec<String>,
-    /// Engine protocol version, `"MAJOR.MINOR"`.
-    pub api: String,
+    #[serde(default)]
+    pub protocol: Protocol,
+    /// Engine protocol version, `"MAJOR.MINOR"`; required with [`Protocol::Omime`].
+    #[serde(default)]
+    pub api: Option<String>,
     /// Translations, keyed by locale (`zh-CN`, `ja`, ...).
     #[serde(default)]
     pub i18n: BTreeMap<String, Translation>,
@@ -126,17 +152,34 @@ impl Manifest {
         if e.exec.first().is_none_or(|program| program.is_empty()) {
             return Err(ManifestError::Invalid("`exec` needs a program".into()));
         }
-        if parse_api_version(&e.api).is_none() {
-            return Err(ManifestError::Invalid(format!(
-                "`api = \"{}\"` is not MAJOR.MINOR",
-                e.api
-            )));
+        match (&e.api, e.protocol) {
+            (Some(api), _) if parse_api_version(api).is_none() => {
+                return Err(ManifestError::Invalid(format!(
+                    "`api = \"{api}\"` is not MAJOR.MINOR"
+                )));
+            }
+            (None, Protocol::Omime) => {
+                return Err(ManifestError::Invalid(
+                    "`api` is missing: which engine protocol version does the engine speak?".into(),
+                ));
+            }
+            _ => {}
         }
         Ok(())
     }
 
+    /// The engine protocol version the engine speaks; 0.0 for hosted input methods.
     pub fn api_version(&self) -> ApiVersion {
-        parse_api_version(&self.engine.api).unwrap_or(ApiVersion { major: 0, minor: 0 })
+        self.engine
+            .api
+            .as_deref()
+            .and_then(parse_api_version)
+            .unwrap_or(ApiVersion { major: 0, minor: 0 })
+    }
+
+    /// Whether the engine is a hosted Wayland input method.
+    pub fn is_hosted(&self) -> bool {
+        self.engine.protocol == Protocol::InputMethodV2
     }
 
     /// The engine's name in `locale` (e.g. `zh-CN` or `zh_CN.UTF-8`), falling back to
@@ -260,7 +303,29 @@ name = "回声"
         assert!(Manifest::parse(&no_exec).is_err());
         let bad_api = ECHO.replace("api = \"1.0\"", "api = \"one\"");
         assert!(Manifest::parse(&bad_api).is_err());
+        let no_api = ECHO.replace("api = \"1.0\"", "");
+        assert!(Manifest::parse(&no_api).is_err());
         let unknown = format!("{ECHO}\n[extra]\n");
+        assert!(matches!(
+            Manifest::parse(&unknown),
+            Err(ManifestError::Syntax(_))
+        ));
+    }
+
+    #[test]
+    fn hosted_input_methods_need_no_api() {
+        let fcitx5 = r#"
+[engine]
+id = "fcitx5"
+name = "Fcitx 5"
+exec = ["fcitx5"]
+protocol = "input-method-v2"
+"#;
+        let manifest = Manifest::parse(fcitx5).unwrap();
+        assert!(manifest.is_hosted());
+        assert_eq!(manifest.api_version(), ApiVersion { major: 0, minor: 0 });
+        assert!(!Manifest::parse(ECHO).unwrap().is_hosted());
+        let unknown = fcitx5.replace("input-method-v2", "input-method-v1");
         assert!(matches!(
             Manifest::parse(&unknown),
             Err(ManifestError::Syntax(_))
