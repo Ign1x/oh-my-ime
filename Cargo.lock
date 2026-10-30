@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "omime-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures-core",
@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "omime-e2e"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "omime-sdk",
@@ -2944,14 +2944,14 @@ dependencies = [
 
 [[package]]
 name = "omime-echo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "omime-sdk",
 ]
 
 [[package]]
 name = "omime-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "toml",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "omime-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "omime-proto",
  "thiserror 2.0.21",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "omime-sparkle"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "emojis",
  "omime-sdk",
@@ -2980,7 +2980,7 @@ dependencies = [
 
 [[package]]
 name = "omimed"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures-core",

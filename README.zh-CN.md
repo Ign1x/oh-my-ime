@@ -201,7 +201,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
    - M3：完整 UI Bridge + Slint 示例输入法 ✅
    - M4：管理功能与健壮性 ✅ → `v0.1.0`
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证；Nix 包；中文文档 ✅ → `v0.2.0`
-4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅（尚未发布）
+4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
 7. **阶段 5**：原生 Rime 引擎、设置界面、托盘、更多合成器、C ABI SDK

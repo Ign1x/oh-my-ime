@@ -203,8 +203,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    - M4: management and robustness ✅ → `v0.1.0`
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat
    validation, Nix package, Chinese guides ✅ → `v0.2.0`
-4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅
-   (not released yet)
+4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅ →
+   `v0.3.0`
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2`
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
 7. **Phase 5** — native Rime engine, settings GUI, tray, more compositors, C ABI SDK
