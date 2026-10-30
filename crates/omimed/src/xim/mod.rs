@@ -628,6 +628,15 @@ impl XimFrontend {
                 // XIM has no way to tell about text around the cursor.
                 Action::DeleteSurrounding { .. } => {}
                 Action::ForwardKey { keycode, pressed } => {
+                    // XIM passes only presses on, so the application gets its releases
+                    // from the X server. A release sent back would be worse than useless:
+                    // libX11 marks the next event as the one the input method sent back,
+                    // and with no filter for releases the mark stays, so the next real
+                    // press bypasses the input method and types its letter. (Hosted
+                    // input methods send back every release they do not consume.)
+                    if !*pressed {
+                        continue;
+                    }
                     let template = self
                         .handler
                         .ics

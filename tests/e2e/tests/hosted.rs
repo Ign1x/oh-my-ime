@@ -233,6 +233,14 @@ fn xim_clients_type_through_hosted_input_methods() -> anyhow::Result<()> {
     for line in ["key a pressed", "key a released", "key space released"] {
         assert!(lines.iter().any(|l| l == line), "{line:?} in {lines:?}");
     }
+    // The releases the input method sends back must not reach the application: it
+    // gets them from the X server, and a release from the input method makes libX11
+    // take the next real press for one the input method sent back.
+    let lines = client.lines();
+    assert!(
+        !lines.iter().any(|l| l.starts_with("release ")),
+        "a release reached the application: {lines:?}"
+    );
     Ok(())
 }
 

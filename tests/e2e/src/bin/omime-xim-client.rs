@@ -15,7 +15,8 @@
 //!
 //! `preedit` is the whole preedit after every draw callback, `commit` a string the
 //! server committed, `key` a key the server sent back (handled like a key the
-//! application got itself) and `text` the document after both.
+//! application got itself), `release` a key release the server sent back (which it
+//! should not) and `text` the document after a commit or key.
 //!
 //! `--spot X,Y` tells the server where the window draws text (0,0 by default).
 
@@ -239,15 +240,17 @@ impl Handler {
 
     /// The character of a key the server sent back, handled like one of our own.
     fn press(&mut self, xev: &KeyPressEvent) {
-        // A release changes nothing in the document.
-        if xev.response_type & 0x7f != 2 {
-            return;
-        }
         let Some(c) = self.keymap.character(xev.detail, u16::from(xev.state)) else {
             return;
         };
         let mut text = String::new();
         text.push(c);
+        // A release changes nothing in the document; the server should never send
+        // one, since applications get their releases from the X server.
+        if xev.response_type & 0x7f != 2 {
+            emit(&format!("release {}", json_string(&text)));
+            return;
+        }
         self.document.push(c);
         emit(&format!("key {}", json_string(&text)));
         emit(&format!("text {}", json_string(&self.document)));
