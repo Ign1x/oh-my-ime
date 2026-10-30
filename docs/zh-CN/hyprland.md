@@ -110,6 +110,33 @@ remember = true
 }
 ```
 
+### Fcitx 5 作为引擎
+
+Fcitx 5 无需修改即可作为 oh-my-ime 内部的一个引擎运行，连同它的全部输入法和插件：omimed 启动它，为它提供一个私有会话总线和属于它自己的输入法，并像对待任何引擎一样，把它的候选窗口显示在文本光标处。必须安装 `fcitx5`，并且它不能单独运行（见第 2 步）。安装仓库自带的清单（Nix 包把它放在 `share/oh-my-ime/extra-engines/fcitx5`）：
+
+```sh
+omime install /path/to/oh-my-ime/data/engines/fcitx5
+omime switch fcitx5
+```
+
+也可以自己编写 `~/.local/share/oh-my-ime/engines/fcitx5/engine.toml`：
+
+```toml
+[engine]
+id = "fcitx5"
+name = "Fcitx 5"
+exec = ["fcitx5"]
+protocol = "input-method-v2"
+```
+
+Fcitx 5 照常把配置保存在 `~/.config/fcitx5`。它的配置工具通过 D-Bus 与它通信，因此要让工具连到私有总线：
+
+```sh
+DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
+```
+
+请用 omimed 的热键和 `omime switch` 切换，而不要用 Fcitx 5 的触发键：omimed 会在任何引擎看到 `Ctrl+Space` 之前先处理它。由 Fcitx 5 自己处理的热键（例如它内部输入法之间的 `Ctrl+Shift`）仍然有效。只显示 Fcitx 5 的弹窗，它的其他窗口无法显示。
+
 ## 哪些应用可用
 
 oh-my-ime 通过合成器的 text-input 协议连接 Wayland 应用，通过 XIM 或 Fcitx5 的 GTK 与 Qt 模块连接 X11 应用：

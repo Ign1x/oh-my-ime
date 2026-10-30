@@ -160,7 +160,7 @@ DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-
 Switch with omimed's hotkeys and `omime switch`, not with Fcitx 5's trigger key: omimed
 takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles itself, such as
 `Ctrl+Shift` between its input methods, keep working. Only the popups of Fcitx 5 are
-shown; windows of other kinds would need a display of their own.
+shown; its other windows cannot be.
 
 ## Which applications work
 

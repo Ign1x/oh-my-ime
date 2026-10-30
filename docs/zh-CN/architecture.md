@@ -80,9 +80,18 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
 - 协议按接口名区分版本（主版本号），并在 `Register` 时协商（次版本号）。可扩展参数使用 `a{sv}`，未知键被忽略。`protocol/` 中的 XML 是权威来源。
 
+## 被托管的输入法
+
+未修改的 Wayland 输入法（例如 Fcitx 5）在清单中声明 `protocol = "input-method-v2"` 时，就作为引擎运行。它没有引擎协议 socket：它像任何引擎的 UI 一样连接到自己的 bridge socket，而它的 registry 会多出两个全局对象，即虚拟的 `zwp_input_method_manager_v2` 和虚拟的 `zwp_virtual_keyboard_manager_v1`，两者都由 Bridge 应答。
+
+- **激活。** 核心像合成器那样为文本框激活这个虚拟输入法：`activate`、文本框的光标周围文本与内容类型、`done`。每个按键都带着按下时的修饰键进入输入法的键盘抓取，因此一批按键会按顺序到达。抓取会拿到所在 seat 的 keymap 与重复速率（X11 文本框没有重复；它们的按键由 X 服务器重复）。输入法对文本框所做的操作（`commit_string`、`set_preedit_string`、`delete_surrounding_text`，然后 `commit`）会作为引擎动作返回；如果一次 `commit` 的 serial 早于该文本框被激活的时间，就会被丢弃。
+- **它不想要的按键。** 输入法通过自己的虚拟键盘转发这些按键。Bridge 把它们变成 `ForwardKey` 动作，因此合成器看到的始终只有 omimed 自己的虚拟键盘，并由 Bridge 记录应用当前按住了哪些键。按键会为一个仍在启动、或尚未抓取键盘的被托管引擎最多等待一秒，之后便直接放行。
+- **X11 文本框。** XIM 与 Fcitx5 模块应用的文本框使用任意 seat 上的输入法。XIM 只传递按下事件，因此每个送达的按键都会立刻被释放，修饰键则留给应用：否则输入法会把单独按一下 Shift 当成一次点按。
+- **窗口。** 输入法的弹窗 surface 就是引擎窗口，以输入法弹窗的形式或显示在镜像上，文本光标矩形则通过它的弹窗角色送达它。输入法的其他窗口（toplevel）无法显示。
+- **进程。** omimed 在引擎的运行时目录中用一个私有会话总线启动输入法，即一个不提供服务激活的 `dbus-daemon`，这样它就无法从 omimed 的 Fcitx5 前端手中夺走用户总线上的 `org.fcitx.Fcitx5`。它会拿到自己 bridge socket 的 `WAYLAND_DISPLAY`，但拿不到 `DISPLAY`。omimed 退出时引擎都会收到 SIGTERM，即使 omimed 是被杀死的也一样（`PR_SET_PDEATHSIG`）；被托管的输入法最多有两秒来保存自己的状态。每个 seat 只有一个输入法：第二次 `get_input_method` 会得到 `unavailable`。
+
 ## 兼容层（计划中）
 
-- **虚拟 `input-method-v2`：** Bridge 可以向被托管的客户端提供一个虚拟输入法。这样未修改的 Fcitx5、IBus（≥ 1.5.32）以及其他 input-method-v2 程序就能作为 oh-my-ime 的一个引擎运行，并保留自己的 UI。
 - **逐引擎宿主：** 一个 IBus 引擎宿主（私有总线、组件发现、Factory/Engine 转换）和一个 Fcitx5 插件宿主（C++、libFcitx5Core）。
 
 ## 安全说明
