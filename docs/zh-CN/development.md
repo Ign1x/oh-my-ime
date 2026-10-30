@@ -73,3 +73,10 @@ foot                            # 在其中输入
 ```
 
 `grim` 可以截取嵌套会话的屏幕。由于嵌套的 Hyprland 只有在其窗口可见时才绘制，要无人值守截图请创建无头输出：`hyprctl output create headless`。
+
+Hyprland 会合并所有键盘的修饰键和按键状态，端到端测试用的 sway 则不会。`tests/hyprland/stuck-modifiers.sh` 在嵌套的 Hyprland 里检查 omimed 放开键盘之后没有修饰键一直按着；它用 `omime-keyboard --script` 打字，像物理键盘一样把修饰键当作按键按下：
+
+```sh
+cargo build --workspace
+tests/hyprland/stuck-modifiers.sh
+```

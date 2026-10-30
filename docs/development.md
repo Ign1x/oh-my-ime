@@ -89,3 +89,13 @@ foot                            # type into it
 `grim` can take screenshots of the nested session. Because a nested Hyprland only draws
 while its window is visible, create a headless output for unattended captures:
 `hyprctl output create headless`.
+
+Hyprland merges the modifiers and keys of all keyboards, which sway, the end-to-end
+tests' compositor, does not. `tests/hyprland/stuck-modifiers.sh` checks in a nested
+Hyprland that no modifier stays held after omimed lets go of the keyboard; it types with
+`omime-keyboard --script`, which presses modifiers as keys like a physical keyboard:
+
+```sh
+cargo build --workspace
+tests/hyprland/stuck-modifiers.sh
+```
