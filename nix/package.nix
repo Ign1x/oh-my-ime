@@ -4,6 +4,7 @@
   pkg-config,
   makeWrapper,
   addDriverRunpath,
+  dbus,
   fontconfig,
   freetype,
   libGL,
@@ -87,9 +88,16 @@ rustPlatform.buildRustPackage {
       --replace-fail "ExecStart=%h/.local/bin/omimed" "ExecStart=$out/bin/omimed"
     install -Dm644 data/config.toml $out/share/oh-my-ime/config.toml
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
+    # Manifests for programs this package does not provide, for `omime install`: not
+    # on the engine search path, or omimed would list them where they are not installed.
+    install -Dm644 data/engines/fcitx5/engine.toml \
+      $out/share/oh-my-ime/extra-engines/fcitx5/engine.toml
 
     # NixOS links only some of share/ into profiles; find the bundled engines anyway.
-    wrapProgram $out/bin/omimed --suffix XDG_DATA_DIRS : $out/share
+    # Hosted input methods run on a private bus, which omimed starts with dbus-daemon.
+    wrapProgram $out/bin/omimed \
+      --suffix XDG_DATA_DIRS : $out/share \
+      --prefix PATH : ${lib.makeBinPath [ dbus ]}
   '';
 
   # After the fixup phase has shrunk the RPATH to what is linked.

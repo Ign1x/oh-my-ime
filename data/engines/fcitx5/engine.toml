@@ -1,0 +1,13 @@
+# Fcitx 5, unmodified, hosted by omimed as one engine with all its input methods and
+# addons. Install with `omime install` (fcitx5 must be installed, and must not run on
+# its own); see docs/hyprland.md.
+[engine]
+id = "fcitx5"
+name = "Fcitx 5"
+description = "Fcitx 5 with all its input methods and addons, hosted as one engine."
+exec = ["fcitx5"]
+protocol = "input-method-v2"
+
+[engine.i18n.zh-CN]
+name = "Fcitx 5"
+description = "把 Fcitx 5 连同它的全部输入法和插件作为一个引擎托管。"
