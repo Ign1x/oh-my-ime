@@ -62,8 +62,11 @@ fn main() -> ExitCode {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("OMIME_LOG")
-                .unwrap_or_else(|_| EnvFilter::new("info,wl_proxy=error")),
+            // The `xim` crate warns about every attribute it ignores, and xterm sends some
+            // with every move of its cursor.
+            EnvFilter::try_from_env("OMIME_LOG").unwrap_or_else(|_| {
+                EnvFilter::new("info,wl_proxy=error,xim::server::connection=error")
+            }),
         )
         .with_writer(std::io::stderr)
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
