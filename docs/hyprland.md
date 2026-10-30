@@ -175,11 +175,25 @@ X11 applications, in a wrapper script or a `.desktop` file:
 GTK_IM_MODULE=fcitx exec "$@"
 ```
 
+Some X11 applications leave drawing the preedit to the input method; xterm is one. omimed
+does not draw text itself, so in these applications what you are composing only shows
+where the engine draws it in its own window (Sparkle does; Echo has no window), until it
+is committed.
+
 Engine windows for X11 applications are layer surfaces in the namespace `omime-popup`.
-Hyprland animates layer surfaces; turn that off for them:
+Hyprland animates layer surfaces. To turn that off for them, in the Lua configuration:
+
+```lua
+hl.layer_rule({
+    match = { namespace = "omime-popup" },
+    no_anim = true,
+})
+```
+
+In legacy `hyprland.conf`:
 
 ```ini
-layerrule = noanim, omime-popup
+layerrule = no_anim on, match:namespace omime-popup
 ```
 
 ## Troubleshooting

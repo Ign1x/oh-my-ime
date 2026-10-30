@@ -144,10 +144,21 @@ exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
 GTK_IM_MODULE=fcitx exec "$@"
 ```
 
-X11 应用的引擎窗口是命名空间为 `omime-popup` 的图层表面。Hyprland 会为图层表面播放动画；可以为它们关掉：
+有些 X11 应用把预编辑的绘制交给输入法，xterm 就是其中之一。omimed 自己不绘制文字，所以在这些应用里，正在输入的内容只会显示在引擎自己的窗口中（Sparkle 有窗口；Echo 没有），直到上屏。
+
+X11 应用的引擎窗口是命名空间为 `omime-popup` 的图层表面。Hyprland 会为图层表面播放动画。要为它们关掉动画，在 Lua 配置中写：
+
+```lua
+hl.layer_rule({
+    match = { namespace = "omime-popup" },
+    no_anim = true,
+})
+```
+
+在旧版 `hyprland.conf` 中写：
 
 ```ini
-layerrule = noanim, omime-popup
+layerrule = no_anim on, match:namespace omime-popup
 ```
 
 ## 故障排查

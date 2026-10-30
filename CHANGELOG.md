@@ -14,7 +14,8 @@ All notable changes to this project are documented here. The format follows
   `org.freedesktop.portal.Fcitx` whenever fcitx5 does not hold those names.
 - X11 applications using XIM (`XMODIFIERS=@im=omime`), such as xterm, Java, Wine or
   GTK with `GTK_IM_MODULE=xim`, type through omimed's engines too: omimed serves XIM on
-  the X display in `$DISPLAY` when it starts.
+  the X display in `$DISPLAY` when it starts. Applications that leave drawing the preedit
+  to the input method, such as xterm, do not show it.
 - Engine windows open at the text cursor of X11 applications as well. Compositors show
   input popups only for Wayland text fields, so omimed shows the window on a layer
   surface of its own (namespace `omime-popup`, for compositor rules), placed below the

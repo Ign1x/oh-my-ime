@@ -33,7 +33,7 @@ use super::{BridgeSurface, Shared};
 use crate::placement::{self, Rect};
 
 /// The layer surface namespace, for compositor rules (for example, to turn off
-/// Hyprland's animations: `layerrule = noanim, omime-popup`).
+/// Hyprland's animations: `layerrule = no_anim on, match:namespace omime-popup`).
 const NAMESPACE: &str = "omime-popup";
 
 /// Where engine windows go while an X11 application has focus.
