@@ -20,7 +20,11 @@
 //!   window between its popup and its mirror.
 //! - Popup roles are destroyed before their surfaces, and everything an engine leaves
 //!   behind is destroyed in dependency order when it disconnects.
+//! - Hosted input methods, unmodified Wayland input methods running as engines, get a
+//!   virtual input method and virtual keyboard (see [`hosted`]); their popup surfaces
+//!   are engine windows too.
 
+mod hosted;
 mod mirror;
 
 use std::cell::RefCell;
@@ -40,6 +44,7 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
+use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_manager_v2::ZwpInputMethodManagerV2;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::ZwpInputMethodV2;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_popup_surface_v2::{
     ZwpInputPopupSurfaceV2, ZwpInputPopupSurfaceV2Handler,
@@ -57,6 +62,7 @@ use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_
 };
 use wl_proxy::protocols::viewporter::wp_viewport::{WpViewport, WpViewportHandler};
 use wl_proxy::protocols::viewporter::wp_viewporter::{WpViewporter, WpViewporterHandler};
+use wl_proxy::protocols::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use wl_proxy::protocols::wayland::wl_buffer::{WlBuffer, WlBufferHandler};
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
 use wl_proxy::protocols::wayland::wl_compositor::{WlCompositor, WlCompositorHandler};
@@ -97,8 +103,10 @@ use wl_proxy::protocols::xdg_shell::xdg_toplevel::{XdgToplevel, XdgToplevelHandl
 use wl_proxy::protocols::xdg_shell::xdg_wm_base::{XdgWmBase, XdgWmBaseHandler};
 use wl_proxy::state::State;
 
-use super::{Event, EventQueue};
+use super::{Event, EventQueue, SeatId};
 use crate::placement::Rect;
+pub use hosted::HostedKey;
+use hosted::{HostedPopup, SeatKeyboard, VirtualImManager, VirtualKeyboardManager};
 pub use mirror::X11Target;
 use mirror::{Mirror, OwnGlobals, SurfaceState};
 
@@ -154,13 +162,20 @@ pub(super) struct BridgeShared {
     x11: Option<X11Target>,
     /// The daemon's own globals, for mirrors.
     own: OwnGlobals,
-    /// Surfaces that have been given an `xdg_toplevel`, i.e. engine windows.
+    /// Surfaces that have been given an `xdg_toplevel` or, by a hosted input method, a
+    /// popup role: engine windows.
     windows: Vec<Weak<WlSurface>>,
     configure_serial: u32,
     /// The last preferred fractional scale the compositor sent for an engine window.
     /// Compositors send it only once a popup is mapped; handing it to new surfaces
     /// right away saves engines a blurry first frame.
     last_scale: Option<u32>,
+    /// The input methods of hosted engines, one per engine and seat.
+    hosted: BTreeMap<(EngineId, SeatId), Weak<ZwpInputMethodV2>>,
+    /// The keyboards of seats, for the keyboard grabs of hosted input methods.
+    keyboards: BTreeMap<SeatId, SeatKeyboard>,
+    /// XKB's default keymap, for X11 applications typing before any Wayland field.
+    default_keymap: Option<Rc<str>>,
     events: EventQueue,
 }
 
@@ -223,6 +238,9 @@ impl Bridge {
             windows: Vec::new(),
             configure_serial: 0,
             last_scale: None,
+            hosted: BTreeMap::new(),
+            keyboards: BTreeMap::new(),
+            default_keymap: None,
             events,
         }));
         Self { state, shared }
@@ -274,8 +292,14 @@ impl Bridge {
         }
     }
 
-    /// Accepts a UI connection of `engine`.
-    pub fn add_client(&self, engine: EngineId, socket: std::os::fd::OwnedFd) -> anyhow::Result<()> {
+    /// Accepts a UI connection of `engine`. A `hosted` engine is a Wayland input method
+    /// and finds a virtual input method on the connection.
+    pub fn add_client(
+        &self,
+        engine: EngineId,
+        hosted: bool,
+        socket: std::os::fd::OwnedFd,
+    ) -> anyhow::Result<()> {
         let client = self
             .state
             .add_client(&Rc::new(socket))
@@ -283,6 +307,7 @@ impl Bridge {
         client.display().set_handler(BridgeDisplay {
             shared: self.shared.clone(),
             engine: engine.clone(),
+            hosted,
         });
         client.set_handler(BridgeClient {
             client: Rc::downgrade(&client),
@@ -461,6 +486,7 @@ fn kill_client(object: &dyn Object, reason: &str) {
 struct BridgeDisplay {
     shared: Shared,
     engine: EngineId,
+    hosted: bool,
 }
 
 impl WlDisplayHandler for BridgeDisplay {
@@ -470,6 +496,7 @@ impl WlDisplayHandler for BridgeDisplay {
         registry.set_handler(BridgeRegistry {
             shared: self.shared.clone(),
             engine: self.engine.clone(),
+            hosted: self.hosted,
         });
         let globals: Vec<_> = {
             let mut shared = self.shared.borrow_mut();
@@ -498,16 +525,69 @@ impl WlDisplayHandler for BridgeDisplay {
             ObjectInterface::ZxdgDecorationManagerV1,
             DECORATION_MANAGER_VERSION,
         );
+        if self.hosted {
+            registry.send_global(
+                hosted::INPUT_METHOD_MANAGER_NAME,
+                ObjectInterface::ZwpInputMethodManagerV2,
+                hosted::INPUT_METHOD_MANAGER_VERSION,
+            );
+            registry.send_global(
+                hosted::VIRTUAL_KEYBOARD_MANAGER_NAME,
+                ObjectInterface::ZwpVirtualKeyboardManagerV1,
+                hosted::VIRTUAL_KEYBOARD_MANAGER_VERSION,
+            );
+        }
     }
 }
 
 struct BridgeRegistry {
     shared: Shared,
     engine: EngineId,
+    hosted: bool,
+}
+
+impl BridgeRegistry {
+    /// Binds the virtual input method globals of hosted engines. Returns `false` for
+    /// other globals.
+    fn bind_hosted(&self, name: u32, id: &Rc<dyn Object>) -> bool {
+        if !self.hosted {
+            return false;
+        }
+        if name == hosted::INPUT_METHOD_MANAGER_NAME {
+            match id.clone().try_downcast::<ZwpInputMethodManagerV2>() {
+                Some(manager) if manager.version() <= hosted::INPUT_METHOD_MANAGER_VERSION => {
+                    manager.set_forward_to_server(false);
+                    manager.set_handler(VirtualImManager {
+                        shared: self.shared.clone(),
+                        engine: self.engine.clone(),
+                    });
+                }
+                _ => kill_client(&**id, "bound zwp_input_method_manager_v2 wrongly"),
+            }
+            return true;
+        }
+        if name == hosted::VIRTUAL_KEYBOARD_MANAGER_NAME {
+            match id.clone().try_downcast::<ZwpVirtualKeyboardManagerV1>() {
+                Some(manager) if manager.version() <= hosted::VIRTUAL_KEYBOARD_MANAGER_VERSION => {
+                    manager.set_forward_to_server(false);
+                    manager.set_handler(VirtualKeyboardManager {
+                        shared: self.shared.clone(),
+                        engine: self.engine.clone(),
+                    });
+                }
+                _ => kill_client(&**id, "bound zwp_virtual_keyboard_manager_v1 wrongly"),
+            }
+            return true;
+        }
+        false
+    }
 }
 
 impl WlRegistryHandler for BridgeRegistry {
     fn handle_bind(&mut self, _slf: &Rc<WlRegistry>, name: u32, id: Rc<dyn Object>) {
+        if self.bind_hosted(name, &id) {
+            return;
+        }
         if name == XDG_WM_BASE_NAME {
             let Some(wm_base) = id.try_downcast::<XdgWmBase>() else {
                 return kill_client(&*id, "bound the wrong interface for xdg_wm_base");
@@ -571,9 +651,10 @@ impl WlRegistryHandler for BridgeRegistry {
             compositor.set_handler(BridgeCompositor {
                 shared: self.shared.clone(),
                 engine: self.engine.clone(),
+                hosted: self.hosted,
             });
         } else if let Some(seat) = id.try_downcast::<WlSeat>() {
-            seat.set_handler(BridgeSeat);
+            seat.set_handler(BridgeSeat { name });
         } else if let Some(shm) = id.try_downcast::<WlShm>() {
             shm.set_handler(BridgeShm);
         } else if let Some(manager) = id.try_downcast::<WpFractionalScaleManagerV1>() {
@@ -593,12 +674,17 @@ impl WlRegistryHandler for BridgeRegistry {
 struct BridgeCompositor {
     shared: Shared,
     engine: EngineId,
+    hosted: bool,
 }
 
 impl WlCompositorHandler for BridgeCompositor {
     fn handle_create_surface(&mut self, slf: &Rc<WlCompositor>, id: &Rc<WlSurface>) {
         slf.send_create_surface(id);
-        id.set_handler(BridgeSurface::new(self.shared.clone(), self.engine.clone()));
+        id.set_handler(BridgeSurface::new(
+            self.shared.clone(),
+            self.engine.clone(),
+            self.hosted,
+        ));
     }
 }
 
@@ -709,7 +795,10 @@ impl WlShmPoolHandler for BridgeShmPool {
 }
 
 /// Wraps wl_seat: engines never get keyboard focus, so they don't see a keyboard.
-struct BridgeSeat;
+struct BridgeSeat {
+    /// The registry name of the seat, which identifies it.
+    name: SeatId,
+}
 
 impl WlSeatHandler for BridgeSeat {
     fn handle_capabilities(&mut self, slf: &Rc<WlSeat>, capabilities: WlSeatCapability) {
@@ -898,7 +987,12 @@ fn shim(buffer: &Rc<WlBuffer>) -> Option<wl_proxy::handler::HandlerMut<'_, Buffe
 struct BridgeSurface {
     shared: Shared,
     engine: EngineId,
+    /// Whether the surface belongs to a hosted input method, whose windows are its
+    /// popup surfaces.
+    hosted: bool,
     window: Option<WindowRole>,
+    /// The popup role a hosted input method gave the surface.
+    input_popup: Option<Weak<ZwpInputPopupSurfaceV2>>,
     /// The input popup role on the compositor, created when the window is first mapped.
     popup: Option<Rc<ZwpInputPopupSurfaceV2>>,
     /// Attach since the last commit (window surfaces only).
@@ -941,11 +1035,13 @@ fn window_size(state: &SurfaceState, buffer: &Rc<WlBuffer>) -> (i32, i32) {
 }
 
 impl BridgeSurface {
-    fn new(shared: Shared, engine: EngineId) -> Self {
+    fn new(shared: Shared, engine: EngineId, hosted: bool) -> Self {
         Self {
             shared,
             engine,
+            hosted,
             window: None,
+            input_popup: None,
             popup: None,
             pending_attach: None,
             current: None,
@@ -966,8 +1062,20 @@ impl BridgeSurface {
         self.window.as_ref().is_some_and(|w| w.toplevel.is_some())
     }
 
+    /// Whether the surface is an engine window, whose buffers the bridge shows.
+    fn is_window(&self) -> bool {
+        self.is_toplevel() || self.input_popup.is_some()
+    }
+
     fn presentation(&self) -> Presentation {
-        if self.is_toplevel() {
+        // Hosted input methods show their popups; any other window of theirs would be
+        // a toplevel window, which the bridge cannot show.
+        let shown = if self.hosted {
+            self.input_popup.is_some()
+        } else {
+            self.is_toplevel()
+        };
+        if shown {
             self.shared.borrow().presentation(&self.engine)
         } else {
             Presentation::Hidden
@@ -984,8 +1092,7 @@ impl BridgeSurface {
         let popup = host.new_send_get_input_popup_surface(surface);
         popup.set_forward_to_client(false);
         popup.set_handler(PopupEvents {
-            engine: self.engine.clone(),
-            events: self.shared.borrow().events.clone(),
+            window: Rc::downgrade(surface),
             last: None,
         });
         self.popup = Some(popup);
@@ -1121,6 +1228,10 @@ impl BridgeSurface {
 
     /// Tells the engine where the text cursor is relative to its window.
     fn report_cursor(&self, (x, y, width, height): Rect) {
+        if let Some(popup) = self.input_popup.as_ref().and_then(Weak::upgrade) {
+            // A hosted input method learns it from its popup role, as on a compositor.
+            return HostedPopup::report(&popup, (x, y, width, height));
+        }
         let shared = self.shared.borrow();
         shared
             .events
@@ -1273,6 +1384,16 @@ impl BridgeSurface {
         }
     }
 
+    /// The surface stops being a window (its role was destroyed): it is unmapped and
+    /// gives back everything it held.
+    fn lose_window(&mut self, surface: &Rc<WlSurface>) {
+        self.hide(surface);
+        self.drop_mirror(false);
+        self.release_held();
+        self.finish_frames();
+        self.pending_attach = None;
+    }
+
     fn send_configure(&mut self) {
         let Some(window) = &mut self.window else {
             return;
@@ -1350,7 +1471,7 @@ impl WlSurfaceHandler for BridgeSurface {
         x: i32,
         y: i32,
     ) {
-        if self.is_toplevel() {
+        if self.is_window() {
             if let Some(buffer) = buffer {
                 shim(buffer);
             }
@@ -1365,7 +1486,7 @@ impl WlSurfaceHandler for BridgeSurface {
     }
 
     fn handle_frame(&mut self, slf: &Rc<WlSurface>, callback: &Rc<WlCallback>) {
-        if self.is_toplevel() {
+        if self.is_window() {
             // Answered once the window is shown, on its popup or on its mirror.
             self.pending_frames.push(callback.clone());
         } else {
@@ -1384,7 +1505,7 @@ impl WlSurfaceHandler for BridgeSurface {
     }
 
     fn handle_commit(&mut self, slf: &Rc<WlSurface>) {
-        if self.is_toplevel() {
+        if self.is_window() {
             self.commit_window(slf);
         } else {
             self.apply_pending_state();
@@ -1430,8 +1551,7 @@ impl WlCallbackHandler for FrameRequest {
 
 /// Events of a popup role we created for an engine window.
 struct PopupEvents {
-    engine: EngineId,
-    events: EventQueue,
+    window: Weak<WlSurface>,
     last: Option<(i32, i32, i32, i32)>,
 }
 
@@ -1447,14 +1567,11 @@ impl ZwpInputPopupSurfaceV2Handler for PopupEvents {
         // Hyprland re-sends the rectangle on every commit; only report changes, or an
         // engine that redraws on each update would loop forever.
         let rect = (x, y, width, height);
-        if self.last.replace(rect) != Some(rect) {
-            self.events.borrow_mut().push_back(Event::PopupCursorRect {
-                engine: self.engine.clone(),
-                x,
-                y,
-                width,
-                height,
-            });
+        if self.last.replace(rect) != Some(rect)
+            && let Some(window) = self.window.upgrade()
+            && let Ok(handler) = window.try_get_handler_ref::<BridgeSurface>()
+        {
+            handler.report_cursor(rect);
         }
     }
 }
@@ -1712,11 +1829,7 @@ impl XdgToplevelHandler for VirtualToplevel {
         if let Some(surface) = self.surface.upgrade()
             && let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>()
         {
-            handler.hide(&surface);
-            handler.drop_mirror(false);
-            handler.release_held();
-            handler.finish_frames();
-            handler.pending_attach = None;
+            handler.lose_window(&surface);
             if let Some(window) = &mut handler.window {
                 window.toplevel = None;
             }

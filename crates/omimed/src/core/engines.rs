@@ -4,10 +4,17 @@
 //! `engine` (peer-to-peer D-Bus, the engine protocol) and `wayland` (the UI bridge).
 //! It launches the engine process, waits for it to register, keeps the connection and
 //! a proxy, and reports everything that happens as [`CoreEvent`]s.
+//!
+//! Hosted input methods (`protocol = "input-method-v2"`) have only the `wayland`
+//! socket: they are ready once they created an input method on the bridge. They run
+//! on a private session bus (see [`super::bus`]).
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::os::fd::OwnedFd;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -27,6 +34,10 @@ use crate::runtime_dir;
 
 /// How long an engine may take to start and register.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Hosted input methods load all their addons first; Fcitx5 may take a while.
+const HOSTED_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a hosted input method may take to exit after SIGTERM.
+const TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Restarts after a crash wait this long, doubling up to [`RESTART_MAX`].
 const RESTART_MIN: Duration = Duration::from_millis(500);
 const RESTART_MAX: Duration = Duration::from_secs(30);
@@ -208,6 +219,15 @@ impl EngineState {
     }
 }
 
+/// A UI connection to the bridge, from the engine `engine`.
+#[derive(Debug)]
+pub struct UiConnection {
+    pub engine: String,
+    /// Whether the engine is a hosted input method.
+    pub hosted: bool,
+    pub socket: OwnedFd,
+}
+
 /// One installed engine.
 pub struct EngineSlot {
     pub installed: InstalledEngine,
@@ -234,9 +254,11 @@ impl std::fmt::Debug for EngineSlot {
 pub struct EngineManager {
     slots: BTreeMap<String, EngineSlot>,
     events: mpsc::UnboundedSender<CoreEvent>,
-    ui_connections: mpsc::UnboundedSender<(String, OwnedFd)>,
+    ui_connections: mpsc::UnboundedSender<UiConnection>,
     /// `WAYLAND_DISPLAY` of the real compositor, for engines' non-popup windows.
     host_display: Option<String>,
+    /// Engine processes that have not exited yet.
+    alive: Rc<Cell<usize>>,
 }
 
 impl std::fmt::Debug for EngineManager {
@@ -251,7 +273,7 @@ impl EngineManager {
     pub fn new(
         installed: Vec<InstalledEngine>,
         events: mpsc::UnboundedSender<CoreEvent>,
-        ui_connections: mpsc::UnboundedSender<(String, OwnedFd)>,
+        ui_connections: mpsc::UnboundedSender<UiConnection>,
         host_display: Option<String>,
     ) -> Self {
         let slots = installed
@@ -263,6 +285,7 @@ impl EngineManager {
             events,
             ui_connections,
             host_display,
+            alive: Rc::default(),
         }
     }
 
@@ -400,9 +423,12 @@ impl EngineManager {
         let Some(slot) = self.slots.get_mut(id) else {
             anyhow::bail!("no engine `{id}` is installed");
         };
+        let hosted = slot.installed.manifest.is_hosted();
         if !slot.sockets_ready {
-            listen_engine(id, events.clone())?;
-            listen_ui(id, ui)?;
+            if !hosted {
+                listen_engine(id, events.clone())?;
+            }
+            listen_ui(id, hosted, ui)?;
             slot.sockets_ready = true;
         }
         let dir = runtime_dir::engine_dir(id)?;
@@ -412,10 +438,6 @@ impl EngineManager {
         command
             .args(args)
             .env(ENV_ENGINE_ID, id)
-            .env(
-                ENV_ENGINE_ADDRESS,
-                format!("unix:path={}", dir.join("engine").display()),
-            )
             .env("WAYLAND_DISPLAY", runtime_dir::engine_wayland_display(id))
             .env("GDK_BACKEND", "wayland")
             .env("QT_QPA_PLATFORM", "wayland")
@@ -428,30 +450,68 @@ impl EngineManager {
             .env_remove("XMODIFIERS")
             .stdin(Stdio::null())
             .kill_on_drop(true);
+        exit_with_omimed(&mut command);
+        if !hosted {
+            command.env(
+                ENV_ENGINE_ADDRESS,
+                format!("unix:path={}", dir.join("engine").display()),
+            );
+        }
         match &host_display {
             Some(display) => command.env(ENV_HOST_WAYLAND_DISPLAY, display),
             None => command.env_remove(ENV_HOST_WAYLAND_DISPLAY),
         };
-        let mut child = command
-            .spawn()
-            .with_context(|| format!("cannot launch `{program}` for engine `{id}`"))?;
 
         slot.generation += 1;
         let generation = slot.generation;
         let (kill_tx, kill_rx) = oneshot::channel();
         slot.kill = Some(kill_tx);
         slot.proxy = None;
+        let timeout = if hosted {
+            HOSTED_STARTUP_TIMEOUT
+        } else {
+            STARTUP_TIMEOUT
+        };
         slot.state = EngineState::Starting {
-            deadline: Instant::now() + STARTUP_TIMEOUT,
+            deadline: Instant::now() + timeout,
+        };
+        let engine = id.to_owned();
+        if hosted {
+            // The private bus has to be up before the input method starts, which takes
+            // a moment; a missing program is better reported right away.
+            if find_program(program).is_none() {
+                slot.state = EngineState::Stopped;
+                slot.kill = None;
+                anyhow::bail!("cannot launch `{program}` for engine `{id}`: it is not installed");
+            }
+            tokio::task::spawn_local(supervise_hosted(
+                engine,
+                generation,
+                command,
+                dir,
+                kill_rx,
+                events,
+                Alive::new(&self.alive),
+            ));
+            return Ok(());
+        }
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                slot.state = EngineState::Stopped;
+                slot.kill = None;
+                return Err(e)
+                    .with_context(|| format!("cannot launch `{program}` for engine `{id}`"));
+            }
         };
         info!(
             engine = id,
             pid = child.id().unwrap_or(0),
             "engine launched"
         );
-
-        let engine = id.to_owned();
+        let alive = Alive::new(&self.alive);
         tokio::task::spawn_local(async move {
+            let _alive = alive;
             let status = tokio::select! {
                 status = child.wait() => status,
                 _ = kill_rx => {
@@ -466,6 +526,23 @@ impl EngineManager {
             });
         });
         Ok(())
+    }
+
+    /// A hosted input method created an input method on the bridge. Returns whether it
+    /// may serve text fields: it was started by us and has not exited since.
+    pub fn hosted_ready(&mut self, id: &str) -> bool {
+        let Some(slot) = self.slots.get_mut(id) else {
+            return false;
+        };
+        match slot.state {
+            EngineState::Starting { .. } => {
+                slot.state = EngineState::Ready;
+                info!(engine = id, "engine ready");
+                true
+            }
+            EngineState::Ready => true,
+            _ => false,
+        }
     }
 
     /// The engine registered on `conn`.
@@ -520,6 +597,11 @@ impl EngineManager {
         {
             let _ = kill.send(());
         }
+    }
+
+    /// Whether engine processes are still running, for example after [`Self::shutdown`].
+    pub fn any_alive(&self) -> bool {
+        self.alive.get() > 0
     }
 
     /// Asks every engine to exit.
@@ -585,10 +667,129 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
     Ok(())
 }
 
+/// Has the process that `command` starts stopped with SIGTERM when omimed dies, even
+/// when it is killed: a child must not outlive the daemon, and nothing else would
+/// stop it.
+#[allow(unsafe_code)]
+pub(super) fn exit_with_omimed(command: &mut tokio::process::Command) {
+    let parent = rustix::process::getpid();
+    // SAFETY: the closure runs in the child between fork and exec. It makes three
+    // system calls and allocates nothing (errors are plain error numbers).
+    unsafe {
+        command.pre_exec(move || {
+            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))?;
+            // omimed may have died before the child asked to follow it.
+            if rustix::process::getppid() != Some(parent) {
+                return Err(rustix::io::Errno::SRCH.into());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Counts an engine process as running for as long as it exists.
+struct Alive(Rc<Cell<usize>>);
+
+impl Alive {
+    fn new(count: &Rc<Cell<usize>>) -> Self {
+        count.set(count.get() + 1);
+        Self(count.clone())
+    }
+}
+
+impl Drop for Alive {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
+    }
+}
+
+/// Runs a hosted input method: starts its private bus, then the input method, and
+/// reports when it exits.
+async fn supervise_hosted(
+    engine: String,
+    generation: u64,
+    mut command: tokio::process::Command,
+    dir: PathBuf,
+    kill: oneshot::Receiver<()>,
+    events: mpsc::UnboundedSender<CoreEvent>,
+    _alive: Alive,
+) {
+    let exited = |status| {
+        let _ = events.send(CoreEvent::Exited {
+            engine: engine.clone(),
+            generation,
+            status,
+        });
+    };
+    // Kept until the input method exits; dropping it stops the bus.
+    let _bus = match super::bus::start(&dir).await {
+        Ok((bus, address)) => {
+            command.env("DBUS_SESSION_BUS_ADDRESS", address);
+            Some(bus)
+        }
+        Err(e) => {
+            // A bus that does not exist is better than the user's.
+            warn!(
+                engine,
+                "no private session bus, the engine runs without one: {e:#}"
+            );
+            command.env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", dir.join("no-bus").display()),
+            );
+            None
+        }
+    };
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            warn!(engine, "cannot launch the engine: {e}");
+            return exited(None);
+        }
+    };
+    info!(engine, pid = child.id().unwrap_or(0), "engine launched");
+    let status = tokio::select! {
+        status = child.wait() => status,
+        _ = kill => terminate(&mut child).await,
+    };
+    exited(status.ok());
+}
+
+/// Stops a process politely: SIGTERM, and SIGKILL if it does not exit in time. Input
+/// methods such as Fcitx5 save their state when they exit.
+async fn terminate(child: &mut tokio::process::Child) -> std::io::Result<ExitStatus> {
+    if let Some(pid) = child
+        .id()
+        .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+    {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
+        if let Ok(status) = tokio::time::timeout(TERMINATE_TIMEOUT, child.wait()).await {
+            return status;
+        }
+    }
+    let _ = child.start_kill();
+    child.wait().await
+}
+
+/// Where `program` is: itself if it is a path, or the first match in `$PATH`.
+fn find_program(program: &str) -> Option<PathBuf> {
+    let executable = |path: &Path| {
+        rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok() && path.is_file()
+    };
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return executable(&path).then_some(path);
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|path| executable(path))
+}
+
 /// Accepts UI bridge connections on the engine's Wayland socket.
 pub fn listen_ui(
     engine: &str,
-    connections: mpsc::UnboundedSender<(String, OwnedFd)>,
+    hosted: bool,
+    connections: mpsc::UnboundedSender<UiConnection>,
 ) -> anyhow::Result<()> {
     let path = runtime_dir::engine_dir(engine)?.join("wayland");
     let listener = runtime_dir::bind_socket(&path)?;
@@ -598,10 +799,12 @@ pub fn listen_ui(
             match listener.accept().await {
                 Ok((stream, _)) => match stream.into_std() {
                     Ok(stream) => {
-                        if connections
-                            .send((engine.clone(), OwnedFd::from(stream)))
-                            .is_err()
-                        {
+                        let connection = UiConnection {
+                            engine: engine.clone(),
+                            hosted,
+                            socket: OwnedFd::from(stream),
+                        };
+                        if connections.send(connection).is_err() {
                             break;
                         }
                     }

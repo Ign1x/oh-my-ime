@@ -67,6 +67,36 @@ pub enum FrontendEvent {
     /// Another application got focus (`None` when unknown). Sent after the `Updated`
     /// events of the focused fields, which carry the new app id.
     FocusedApp(Option<String>),
+    /// Something a hosted input method did.
+    Hosted(HostedEvent),
+}
+
+/// What hosted input methods (Wayland input methods running as engines) do.
+#[derive(Debug)]
+pub enum HostedEvent {
+    /// The engine created an input method object for a seat: it can serve text fields
+    /// there.
+    Ready { engine: EngineId },
+    /// The engine grabbed the keyboard, so it can take keys.
+    Grabbed { engine: EngineId },
+    /// What the engine did to the text field `ctx`.
+    Actions {
+        engine: EngineId,
+        ctx: ContextId,
+        actions: Vec<Action>,
+    },
+}
+
+/// Whether a hosted engine took a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyDelivery {
+    /// The key is the engine's now; the frontend that reported it was told.
+    Delivered,
+    /// The engine cannot take keys yet, for example because it has not grabbed the
+    /// keyboard.
+    NotReady,
+    /// The key is not for the engine: a release of a key whose press it did not see.
+    Refused,
 }
 
 /// The frontends, as the core drives them.
@@ -86,6 +116,27 @@ pub trait Frontends {
 
     /// Whether `engine` wants its windows shown while it is active.
     fn set_engine_visible(&mut self, engine: EngineId, visible: bool);
+
+    /// Activates the input method of the hosted engine `engine` for the text field
+    /// `ctx`. Returns `false` if the engine has none for the field yet.
+    fn hosted_activate(
+        &mut self,
+        engine: &EngineId,
+        origin: Origin,
+        ctx: ContextId,
+        info: &ContextInfo,
+    ) -> bool;
+
+    /// Tells the hosted engine serving `ctx` about changes to the field; `reset` means
+    /// the application changed the text on its own.
+    fn hosted_update(&mut self, engine: &EngineId, ctx: ContextId, info: &ContextInfo, reset: bool);
+
+    /// The hosted engine `engine` no longer serves the field `ctx`.
+    fn hosted_deactivate(&mut self, engine: &EngineId, ctx: ContextId);
+
+    /// Hands a key reported in [`FrontendEvent::Key`] to the hosted engine `engine`.
+    /// Unless it is delivered, the key still needs [`Self::finish_key`].
+    fn hosted_key(&mut self, engine: &EngineId, key: &KeyRef, event: &KeyEvent) -> KeyDelivery;
 }
 
 /// Hands out context ids, unique among all frontends for the daemon's lifetime.

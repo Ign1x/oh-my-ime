@@ -231,6 +231,19 @@ pub fn keymap_memfd(text: &str) -> io::Result<(OwnedFd, u32)> {
     Ok((fd, size))
 }
 
+/// Whether `keysym` is a modifier key: Shift, Control, Alt, Super and the like, the
+/// lock keys, and the level and group shifts.
+pub fn is_modifier_key(keysym: u32) -> bool {
+    use xkb::keysyms;
+    matches!(
+        keysym,
+        keysyms::KEY_Shift_L..=keysyms::KEY_Hyper_R
+            | keysyms::KEY_ISO_Lock..=keysyms::KEY_ISO_Last_Group_Lock
+            | keysyms::KEY_Mode_switch
+            | keysyms::KEY_Num_Lock
+    )
+}
+
 /// What to do with a key release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseAction {
@@ -425,6 +438,24 @@ mod tests {
         assert_eq!(keys.take_forwarded(), vec![KEY_A, KEY_LEFTSHIFT]);
         assert!(keys.take_forwarded().is_empty());
         assert_eq!(keys.release(KEY_1), ReleaseAction::Forward);
+    }
+
+    #[test]
+    fn modifier_keys_are_recognized() {
+        use xkb::keysyms;
+        for keysym in [
+            keysyms::KEY_Shift_L,
+            keysyms::KEY_Control_R,
+            keysyms::KEY_Super_L,
+            keysyms::KEY_Caps_Lock,
+            keysyms::KEY_ISO_Level3_Shift,
+            keysyms::KEY_Num_Lock,
+        ] {
+            assert!(is_modifier_key(keysym), "{keysym:#x}");
+        }
+        for keysym in [keysyms::KEY_a, keysyms::KEY_space, keysyms::KEY_Return] {
+            assert!(!is_modifier_key(keysym), "{keysym:#x}");
+        }
     }
 
     #[test]

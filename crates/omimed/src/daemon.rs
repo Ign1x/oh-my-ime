@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_proto::config::{CONFIG_FILE, Config};
-use omime_proto::engine::{Action, ContextId};
+use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent};
 use omime_proto::manifest;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
@@ -19,9 +19,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::control::{self, ControlRequest, ControlService};
+use crate::core::engines::UiConnection;
 use crate::core::{Core, CoreEvent};
 use crate::fcitx::{self, FcitxFrontend};
-use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
+use crate::frontend::{ContextIds, Frontends, KeyDelivery, KeyRef, Origin};
 use crate::placement::{self, Rect};
 use crate::state::State;
 use crate::wayland::{EngineId, Frontend};
@@ -111,7 +112,7 @@ struct Daemon {
     signals: Signals,
     core: Core,
     core_rx: mpsc::UnboundedReceiver<CoreEvent>,
-    ui_rx: mpsc::UnboundedReceiver<(String, OwnedFd)>,
+    ui_rx: mpsc::UnboundedReceiver<UiConnection>,
     control_rx: mpsc::UnboundedReceiver<ControlRequest>,
     /// Kept alive for the control service's lifetime.
     _control: Option<Rc<ControlService>>,
@@ -225,8 +226,13 @@ impl Daemon {
             match end {
                 SessionEnd::Shutdown => {
                     self.core.shutdown();
-                    // Give engines a moment to receive Shutdown.
+                    // Give engines a moment to receive Shutdown, and hosted input
+                    // methods, which save their state when they stop, time to exit.
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    let deadline = Instant::now() + ENGINE_EXIT_WAIT;
+                    while self.core.engines_alive() && Instant::now() < deadline {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
                     return Ok(());
                 }
                 SessionEnd::Lost(e) => {
@@ -278,6 +284,7 @@ impl Daemon {
                     &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 );
             }
+            frontend.flush_hosted_modifiers();
             frontend.set_x11_cursor(self.x11_cursor(frontend));
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
@@ -320,8 +327,9 @@ impl Daemon {
                 Some(event) = self.core_rx.recv() => {
                     self.core.on_event(event, &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut())).await;
                 }
-                Some((engine, fd)) = self.ui_rx.recv() => {
-                    if let Err(e) = frontend.add_ui_client(engine.as_str().into(), fd) {
+                Some(connection) = self.ui_rx.recv() => {
+                    let engine = connection.engine.as_str().into();
+                    if let Err(e) = frontend.add_ui_client(engine, connection.hosted, connection.socket) {
                         warn!("{e:#}");
                     }
                 }
@@ -478,6 +486,9 @@ async fn xim_readable(xim: Option<&XimFrontend>) -> std::io::Result<()> {
     }
 }
 
+/// How long omimed waits for engines to exit when it stops.
+const ENGINE_EXIT_WAIT: Duration = Duration::from_secs(2);
+
 /// The first and the longest wait before connecting to the X display again.
 const XIM_RETRY_MIN: Duration = Duration::from_secs(2);
 const XIM_RETRY_MAX: Duration = Duration::from_secs(60);
@@ -546,5 +557,59 @@ impl Frontends for Outputs<'_> {
 
     fn set_engine_visible(&mut self, engine: EngineId, visible: bool) {
         self.wayland.set_engine_visible(engine, visible);
+    }
+
+    fn hosted_activate(
+        &mut self,
+        engine: &EngineId,
+        origin: Origin,
+        ctx: ContextId,
+        info: &ContextInfo,
+    ) -> bool {
+        self.wayland.hosted_activate(engine, origin, ctx, info)
+    }
+
+    fn hosted_update(
+        &mut self,
+        engine: &EngineId,
+        ctx: ContextId,
+        info: &ContextInfo,
+        reset: bool,
+    ) {
+        self.wayland.hosted_update(engine, ctx, info, reset);
+    }
+
+    fn hosted_deactivate(&mut self, engine: &EngineId, ctx: ContextId) {
+        self.wayland.hosted_deactivate(engine, ctx);
+    }
+
+    fn hosted_key(&mut self, engine: &EngineId, key: &KeyRef, event: &KeyEvent) -> KeyDelivery {
+        // XIM passes only presses on, so each key is released right after its press,
+        // or the input method would think it is still held. A modifier would then
+        // look like a tap of its own (Fcitx5 switches modes on Shift taps), so
+        // modifiers stay with the application.
+        if matches!(key, KeyRef::Xim(_)) && crate::keyboard::is_modifier_key(event.keysym) {
+            return KeyDelivery::Refused;
+        }
+        let delivery = self.wayland.hosted_key(engine, key, event);
+        if delivery != KeyDelivery::Delivered {
+            return delivery;
+        }
+        match key {
+            KeyRef::Wayland(key) => self.wayland.finish_delegated(key),
+            KeyRef::Fcitx(key) => self.fcitx.finish_key(key, true),
+            KeyRef::Xim(xim_key) => {
+                let release = KeyEvent {
+                    released: true,
+                    repeat: false,
+                    ..event.clone()
+                };
+                self.wayland.hosted_key(engine, key, &release);
+                if let Some(xim) = &mut self.xim {
+                    xim.finish_key(xim_key, true);
+                }
+            }
+        }
+        delivery
     }
 }

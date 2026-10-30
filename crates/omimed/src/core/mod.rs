@@ -7,11 +7,15 @@
 //!
 //! Without an engine (direct input), or when an engine is unavailable, keys pass
 //! straight through to the application.
+//!
+//! Hosted input methods (Wayland input methods running as engines) take requests
+//! through the frontends right away and answer when they like, with
+//! [`HostedEvent::Actions`]; their contexts never have a request in flight.
 
+mod bus;
 pub mod engines;
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::os::fd::OwnedFd;
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
@@ -22,9 +26,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use xkbcommon::xkb;
 
-use crate::frontend::{FrontendEvent, Frontends, KeyRef, Origin};
+use crate::frontend::{FrontendEvent, Frontends, HostedEvent, KeyDelivery, KeyRef, Origin};
 use crate::state::State;
-use engines::{EngineManager, EngineState, HostCall};
+use crate::wayland::EngineId;
+use engines::{EngineManager, EngineState, HostCall, UiConnection};
+
+/// How long keys wait for a hosted input method to start, or to grab the keyboard
+/// once it was activated, before they pass through.
+const HOSTED_WAIT: Duration = Duration::from_secs(1);
 
 /// Events from engines and background tasks, handled on the core's thread.
 #[derive(Debug)]
@@ -123,6 +132,22 @@ struct Context {
     activated: bool,
     queue: VecDeque<Request>,
     in_flight: Option<InFlight>,
+    /// When the field started waiting for its engine: when it got focus, when it got
+    /// another engine, or when a hosted engine was activated for it.
+    waiting_since: Instant,
+    /// Keys wait until then for a hosted engine to take them.
+    hold_until: Option<Instant>,
+}
+
+impl Context {
+    /// Whether a key that a hosted engine cannot take yet should wait for it, which it
+    /// does for [`HOSTED_WAIT`]. Sets the deadline of the wait.
+    fn hold_key(&mut self) -> bool {
+        let until = self.waiting_since + HOSTED_WAIT;
+        let hold = Instant::now() < until;
+        self.hold_until = hold.then_some(until);
+        hold
+    }
 }
 
 /// Callback for changes of what is kept across restarts.
@@ -181,7 +206,7 @@ impl Core {
         config: &Config,
         installed: Vec<InstalledEngine>,
         events: mpsc::UnboundedSender<CoreEvent>,
-        ui_connections: mpsc::UnboundedSender<(String, OwnedFd)>,
+        ui_connections: mpsc::UnboundedSender<UiConnection>,
         host_display: Option<String>,
     ) -> Self {
         let enabled = enabled_engines(config, &installed);
@@ -322,13 +347,25 @@ impl Core {
         let requests = self
             .contexts
             .values()
-            .filter_map(|c| c.in_flight.as_ref().map(|f| f.deadline));
+            .filter_map(|c| c.in_flight.as_ref().map(|f| f.deadline).or(c.hold_until));
         requests.chain(self.engines.deadline()).min()
     }
 
     pub fn on_timer(&mut self, now: Instant, out: &mut dyn Frontends) {
         for failed in self.engines.on_timer(now) {
             self.engine_unavailable(&failed, out);
+        }
+        let held: Vec<ContextId> = self
+            .contexts
+            .iter()
+            .filter(|(_, c)| c.hold_until.is_some_and(|t| t <= now))
+            .map(|(id, _)| *id)
+            .collect();
+        for ctx in held {
+            if let Some(context) = self.contexts.get_mut(&ctx) {
+                context.hold_until = None;
+            }
+            self.pump(ctx, out);
         }
         let expired: Vec<ContextId> = self
             .contexts
@@ -383,6 +420,8 @@ impl Core {
                     activated: false,
                     queue: VecDeque::new(),
                     in_flight: None,
+                    waiting_since: Instant::now(),
+                    hold_until: None,
                 };
                 if context.engine.is_some() {
                     context.queue.push_back(Request::Activate);
@@ -414,16 +453,14 @@ impl Core {
                     if let Some(flight) = context.in_flight {
                         self.stale_tokens.insert(flight.token);
                     }
-                    if context.activated
-                        && let Some(proxy) = context
-                            .engine
-                            .as_deref()
-                            .and_then(|id| self.engines.get(id))
-                            .and_then(|slot| slot.proxy.clone())
-                    {
-                        tokio::task::spawn_local(async move {
-                            let _ = proxy.deactivate(ctx).await;
-                        });
+                    if context.activated {
+                        Self::deactivate(&self.engines, context.engine.as_deref(), ctx, out);
+                    }
+                    // Keys still waiting for a hosted engine go to the application.
+                    for request in context.queue {
+                        if let Request::Key(key, _) = request {
+                            out.finish_key(&key, false);
+                        }
                     }
                 }
             }
@@ -457,6 +494,82 @@ impl Core {
                 }
             }
             FrontendEvent::FocusedApp(app) => self.on_focused_app(app, out),
+            FrontendEvent::Hosted(event) => self.on_hosted(event, out),
+        }
+    }
+
+    /// Tells `engine` that it no longer serves the field `ctx`.
+    fn deactivate(
+        engines: &EngineManager,
+        engine: Option<&str>,
+        ctx: ContextId,
+        out: &mut dyn Frontends,
+    ) {
+        let Some(id) = engine else {
+            return;
+        };
+        let Some(slot) = engines.get(id) else {
+            return;
+        };
+        if slot.installed.manifest.is_hosted() {
+            out.hosted_deactivate(&EngineId::from(id), ctx);
+        } else if let Some(proxy) = slot.proxy.clone() {
+            tokio::task::spawn_local(async move {
+                let _ = proxy.deactivate(ctx).await;
+            });
+        }
+    }
+
+    fn on_hosted(&mut self, event: HostedEvent, out: &mut dyn Frontends) {
+        match event {
+            HostedEvent::Ready { engine } => {
+                if !self.engines.hosted_ready(&engine) {
+                    return;
+                }
+                self.timeouts.remove(&*engine);
+                // A hosted input method shows its popups when it likes.
+                out.set_engine_visible(engine.clone(), true);
+                // Fields that waited for the engine, or for its input method on their seat.
+                let waiting: Vec<ContextId> = self
+                    .contexts
+                    .iter()
+                    .filter(|(_, c)| c.engine.as_deref() == Some(&*engine) && !c.activated)
+                    .map(|(id, _)| *id)
+                    .collect();
+                for ctx in waiting {
+                    if let Some(context) = self.contexts.get_mut(&ctx)
+                        && !matches!(context.queue.front(), Some(Request::Activate))
+                    {
+                        context.queue.push_front(Request::Activate);
+                    }
+                    self.pump(ctx, out);
+                }
+            }
+            HostedEvent::Grabbed { engine } => {
+                let waiting: Vec<ContextId> = self
+                    .contexts
+                    .iter()
+                    .filter(|(_, c)| c.engine.as_deref() == Some(&*engine))
+                    .map(|(id, _)| *id)
+                    .collect();
+                for ctx in waiting {
+                    if let Some(context) = self.contexts.get_mut(&ctx) {
+                        context.hold_until = None;
+                    }
+                    self.pump(ctx, out);
+                }
+            }
+            HostedEvent::Actions {
+                engine,
+                ctx,
+                actions,
+            } => {
+                if let Some(context) = self.contexts.get(&ctx)
+                    && context.engine.as_deref() == Some(&*engine)
+                {
+                    out.apply_actions(context.origin, ctx, &actions);
+                }
+            }
         }
     }
 
@@ -671,13 +784,29 @@ impl Core {
                 continue;
             }
 
-            let state = context
+            let slot = context
                 .engine
                 .as_deref()
-                .and_then(|id| self.engines.get(id))
-                .map(|slot| slot.state);
+                .and_then(|id| self.engines.get(id));
+            let hosted = slot.is_some_and(|slot| slot.installed.manifest.is_hosted());
+            let state = slot.map(|slot| slot.state);
             match state {
                 Some(EngineState::Ready) => {}
+                // A hosted engine is activated afresh once it is ready, so only keys
+                // matter while it starts; they wait for it only briefly.
+                Some(EngineState::Starting { .. }) if hosted => {
+                    if !matches!(context.queue.front(), Some(Request::Key(..))) {
+                        context.queue.pop_front();
+                        continue;
+                    }
+                    if context.hold_key() {
+                        return;
+                    }
+                    if let Some(Request::Key(key, _)) = context.queue.pop_front() {
+                        out.finish_key(&key, false);
+                    }
+                    continue;
+                }
                 // Hold requests while the engine starts.
                 Some(EngineState::Starting { .. }) => return,
                 // No engine, or it is unavailable: keys pass straight through and
@@ -689,11 +818,62 @@ impl Core {
                     continue;
                 }
             }
+            if hosted {
+                if !self.pump_hosted(ctx, out) {
+                    return;
+                }
+                continue;
+            }
             let Some(request) = context.queue.pop_front() else {
                 return;
             };
             self.send(ctx, request);
         }
+    }
+
+    /// Hands the next request of `ctx` to its hosted engine, which takes it at once.
+    /// Returns `false` if the request has to wait.
+    fn pump_hosted(&mut self, ctx: ContextId, out: &mut dyn Frontends) -> bool {
+        let Some(context) = self.contexts.get_mut(&ctx) else {
+            return false;
+        };
+        let Some(engine) = context.engine.as_deref().map(EngineId::from) else {
+            return false;
+        };
+        let Some(request) = context.queue.pop_front() else {
+            return false;
+        };
+        match request {
+            Request::Activate => {
+                context.activated =
+                    out.hosted_activate(&engine, context.origin, ctx, &context.info);
+                context.waiting_since = Instant::now();
+            }
+            Request::Update(_) | Request::Reset => {
+                let mut reset = matches!(request, Request::Reset);
+                if matches!(context.queue.front(), Some(Request::Reset)) {
+                    context.queue.pop_front();
+                    reset = true;
+                }
+                if context.activated {
+                    out.hosted_update(&engine, ctx, &context.info, reset);
+                }
+            }
+            Request::Key(key, event) => match out.hosted_key(&engine, &key, &event) {
+                KeyDelivery::Delivered => context.hold_until = None,
+                KeyDelivery::NotReady => {
+                    // The input method grabs the keyboard once it learns about the
+                    // field; until then, keys wait a moment rather than slip past it.
+                    if context.hold_key() {
+                        context.queue.push_front(Request::Key(key, event));
+                        return false;
+                    }
+                    out.finish_key(&key, false);
+                }
+                KeyDelivery::Refused => out.finish_key(&key, false),
+            },
+        }
+        true
     }
 
     fn send(&mut self, ctx: ContextId, request: Request) {
@@ -806,17 +986,11 @@ impl Core {
             }
             // Leave the old engine: its preedit goes, and so does anything it still
             // had queued that is not a key.
-            if context.activated
-                && let Some(proxy) = context
-                    .engine
-                    .as_deref()
-                    .and_then(|id| self.engines.get(id))
-                    .and_then(|slot| slot.proxy.clone())
-            {
-                tokio::task::spawn_local(async move {
-                    let _ = proxy.deactivate(ctx).await;
-                });
+            if context.activated {
+                Self::deactivate(&self.engines, context.engine.as_deref(), ctx, out);
             }
+            context.waiting_since = Instant::now();
+            context.hold_until = None;
             out.clear_preedit(context.origin, ctx);
             if let Some(flight) = context.in_flight.take() {
                 self.stale_tokens.insert(flight.token);
@@ -830,6 +1004,9 @@ impl Core {
             if target.is_some() {
                 context.queue.push_front(Request::Activate);
             }
+            // Activate the new engine now: a hosted input method takes keys only once
+            // it has grabbed the keyboard, which it does when it learns about the field.
+            self.pump(ctx, out);
         }
         self.state_changed();
         self.status_changed();
@@ -881,6 +1058,11 @@ impl Core {
 
     pub fn shutdown(&mut self) {
         self.engines.shutdown();
+    }
+
+    /// Whether engine processes are still running.
+    pub fn engines_alive(&self) -> bool {
+        self.engines.any_alive()
     }
 }
 

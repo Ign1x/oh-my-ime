@@ -21,7 +21,7 @@ use wl_proxy::protocols::wayland::wl_seat::WlSeat;
 use super::{EventQueue, GrabEvent, GrabEvents, ImEvent, ImEvents, KeyRef, Outputs, SeatId};
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
 use crate::ime_state::ImState;
-use crate::keyboard::{self, KeyTracker, Keyboard, ReleaseAction};
+use crate::keyboard::{self, KeyTracker, Keyboard, ModifierState, ReleaseAction, RepeatInfo};
 
 const KEYMAP_FORMAT_XKB_V1: u32 = 1;
 const KEY_STATE_RELEASED: u32 = 0;
@@ -30,6 +30,14 @@ const KEY_STATE_REPEATED: u32 = 2;
 
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// A change of the keyboard a grab reported.
+#[derive(Debug)]
+pub enum KeyboardChange {
+    Keymap(Rc<str>),
+    Repeat(RepeatInfo),
+    Modifiers(ModifierState),
+}
 
 /// Key repeat for a key an engine consumed. Forwarded keys are repeated by the
 /// application itself.
@@ -354,9 +362,10 @@ impl SeatSession {
         debug!(seat = self.name, "keyboard released");
     }
 
-    pub fn handle_grab(&mut self, generation: u32, event: GrabEvent) {
+    /// Handles an event of the keyboard grab. Returns what changed about the keyboard.
+    pub fn handle_grab(&mut self, generation: u32, event: GrabEvent) -> Option<KeyboardChange> {
         if generation != self.grab_generation || self.grab.is_none() {
-            return;
+            return None;
         }
         match event {
             GrabEvent::Keymap { format, fd, size } => {
@@ -365,13 +374,19 @@ impl SeatSession {
                         seat = self.name,
                         format, "ignoring a keymap in another format"
                     );
-                    return;
+                    return None;
                 }
                 let loaded = keyboard::read_keymap(&fd, size)
                     .map_err(keyboard::KeymapError::from)
                     .and_then(|text| self.keyboard.set_keymap(text));
                 match loaded {
-                    Ok(true) => debug!(seat = self.name, "new keymap"),
+                    Ok(true) => {
+                        debug!(seat = self.name, "new keymap");
+                        return self
+                            .keyboard
+                            .keymap_text()
+                            .map(|text| KeyboardChange::Keymap(Rc::from(text)));
+                    }
                     Ok(false) => {}
                     Err(e) => error!(seat = self.name, "cannot use the keymap: {e}"),
                 }
@@ -388,8 +403,12 @@ impl SeatSession {
                         modifiers.group,
                     );
                 }
+                return Some(KeyboardChange::Modifiers(modifiers));
             }
-            GrabEvent::RepeatInfo(repeat) => self.keyboard.set_repeat_info(repeat),
+            GrabEvent::RepeatInfo(repeat) => {
+                self.keyboard.set_repeat_info(repeat);
+                return Some(KeyboardChange::Repeat(repeat));
+            }
             GrabEvent::Key { time, key, state } => match state {
                 KEY_STATE_PRESSED => {
                     self.held.insert(key);
@@ -417,10 +436,12 @@ impl SeatSession {
                 _ => {}
             },
         }
+        None
     }
 
     /// Hands a key to the core. Without a focused field it is passed through directly.
     fn emit_key(&mut self, time: u32, keycode: u32, released: bool, repeat: bool) {
+        let modifiers = self.keyboard.modifiers();
         let Some(ctx) = self.ctx else {
             let key = KeyRef {
                 seat: self.id,
@@ -429,6 +450,7 @@ impl SeatSession {
                 time,
                 released,
                 repeat,
+                modifiers,
             };
             self.finish_key(&key, false);
             return;
@@ -450,6 +472,7 @@ impl SeatSession {
             time,
             released,
             repeat,
+            modifiers,
         };
         self.outputs.borrow_mut().push_back(FrontendEvent::Key {
             key: frontend::KeyRef::Wayland(key),
@@ -485,6 +508,25 @@ impl SeatSession {
                 self.send_key(key.time, code, KEY_STATE_PRESSED);
                 self.send_key(key.time, code, KEY_STATE_RELEASED);
             }
+        }
+    }
+
+    /// Records that a key went to a hosted input method. It forwards what the
+    /// application should get through its own virtual keyboard, and repeats keys
+    /// itself.
+    pub fn finish_delegated(&mut self, key: &KeyRef) {
+        if key.ctx != 0 && Some(key.ctx) != self.ctx {
+            return;
+        }
+        let code = key.keycode;
+        if key.released {
+            // A press the input method forwarded is released when it forwards the
+            // release; until then, the application holds the key.
+            if !self.keys.is_forwarded(code) {
+                self.keys.release(code);
+            }
+        } else if !key.repeat {
+            self.keys.press_consumed(code);
         }
     }
 

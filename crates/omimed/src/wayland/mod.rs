@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail};
-use omime_proto::engine::{Action, ContextId};
+use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent};
 use tracing::{debug, error, info, warn};
 use wl_proxy::baseline::Baseline;
 use wl_proxy::object::{Object, ObjectCoreApi};
@@ -50,12 +50,12 @@ use wl_proxy::protocols::wlr_foreign_toplevel_management_unstable_v1::zwlr_forei
 use wl_proxy::protocols::wlr_layer_shell_unstable_v1::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use wl_proxy::state::{State, StateError, StateHandler};
 
-use crate::frontend::{ContextIds, FrontendEvent};
+use crate::frontend::{self, ContextIds, FrontendEvent, HostedEvent, KeyDelivery, Origin};
 use crate::keyboard::{ModifierState, RepeatInfo};
 use crate::placement::{self, Rect};
 pub use bridge::EngineId;
-use bridge::{Bridge, X11Target};
-use seat::SeatSession;
+use bridge::{Bridge, HostedKey, X11Target};
+use seat::{KeyboardChange, SeatSession};
 use toplevels::{ToplevelEvent, Toplevels};
 
 /// Identifies a seat by the registry name of its `wl_seat` global.
@@ -99,6 +99,8 @@ pub enum Event {
         width: i32,
         height: i32,
     },
+    /// A hosted input method did something.
+    Hosted(HostedEvent),
     /// The compositor sent a fatal protocol error.
     ProtocolError {
         message: String,
@@ -169,6 +171,8 @@ pub struct KeyRef {
     pub time: u32,
     pub released: bool,
     pub repeat: bool,
+    /// The modifiers when the key was typed.
+    pub modifiers: ModifierState,
 }
 
 /// Queue of [`FrontendEvent`]s, shared with the seat sessions.
@@ -356,9 +360,96 @@ impl Frontend {
         self.update_bridge();
     }
 
-    /// Hands a UI connection of `engine` to the bridge.
-    pub fn add_ui_client(&self, engine: EngineId, socket: OwnedFd) -> anyhow::Result<()> {
-        self.bridge.add_client(engine, socket)
+    /// Hands a UI connection of `engine` to the bridge; a `hosted` engine is a Wayland
+    /// input method.
+    pub fn add_ui_client(
+        &self,
+        engine: EngineId,
+        hosted: bool,
+        socket: OwnedFd,
+    ) -> anyhow::Result<()> {
+        self.bridge.add_client(engine, hosted, socket)
+    }
+
+    /// Activates the input method of the hosted engine `engine` for the field `ctx`.
+    /// Fields of X11 applications use the input method of any seat.
+    pub fn hosted_activate(
+        &mut self,
+        engine: &EngineId,
+        origin: Origin,
+        ctx: ContextId,
+        info: &ContextInfo,
+    ) -> bool {
+        let (seat, x11) = match origin {
+            Origin::Wayland(seat) => (seat, false),
+            Origin::Fcitx | Origin::Xim => match self.bridge.hosted_seat(engine) {
+                Some(seat) => (seat, true),
+                None => return false,
+            },
+        };
+        self.bridge.hosted_activate(engine, seat, ctx, x11, info)
+    }
+
+    pub fn hosted_update(
+        &mut self,
+        engine: &EngineId,
+        ctx: ContextId,
+        info: &ContextInfo,
+        reset: bool,
+    ) {
+        self.bridge.hosted_update(engine, ctx, info, reset);
+    }
+
+    pub fn hosted_deactivate(&mut self, engine: &EngineId, ctx: ContextId) {
+        self.bridge.hosted_deactivate(engine, ctx);
+    }
+
+    /// Passes a key to the keyboard grab of the hosted engine `engine`.
+    pub fn hosted_key(
+        &mut self,
+        engine: &EngineId,
+        key: &frontend::KeyRef,
+        event: &KeyEvent,
+    ) -> KeyDelivery {
+        const RELEASED: u32 = 0;
+        const PRESSED: u32 = 1;
+        const REPEATED: u32 = 2;
+        let hosted = match key {
+            frontend::KeyRef::Wayland(key) => HostedKey {
+                keycode: key.keycode,
+                time: key.time,
+                // Repeats come from the compositor: the input method repeats keys
+                // itself otherwise.
+                state: match (key.released, key.repeat) {
+                    (true, _) => RELEASED,
+                    (false, true) => REPEATED,
+                    (false, false) => PRESSED,
+                },
+                modifiers: key.modifiers,
+            },
+            // The X server repeats keys of X11 applications, so repeats are presses.
+            frontend::KeyRef::Fcitx(_) | frontend::KeyRef::Xim(_) => HostedKey {
+                keycode: event.keycode,
+                time: event.time,
+                state: if event.released { RELEASED } else { PRESSED },
+                modifiers: x11_modifiers(event.modifiers),
+            },
+        };
+        self.bridge.hosted_key(engine, key.ctx(), hosted)
+    }
+
+    /// Records that a key went to a hosted engine, which decides what the application
+    /// gets: it forwards keys itself.
+    pub fn finish_delegated(&mut self, key: &KeyRef) {
+        if let Some(seat) = self.seats.get_mut(&key.seat) {
+            seat.finish_delegated(key);
+        }
+    }
+
+    /// Tells hosted input methods about modifier changes no key brought them. Call once
+    /// the core has handled the keys of a batch.
+    pub fn flush_hosted_modifiers(&self) {
+        self.bridge.flush_modifiers();
     }
 
     /// Selects the engine whose windows may be shown.
@@ -486,8 +577,18 @@ impl Frontend {
                 generation,
                 event,
             } => {
-                if let Some(session) = self.seats.get_mut(&seat) {
-                    session.handle_grab(generation, event);
+                let change = self
+                    .seats
+                    .get_mut(&seat)
+                    .and_then(|session| session.handle_grab(generation, event));
+                // Hosted input methods get the keyboard of the seat through their grabs.
+                match change {
+                    Some(KeyboardChange::Keymap(keymap)) => self.bridge.set_keymap(seat, keymap),
+                    Some(KeyboardChange::Repeat(repeat)) => self.bridge.set_repeat(seat, repeat),
+                    Some(KeyboardChange::Modifiers(modifiers)) => {
+                        self.bridge.set_modifiers(seat, modifiers);
+                    }
+                    None => {}
                 }
             }
             // The focused application is worked out once the batch is handled: focus
@@ -508,6 +609,11 @@ impl Frontend {
                         engine,
                         rect: (x, y, width, height),
                     });
+            }
+            Event::Hosted(event) => {
+                self.outputs
+                    .borrow_mut()
+                    .push_back(FrontendEvent::Hosted(event));
             }
             Event::ProtocolError { message } => {
                 bail!("the compositor closed the connection: {message}");
@@ -652,6 +758,20 @@ impl Frontend {
             session.set_app_id(self.focused_app.clone());
             self.seats.insert(id, session);
         }
+    }
+}
+
+/// The modifiers of an X11 key as a keyboard grab would report them. The engine
+/// protocol's bits are X11's, which are the real modifiers of XKB keymaps; lock
+/// modifiers are locked, the others held.
+fn x11_modifiers(bits: u32) -> ModifierState {
+    use omime_proto::engine::modifiers;
+    let locked = bits & (modifiers::CAPS_LOCK | modifiers::NUM_LOCK);
+    ModifierState {
+        depressed: bits & !locked,
+        latched: 0,
+        locked,
+        group: 0,
     }
 }
 
