@@ -97,6 +97,46 @@ fn pinyin_types_into_wayland_applications() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn no_key_stays_held_after_shortcuts() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    start_pinyin(&env)?;
+    let editor = env.editor(&["--print-modifiers"])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // Shortcuts applications use, and keys Fcitx5 takes for itself: Ctrl+Shift and
+    // Ctrl+; are Fcitx5 hotkeys, a lone Shift switches its mode.
+    for (modifiers, key) in [
+        (&["ctrl"][..], "a"),
+        (&["ctrl"][..], "c"),
+        (&["ctrl", "shift"][..], "Shift_L"),
+        (&["ctrl"][..], "semicolon"),
+        (&[][..], "Shift_L"),
+        (&[][..], "Shift_L"),
+        (&["ctrl"][..], "space"),
+        (&["ctrl"][..], "space"),
+    ] {
+        env.key(modifiers, key)?;
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let lines = editor.lines();
+    let held = lines.iter().rev().find(|l| l.starts_with("held"));
+    let modifiers = lines.iter().rev().find(|l| l.starts_with("modifiers "));
+    assert!(
+        held.is_none_or(|l| l == "held "),
+        "keys stayed held: {held:?}\n{lines:?}"
+    );
+    assert!(
+        modifiers.is_none_or(|l| l.starts_with("modifiers 0 0 ")),
+        "modifiers stayed held: {modifiers:?}\n{lines:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn pinyin_types_into_xim_applications() -> anyhow::Result<()> {
     let Some(engine) = fcitx5() else {
         eprintln!("fcitx5 is not installed; nothing to test");

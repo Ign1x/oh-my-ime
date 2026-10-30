@@ -4,8 +4,8 @@
 //! It speaks `zwp_input_method_v2` and `zwp_virtual_keyboard_v1` like the echo engine
 //! speaks the engine protocol: letters are collected in a preedit and shown in a
 //! popup of one color; any other key commits the word in UPPERCASE and goes on to the
-//! application through the virtual keyboard. Backspace edits the preedit and Escape
-//! cancels it. Like Fcitx5, it grabs the keyboard and creates a virtual keyboard
+//! application through the virtual keyboard, its release too unless `--keep-releases`.
+//! Backspace edits the preedit and Escape cancels it. Like Fcitx5, it grabs the keyboard and creates a virtual keyboard
 //! whenever it is activated, and destroys its popup surface whenever the preedit is
 //! empty.
 //!
@@ -43,7 +43,8 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 use xkbcommon::xkb;
 
-const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE]";
+const USAGE: &str =
+    "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] [--keep-releases]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -96,6 +97,9 @@ struct App {
     seats: Vec<Seat>,
     color: u32,
     size: (i32, i32),
+    /// Never forward releases (`--keep-releases`), as input methods do for keys of a
+    /// hotkey.
+    keep_releases: bool,
 }
 
 impl App {
@@ -199,7 +203,9 @@ impl App {
         if !pressed {
             if let Some(i) = seat.forwarded.iter().position(|k| *k == key) {
                 seat.forwarded.remove(i);
-                Self::forward(seat, time, key, RELEASED);
+                if !self.keep_releases {
+                    Self::forward(seat, time, key, RELEASED);
+                }
             }
             return;
         }
@@ -423,6 +429,7 @@ delegate_noop!(App: ZwpVirtualKeyboardV1);
 fn main() -> anyhow::Result<()> {
     let mut color = 0xffff_00ff;
     let mut size = (120, 40);
+    let mut keep_releases = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -433,6 +440,7 @@ fn main() -> anyhow::Result<()> {
                 let (w, h) = v.split_once('x').context(USAGE)?;
                 size = (w.parse()?, h.parse()?);
             }
+            "--keep-releases" => keep_releases = true,
             "--log" => {
                 let dir =
                     std::env::var_os("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR is unset")?;
@@ -455,6 +463,7 @@ fn main() -> anyhow::Result<()> {
     let mut app = App {
         color,
         size,
+        keep_releases,
         ..App::default()
     };
     queue.roundtrip(&mut app)?;

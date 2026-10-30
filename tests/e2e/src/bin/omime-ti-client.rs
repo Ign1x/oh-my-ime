@@ -14,9 +14,13 @@
 //! text "HELLO "
 //! ```
 //!
-//! `text` follows every change. Options: `--purpose N` and `--hints N` set the content
+//! A key released prints `release "<keysym name>"`. `text` follows every change.
+//! Options: `--purpose N` and `--hints N` set the content
 //! type (8 = password), `--app-id ID` the window's app id and `--seat NAME` the seat
-//! whose keyboard and text input it uses (default: the first one).
+//! whose keyboard and text input it uses (default: the first one), and
+//! `--print-modifiers` adds a `modifiers DEPRESSED LATCHED LOCKED` line per change,
+//! and `held NAME...` after every key: the keys the window believes are held;
+//! with `--no-text-field` the window never enables text input, like a game.
 
 use std::io::Write as _;
 use std::os::fd::AsFd;
@@ -66,6 +70,13 @@ struct App {
     text: String,
     pending: Pending,
     configured: bool,
+    /// Print `modifiers DEPRESSED LATCHED LOCKED` for every modifier change.
+    print_modifiers: bool,
+    /// Keys pressed and not released, as far as the window knows.
+    held: std::collections::BTreeSet<u32>,
+    /// Whether the window is a text field; without one (`--no-text-field`) it is like
+    /// a game or a web page, which takes keys but no input method.
+    text_field: bool,
 }
 
 fn emit(line: &str) {
@@ -233,6 +244,41 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        // The keys the window believes are held, for `--print-modifiers`.
+        match &event {
+            wl_keyboard::Event::Enter { keys, .. } => {
+                app.held = keys
+                    .chunks_exact(4)
+                    .map(|k| u32::from_ne_bytes([k[0], k[1], k[2], k[3]]))
+                    .collect();
+            }
+            wl_keyboard::Event::Leave { .. } => app.held.clear(),
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(state),
+                ..
+            } => {
+                if *state == wl_keyboard::KeyState::Pressed {
+                    app.held.insert(*key);
+                } else {
+                    app.held.remove(key);
+                }
+                if app.print_modifiers {
+                    let names: Vec<String> = app
+                        .held
+                        .iter()
+                        .map(|k| match &app.xkb_state {
+                            Some(xkb) => {
+                                xkb::keysym_get_name(xkb.key_get_one_sym(xkb::Keycode::new(k + 8)))
+                            }
+                            None => k.to_string(),
+                        })
+                        .collect();
+                    emit(&format!("held {}", names.join(" ")));
+                }
+            }
+            _ => {}
+        }
         match event {
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
@@ -269,9 +315,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 group,
                 ..
             } => {
+                if app.print_modifiers {
+                    emit(&format!(
+                        "modifiers {mods_depressed} {mods_latched} {mods_locked}"
+                    ));
+                }
                 if let Some(state) = &mut app.xkb_state {
                     state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 }
+            }
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(wl_keyboard::KeyState::Released),
+                ..
+            } => {
+                let Some(xkb) = &app.xkb_state else { return };
+                let keysym = xkb.key_get_one_sym(xkb::Keycode::new(key + 8));
+                emit(&format!(
+                    "release {}",
+                    json_string(&xkb::keysym_get_name(keysym))
+                ));
             }
             wl_keyboard::Event::Key {
                 key,
@@ -315,6 +378,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for App {
     ) {
         use zwp_text_input_v3::Event as E;
         match event {
+            E::Enter { .. } if !app.text_field => {}
             E::Enter { .. } => {
                 ti.enable();
                 app.send_state();
@@ -375,6 +439,8 @@ fn main() -> anyhow::Result<()> {
     let mut hints = 0;
     let mut app_id = "io.github.ign1x.OhMyIme.TestEditor".to_owned();
     let mut seat_name = None;
+    let mut print_modifiers = false;
+    let mut text_field = true;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -382,6 +448,8 @@ fn main() -> anyhow::Result<()> {
             "--hints" => hints = args.next().context("--hints N")?.parse()?,
             "--app-id" => app_id = args.next().context("--app-id ID")?,
             "--seat" => seat_name = Some(args.next().context("--seat NAME")?),
+            "--print-modifiers" => print_modifiers = true,
+            "--no-text-field" => text_field = false,
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -406,6 +474,9 @@ fn main() -> anyhow::Result<()> {
         text: String::new(),
         pending: Pending::default(),
         configured: false,
+        print_modifiers,
+        text_field,
+        held: std::collections::BTreeSet::new(),
     };
     queue.roundtrip(&mut app)?;
     // Seat names arrive after the binds.

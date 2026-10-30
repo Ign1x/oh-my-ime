@@ -357,6 +357,15 @@ impl SeatSession {
         for key in self.keys.take_forwarded() {
             self.vk.send_key(time, key, KEY_STATE_RELEASED);
         }
+        // The virtual keyboard holds the modifiers it last passed on, say Ctrl when the
+        // field is left with Ctrl+W. Hyprland merges the state of all keyboards and skips
+        // an input method's virtual keyboard only while it holds a grab: left alone, the
+        // modifiers would stay held for every application until the next text field.
+        // The real keyboards tell applications their state again.
+        if self.vk_keymap.is_some() {
+            let group = self.keyboard.modifiers().group;
+            self.vk.send_modifiers(0, 0, 0, group);
+        }
         grab.unset_handler();
         grab.send_release();
         debug!(seat = self.name, "keyboard released");
@@ -520,10 +529,13 @@ impl SeatSession {
         }
         let code = key.keycode;
         if key.released {
-            // A press the input method forwarded is released when it forwards the
-            // release; until then, the application holds the key.
-            if !self.keys.is_forwarded(code) {
-                self.keys.release(code);
+            // The key is up: an application holding a press the input method forwarded
+            // gets the release now, whether or not the input method forwards one too
+            // (input methods may keep releases of keys that were part of a hotkey).
+            let held = self.keys.is_forwarded(code);
+            self.keys.release(code);
+            if held {
+                self.send_key(key.time, code, KEY_STATE_RELEASED);
             }
         } else if !key.repeat {
             self.keys.press_consumed(code);
@@ -574,6 +586,10 @@ impl SeatSession {
                         self.keys.press_forwarded(*keycode);
                         KEY_STATE_PRESSED
                     } else {
+                        // Released already when the key went up, or never pressed.
+                        if !self.keys.is_forwarded(*keycode) {
+                            continue;
+                        }
                         self.keys.release(*keycode);
                         KEY_STATE_RELEASED
                     };

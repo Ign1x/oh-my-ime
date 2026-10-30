@@ -113,6 +113,21 @@ fn hosted_input_methods_switch_with_other_engines() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn keys_the_input_method_forwarded_are_released_with_the_real_key() -> anyhow::Result<()> {
+    // The input method forwards presses but keeps every release, as Fcitx 5 does for
+    // keys that were part of a hotkey.
+    let env = TestEnv::start(&[hosted_engine(&["--keep-releases"])], Some("hosted"))?;
+    let editor = env.editor(&[])?;
+    env.wait_for_hosted("the input method to be activated", |l| l == "activate")?;
+    env.type_text("1")?;
+    editor.wait_for("the key", |l| l == "key \"1\"")?;
+    // The application must not hold the key until the field is left.
+    editor.wait_for("its release", |l| l == "release \"1\"")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn a_crashing_hosted_input_method_is_restarted() -> anyhow::Result<()> {
     let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
     let editor = env.editor(&[])?;

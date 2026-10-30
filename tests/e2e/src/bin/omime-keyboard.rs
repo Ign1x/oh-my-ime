@@ -3,6 +3,7 @@
 //! ```text
 //! omime-keyboard [--seat NAME]               # exists until it is killed
 //! omime-keyboard [--seat NAME] --type TEXT   # types TEXT and exits
+//! omime-keyboard [--seat NAME] --hold-ctrl MS  # holds Ctrl for MS ms, then exits
 //! ```
 //!
 //! The test compositor has no physical keyboard. A seat without any keyboard loses its
@@ -13,6 +14,8 @@
 //!
 //! With `--type`, it types lowercase letters, digits and spaces on the seat given,
 //! which wtype cannot do: it always uses the last seat the compositor announces.
+//! `--hold-ctrl` presses Ctrl, waits, releases it and stays a second longer, so that
+//! a test can move the focus while Ctrl is held.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -106,11 +109,16 @@ fn keycode(c: char) -> Option<u32> {
 fn main() -> anyhow::Result<()> {
     let mut seat_name = None;
     let mut text = None;
+    let mut hold_ctrl = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--seat" => seat_name = Some(args.next().context("--seat NAME")?),
             "--type" => text = Some(args.next().context("--type TEXT")?),
+            "--hold-ctrl" => {
+                let ms: u64 = args.next().context("--hold-ctrl MS")?.parse()?;
+                hold_ctrl = Some(Duration::from_millis(ms));
+            }
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -162,7 +170,7 @@ fn main() -> anyhow::Result<()> {
     keyboard.keymap(KEYMAP_FORMAT_XKB_V1, file.as_fd(), keymap.len() as u32 + 1);
     queue.roundtrip(&mut app)?;
 
-    if text.is_none() {
+    if text.is_none() && hold_ctrl.is_none() {
         println!("ready");
         loop {
             queue.blocking_dispatch(&mut app)?;
@@ -170,6 +178,23 @@ fn main() -> anyhow::Result<()> {
     }
     let start = Instant::now();
     let now = || u32::try_from(start.elapsed().as_millis()).unwrap_or(u32::MAX);
+    if let Some(hold) = hold_ctrl {
+        // Virtual keyboards report modifiers themselves: Control is mask 4 in the us
+        // keymap.
+        const LEFT_CTRL: u32 = 29;
+        keyboard.key(now(), LEFT_CTRL, PRESSED);
+        keyboard.modifiers(4, 0, 0, 0);
+        queue.roundtrip(&mut app)?;
+        println!("ctrl down");
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(hold);
+        keyboard.key(now(), LEFT_CTRL, RELEASED);
+        keyboard.modifiers(0, 0, 0, 0);
+        queue.roundtrip(&mut app)?;
+        println!("ctrl up");
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(Duration::from_secs(1));
+    }
     for key in keys {
         keyboard.key(now(), key, PRESSED);
         keyboard.key(now(), key, RELEASED);
