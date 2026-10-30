@@ -41,6 +41,11 @@ the design looks the way it does.
    after the input method commits. The input method must therefore commit after every `done`,
    re-sending its current preedit.
 9. **XWayland has no text-input support.** X11 clients need XIM or GTK/Qt IM modules.
+10. **Hyprland merges the state of all keyboards** (`input:virtualkeyboard:share_states`).
+    It leaves an input method's virtual keyboard out only while the input method holds a
+    grab. With `share_states = 1` it merges it the rest of the time, so a modifier the
+    virtual keyboard still holds stays held for every application. With 2, the default, it
+    stops merging a virtual keyboard once it has seen it under its input method's grab.
 
 ## Processes
 
@@ -63,8 +68,9 @@ For each `wl_seat`, `omimed` binds a `zwp_input_method_v2` and keeps an input co
   sensitive (password, PIN, `sensitive_data`, `hidden_text`), no keyboard grab is taken and keys
   never pass through the daemon. Otherwise the daemon grabs the keyboard.
 - **Grab lifetime.** The grab is held only while the context is active. Before releasing it,
-  the daemon releases every key it still holds on its virtual keyboard. A new grab is created
-  only after the old one is destroyed.
+  the daemon releases every key it still holds on its virtual keyboard; afterwards it
+  destroys the virtual keyboard, which lives only as long as the grab (see 10 above). A new
+  grab is created only after the old one is destroyed.
 - **Keys.** Grab events are decoded with xkbcommon (keysym, UTF-8, modifiers). Hotkeys are
   handled first. The remaining keys go to the active engine, whose reply decides whether the key
   is consumed or forwarded through the virtual keyboard. Releases of keys whose press was not

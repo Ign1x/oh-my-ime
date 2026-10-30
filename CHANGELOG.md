@@ -20,6 +20,14 @@ All notable changes to this project are documented here. The format follows
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
 
+### Fixed
+
+- On Hyprland with `input:virtualkeyboard:share_states = 1`, leaving a text field with
+  Ctrl held (Ctrl+W, Ctrl+Tab, a click elsewhere) no longer leaves Ctrl held for every
+  application until the next text field. omimed's virtual keyboard now lives only as
+  long as its keyboard grab, as Fcitx 5's does: Hyprland merges an input method's
+  virtual keyboard into the state of all keyboards once the grab ends.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

@@ -1,7 +1,7 @@
 //! One seat's input method session.
 //!
-//! The session owns the seat's `zwp_input_method_v2`, keyboard grab and virtual
-//! keyboard. It reports focus changes and keys to the core as [`FrontendEvent`]s and
+//! The session owns the seat's `zwp_input_method_v2`, keyboard grab and, while it
+//! holds the grab, a virtual keyboard. It reports focus changes and keys to the core as [`FrontendEvent`]s and
 //! carries out the core's decisions: forwarding or swallowing keys and applying the
 //! actions engines ask for.
 
@@ -75,7 +75,10 @@ pub struct SeatSession {
     /// The compositor repeats keys itself; don't synthesise repeats then.
     compositor_repeats: bool,
 
-    vk: Rc<ZwpVirtualKeyboardV1>,
+    vk_manager: Rc<ZwpVirtualKeyboardManagerV1>,
+    /// The virtual keyboard keys and modifiers reach the application through. It
+    /// lives as long as the grab: see [`Self::release_grab`].
+    vk: Option<Rc<ZwpVirtualKeyboardV1>>,
     /// The keymap last uploaded to the virtual keyboard. Nothing may be sent to the
     /// virtual keyboard before a keymap: that is a fatal protocol error.
     vk_keymap: Option<String>,
@@ -107,8 +110,6 @@ impl SeatSession {
         queue: EventQueue,
         outputs: Outputs,
     ) -> Self {
-        let vk = vk_manager.new_send_create_virtual_keyboard(&seat);
-        vk.set_forward_to_client(false);
         let mut session = Self {
             id,
             name: format!("seat#{id}"),
@@ -127,7 +128,8 @@ impl SeatSession {
             held: std::collections::BTreeSet::new(),
             repeat: None,
             compositor_repeats: false,
-            vk,
+            vk_manager: vk_manager.clone(),
+            vk: None,
             vk_keymap: None,
             preedit: Preedit::default(),
             app_id: None,
@@ -335,6 +337,10 @@ impl SeatSession {
 
     fn take_grab(&mut self) {
         let Some(im) = &self.im else { return };
+        let vk = self.vk_manager.new_send_create_virtual_keyboard(&self.seat);
+        vk.set_forward_to_client(false);
+        self.vk = Some(vk);
+        self.vk_keymap = None;
         self.grab_generation = self.grab_generation.wrapping_add(1);
         let grab = im.new_send_grab_keyboard();
         grab.set_forward_to_client(false);
@@ -347,27 +353,37 @@ impl SeatSession {
         debug!(seat = self.name, "keyboard grabbed");
     }
 
-    /// Releases the grab. Keys the application still sees as pressed are released on
-    /// the virtual keyboard first; afterwards their real releases would bypass us.
+    /// Releases the grab and destroys the virtual keyboard. Keys the application still
+    /// sees as pressed are released on the virtual keyboard first; afterwards their
+    /// real releases would bypass us.
     fn release_grab(&mut self) {
         let Some(grab) = self.grab.take() else { return };
         self.repeat = None;
         self.held.clear();
         let time = now_ms();
-        for key in self.keys.take_forwarded() {
-            self.vk.send_key(time, key, KEY_STATE_RELEASED);
-        }
-        // The virtual keyboard holds the modifiers it last passed on, say Ctrl when the
-        // field is left with Ctrl+W. Hyprland merges the state of all keyboards and skips
-        // an input method's virtual keyboard only while it holds a grab: left alone, the
-        // modifiers would stay held for every application until the next text field.
-        // The real keyboards tell applications their state again.
-        if self.vk_keymap.is_some() {
-            let group = self.keyboard.modifiers().group;
-            self.vk.send_modifiers(0, 0, 0, group);
+        let forwarded = self.keys.take_forwarded();
+        if let Some(vk) = &self.vk
+            && self.vk_keymap.is_some()
+        {
+            for key in forwarded {
+                vk.send_key(time, key, KEY_STATE_RELEASED);
+            }
         }
         grab.unset_handler();
         grab.send_release();
+        // The virtual keyboard holds the modifiers it last passed on, say Ctrl when the
+        // field is left with Ctrl+W. Hyprland merges the state of all keyboards and
+        // skips an input method's virtual keyboard only while the input method holds a
+        // grab: with `share_states = 1`, a Ctrl kept after the grab would stay held for
+        // every application, whatever the real keyboards do. Telling the virtual
+        // keyboard that nothing is held is no better: the focused application would
+        // take Ctrl as released while the user still holds it. Gone, the keyboard holds
+        // nothing, and applications keep the true state until the real keyboards
+        // change it. Fcitx 5 does the same.
+        if let Some(vk) = self.vk.take() {
+            vk.send_destroy();
+        }
+        self.vk_keymap = None;
         debug!(seat = self.name, "keyboard released");
     }
 
@@ -404,8 +420,10 @@ impl SeatSession {
                 self.keyboard.set_modifiers(modifiers);
                 // While we hold the grab, the application only learns about modifier
                 // changes through our virtual keyboard.
-                if self.sync_vk_keymap() {
-                    self.vk.send_modifiers(
+                if self.sync_vk_keymap()
+                    && let Some(vk) = &self.vk
+                {
+                    vk.send_modifiers(
                         modifiers.depressed,
                         modifiers.latched,
                         modifiers.locked,
@@ -627,19 +645,24 @@ impl SeatSession {
     }
 
     fn send_key(&mut self, time: u32, key: u32, state: u32) {
-        if self.sync_vk_keymap() {
-            self.vk.send_key(time, key, state);
+        if self.sync_vk_keymap()
+            && let Some(vk) = &self.vk
+        {
+            vk.send_key(time, key, state);
         } else {
             warn!(
                 seat = self.name,
-                "dropping a key: no keymap for the virtual keyboard yet"
+                "dropping a key: no virtual keyboard with a keymap"
             );
         }
     }
 
     /// Uploads the grab's keymap to the virtual keyboard if it changed. Returns whether
-    /// the virtual keyboard has a keymap and may receive keys and modifiers.
+    /// there is a virtual keyboard with a keymap, which may receive keys and modifiers.
     fn sync_vk_keymap(&mut self) -> bool {
+        let Some(vk) = self.vk.clone() else {
+            return false;
+        };
         let Some(text) = self.keyboard.keymap_text() else {
             return self.vk_keymap.is_some();
         };
@@ -648,12 +671,10 @@ impl SeatSession {
         }
         match keyboard::keymap_memfd(text) {
             Ok((fd, size)) => {
-                self.vk
-                    .send_keymap(KEYMAP_FORMAT_XKB_V1, &Rc::new(fd), size);
+                vk.send_keymap(KEYMAP_FORMAT_XKB_V1, &Rc::new(fd), size);
                 self.vk_keymap = Some(text.to_owned());
                 let m = self.keyboard.modifiers();
-                self.vk
-                    .send_modifiers(m.depressed, m.latched, m.locked, m.group);
+                vk.send_modifiers(m.depressed, m.latched, m.locked, m.group);
                 true
             }
             Err(e) => {
@@ -671,7 +692,6 @@ impl SeatSession {
             im.unset_handler();
             im.send_destroy();
         }
-        self.vk.send_destroy();
     }
 }
 

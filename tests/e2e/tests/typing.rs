@@ -6,7 +6,7 @@
 //! cargo build --workspace && cargo test -p omime-e2e -- --ignored
 //! ```
 
-use omime_e2e::harness::{TestEnv, echo_engine};
+use omime_e2e::harness::{TestEnv, echo_engine, wait_until};
 
 #[test]
 #[ignore = "end-to-end test; see the module docs"]
@@ -169,5 +169,51 @@ fn sparkle_inserts_emoji_with_keys_and_clicks() -> anyhow::Result<()> {
         text.starts_with('🚀') && text.chars().count() == 2,
         "{text:?}"
     );
+    Ok(())
+}
+
+/// How many virtual keyboards sway has.
+fn virtual_keyboards(env: &TestEnv) -> anyhow::Result<usize> {
+    let output = env.command("swaymsg").args(["-t", "get_inputs"]).output()?;
+    anyhow::ensure!(output.status.success(), "swaymsg failed");
+    Ok(String::from_utf8(output.stdout)?
+        .matches("\"name\": \"wlr_virtual_keyboard_v1\"")
+        .count())
+}
+
+/// Waits until sway has `count` virtual keyboards.
+fn wait_for_virtual_keyboards(env: &TestEnv, count: usize) -> anyhow::Result<()> {
+    wait_until(&format!("{count} virtual keyboards"), || {
+        virtual_keyboards(env).ok().filter(|&n| n == count)
+    })?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn no_virtual_keyboard_outlives_the_grab() -> anyhow::Result<()> {
+    // Hyprland merges the state of all keyboards, an input method's virtual keyboard
+    // included once the input method holds no grab. A virtual keyboard kept after the
+    // grab could hold a modifier, say Ctrl after leaving a field with Ctrl+W, for
+    // every application.
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    let editor = env.editor(&[])?;
+    env.type_text("ab ")?;
+    editor.wait_for_text("AB ")?;
+    // The test's own keyboard, which plays the physical one, and omimed's.
+    wait_for_virtual_keyboards(&env, 2)?;
+
+    let released = env.count_in_log("keyboard released");
+    let _other = env.spawn_editor(&["--app-id", "other", "--no-text-field"])?;
+    wait_until("omimed to release the keyboard", || {
+        (env.count_in_log("keyboard released") > released).then_some(())
+    })?;
+    wait_for_virtual_keyboards(&env, 1)?;
+
+    // Back in the field, omimed types through a new one.
+    env.focus("io.github.ign1x.OhMyIme.TestEditor")?;
+    wait_for_virtual_keyboards(&env, 2)?;
+    env.type_text("cd ")?;
+    editor.wait_for_text("AB CD ")?;
     Ok(())
 }

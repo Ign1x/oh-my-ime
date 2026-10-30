@@ -24,7 +24,8 @@ use crate::parse_json_string;
 /// How long to wait for anything to happen.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
-fn wait_until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> anyhow::Result<T> {
+/// Calls `f` until it returns a value, for at most [`TIMEOUT`].
+pub fn wait_until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> anyhow::Result<T> {
     let deadline = Instant::now() + TIMEOUT;
     loop {
         if let Some(value) = f() {
