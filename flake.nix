@@ -44,8 +44,8 @@
               xwayland
               wtype
               grim
-              # The hosting tests run the real Fcitx 5.
-              fcitx5
+              # The hosting tests run the real Fcitx 5, with pinyin.
+              (qt6Packages.fcitx5-with-addons.override { addons = [ qt6Packages.fcitx5-chinese-addons ]; })
             ])
             ++ extraPackages;
 
