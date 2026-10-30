@@ -4,6 +4,7 @@
 //! omime-keyboard [--seat NAME]               # exists until it is killed
 //! omime-keyboard [--seat NAME] --type TEXT   # types TEXT and exits
 //! omime-keyboard [--seat NAME] --hold-ctrl MS  # holds Ctrl for MS ms, then exits
+//! omime-keyboard [--seat NAME] --script      # plays a physical keyboard, from stdin
 //! ```
 //!
 //! The test compositor has no physical keyboard. A seat without any keyboard loses its
@@ -16,6 +17,12 @@
 //! which wtype cannot do: it always uses the last seat the compositor announces.
 //! `--hold-ctrl` presses Ctrl, waits, releases it and stays a second longer, so that
 //! a test can move the focus while Ctrl is held.
+//!
+//! `--script` reads lines from stdin: `press KEY`, `release KEY`, `tap KEY` and
+//! `sleep MS`, where KEY is a letter, a digit, `space`, `return`, `escape`, `tab`,
+//! `ctrl`, `shift`, `alt`, `super` or an evdev key code. Like a physical keyboard, it presses modifiers as keys and
+//! reports the modifiers they leave. It answers every line with `ok` once the
+//! compositor has it.
 
 use std::io::Write as _;
 use std::os::fd::AsFd as _;
@@ -106,8 +113,30 @@ fn keycode(c: char) -> Option<u32> {
     }
 }
 
+/// The evdev key code of a key named in a script.
+fn named_key(name: &str) -> Option<u32> {
+    match name {
+        "ctrl" => Some(29),
+        "shift" => Some(42),
+        "alt" => Some(56),
+        "super" => Some(125),
+        "space" => Some(57),
+        "return" => Some(28),
+        "escape" => Some(1),
+        "tab" => Some(15),
+        _ => {
+            let mut chars = name.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if keycode(c).is_some() => keycode(c),
+                _ => name.parse().ok(),
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let mut seat_name = None;
+    let mut script = false;
     let mut text = None;
     let mut hold_ctrl = None;
     let mut args = std::env::args().skip(1);
@@ -119,6 +148,7 @@ fn main() -> anyhow::Result<()> {
                 let ms: u64 = args.next().context("--hold-ctrl MS")?.parse()?;
                 hold_ctrl = Some(Duration::from_millis(ms));
             }
+            "--script" => script = true,
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -150,7 +180,7 @@ fn main() -> anyhow::Result<()> {
         .context("the compositor has no zwp_virtual_keyboard_manager_v1")?;
 
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_names(
+    let xkb_keymap = xkb::Keymap::new_from_names(
         &context,
         "",
         "pc105",
@@ -159,8 +189,8 @@ fn main() -> anyhow::Result<()> {
         None,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
-    .context("cannot compile the us keymap")?
-    .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+    .context("cannot compile the us keymap")?;
+    let keymap = xkb_keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
     let fd = rustix::fs::memfd_create("omime-keyboard", rustix::fs::MemfdFlags::CLOEXEC)?;
     let mut file = std::fs::File::from(fd);
     file.write_all(keymap.as_bytes())?;
@@ -170,6 +200,52 @@ fn main() -> anyhow::Result<()> {
     keyboard.keymap(KEYMAP_FORMAT_XKB_V1, file.as_fd(), keymap.len() as u32 + 1);
     queue.roundtrip(&mut app)?;
 
+    if script {
+        let mut state = xkb::State::new(&xkb_keymap);
+        let start = Instant::now();
+        println!("ready");
+        let _ = std::io::stdout().flush();
+        for line in std::io::stdin().lines() {
+            let line = line?;
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words.as_slice() {
+                [] => continue,
+                ["sleep", ms] => std::thread::sleep(Duration::from_millis(ms.parse()?)),
+                [action @ ("press" | "release" | "tap"), name] => {
+                    let code = named_key(name).with_context(|| format!("no key {name:?}"))?;
+                    let states: &[bool] = match *action {
+                        "press" => &[true],
+                        "release" => &[false],
+                        _ => &[true, false],
+                    };
+                    for &pressed in states {
+                        let time = u32::try_from(start.elapsed().as_millis()).unwrap_or(0);
+                        keyboard.key(time, code, if pressed { PRESSED } else { RELEASED });
+                        let direction = if pressed {
+                            xkb::KeyDirection::Down
+                        } else {
+                            xkb::KeyDirection::Up
+                        };
+                        if state.update_key(xkb::Keycode::new(code + 8), direction) != 0 {
+                            keyboard.modifiers(
+                                state.serialize_mods(xkb::STATE_MODS_DEPRESSED),
+                                state.serialize_mods(xkb::STATE_MODS_LATCHED),
+                                state.serialize_mods(xkb::STATE_MODS_LOCKED),
+                                state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
+                            );
+                        }
+                    }
+                }
+                _ => bail!("cannot read the script line {line:?}"),
+            }
+            queue.roundtrip(&mut app)?;
+            println!("ok");
+            let _ = std::io::stdout().flush();
+        }
+        keyboard.destroy();
+        queue.roundtrip(&mut app)?;
+        return Ok(());
+    }
     if text.is_none() && hold_ctrl.is_none() {
         println!("ready");
         loop {

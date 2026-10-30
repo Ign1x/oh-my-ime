@@ -324,6 +324,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 }
                 if let Some(state) = &mut app.xkb_state {
                     state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                    if app.print_modifiers {
+                        // What the modifiers mean in the keymap this client was given.
+                        let keymap = state.get_keymap();
+                        let active: Vec<String> = (0..keymap.num_mods())
+                            .filter(|&i| state.mod_index_is_active(i, xkb::STATE_MODS_EFFECTIVE))
+                            .map(|i| keymap.mod_get_name(i).to_owned())
+                            .collect();
+                        emit(&format!("active {}", active.join(",")));
+                    }
                 }
             }
             wl_keyboard::Event::Key {
