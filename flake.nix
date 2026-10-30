@@ -44,6 +44,8 @@
               xwayland
               wtype
               grim
+              # The hosting tests run the real Fcitx 5.
+              fcitx5
             ])
             ++ extraPackages;
 

@@ -62,6 +62,8 @@ pub struct TestEngine {
     pub id: &'static str,
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// Whether the engine is a Wayland input method that omimed hosts.
+    pub hosted: bool,
 }
 
 /// The `sparkle` engine from `engines/sparkle`.
@@ -70,6 +72,7 @@ pub fn sparkle_engine() -> TestEngine {
         id: "sparkle",
         program: program_dir().join("omime-sparkle"),
         args: Vec::new(),
+        hosted: false,
     }
 }
 
@@ -79,6 +82,7 @@ pub fn echo_engine() -> TestEngine {
         id: "echo",
         program: program_dir().join("omime-echo"),
         args: Vec::new(),
+        hosted: false,
     }
 }
 
@@ -88,6 +92,23 @@ pub fn dummy_engine(args: &[&str]) -> TestEngine {
         id: "dummy",
         program: target_dir().join("omime-dummy-ui"),
         args: args.iter().map(|a| (*a).to_owned()).collect(),
+        hosted: false,
+    }
+}
+
+/// The file `omime-im-client` reports to, in the environment's directory.
+pub const HOSTED_LOG: &str = "hosted.log";
+
+/// `omime-im-client`, a Wayland input method that omimed hosts as the engine
+/// `hosted`. It composes like `echo` and reports to [`HOSTED_LOG`].
+pub fn hosted_engine(args: &[&str]) -> TestEngine {
+    let mut all = vec!["--log".to_owned(), HOSTED_LOG.to_owned()];
+    all.extend(args.iter().map(|a| (*a).to_owned()));
+    TestEngine {
+        id: "hosted",
+        program: target_dir().join("omime-im-client"),
+        args: all,
+        hosted: true,
     }
 }
 
@@ -155,10 +176,15 @@ impl TestEnv {
             let mut exec = vec![engine.program.display().to_string()];
             exec.extend(engine.args.iter().cloned());
             let exec: Vec<String> = exec.iter().map(|a| format!("{a:?}")).collect();
+            let protocol = if engine.hosted {
+                "protocol = \"input-method-v2\""
+            } else {
+                "api = \"1.0\""
+            };
             std::fs::write(
                 path.join("engine.toml"),
                 format!(
-                    "[engine]\nid = \"{}\"\nname = \"{}\"\nexec = [{}]\napi = \"1.0\"\n",
+                    "[engine]\nid = \"{}\"\nname = \"{}\"\nexec = [{}]\n{protocol}\n",
                     engine.id,
                     engine.id,
                     exec.join(", ")
@@ -404,6 +430,27 @@ impl TestEnv {
                     .parse()
                     .ok()
             })
+    }
+
+    /// What `omime-im-client` reported so far (see [`hosted_engine`]).
+    pub fn hosted_lines(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.join(HOSTED_LOG))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Waits until `omime-im-client` reports a line matching `pred`, and returns it.
+    pub fn wait_for_hosted(
+        &self,
+        what: &str,
+        pred: impl Fn(&str) -> bool,
+    ) -> anyhow::Result<String> {
+        wait_until(what, || {
+            self.hosted_lines().into_iter().find(|line| pred(line))
+        })
+        .with_context(|| format!("the hosted input method said: {:?}", self.hosted_lines()))
     }
 
     /// How often omimed's log contains `needle`.
