@@ -14,9 +14,11 @@
 
 mod keymap;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::os::fd::AsFd as _;
 use std::rc::Rc;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -53,6 +55,9 @@ const XIM_SYNC_REPLY: u8 = 62;
 /// How long to wait for an application to consume a commit or key before sending the
 /// next one anyway.
 const SYNC_TIMEOUT: Duration = Duration::from_millis(300);
+/// How long omimed waits for the X server when it starts. Later attempts do not wait:
+/// they would hold up keyboard input.
+pub const STARTUP_CONNECT_WAIT: Duration = Duration::from_secs(3);
 /// X11 event codes.
 const KEY_PRESS: u8 = 2;
 const KEY_RELEASE: u8 = 3;
@@ -372,10 +377,10 @@ impl std::fmt::Debug for XimFrontend {
 }
 
 impl XimFrontend {
-    /// Connects to the X server and registers the XIM server [`SERVER_NAME`].
-    pub fn connect(context_ids: ContextIds) -> anyhow::Result<Self> {
-        let (conn, screen) =
-            RustConnection::connect(None).context("cannot connect to the X server")?;
+    /// Connects to the X display in `$DISPLAY` and registers the XIM server
+    /// [`SERVER_NAME`], waiting at most `wait` for the X server to answer.
+    pub fn connect(context_ids: ContextIds, wait: Duration) -> anyhow::Result<Self> {
+        let (conn, screen) = connect_display(wait)?;
         let keymap = Keymap::load(&conn).context("cannot read the keyboard mapping")?;
         let xim_protocol = conn.intern_atom(false, b"_XIM_PROTOCOL")?.reply()?.atom;
         let root = conn
@@ -723,6 +728,41 @@ impl XimFrontend {
         for request in requests {
             self.send(client_win, request, false);
         }
+    }
+}
+
+type Connected = Result<(RustConnection, usize), x11rb::errors::ConnectError>;
+
+thread_local! {
+    /// A connection attempt that did not finish in time. The next attempt waits for it
+    /// instead of starting another.
+    static PENDING_CONNECT: RefCell<Option<Receiver<Connected>>> = const { RefCell::new(None) };
+}
+
+/// Connects to the X display in `$DISPLAY`, waiting at most `wait`. An X server that
+/// accepts the connection but never answers would block the whole daemon, keyboard input
+/// included; the attempt is left to itself instead, and fails here to be checked again
+/// later.
+fn connect_display(wait: Duration) -> anyhow::Result<(RustConnection, usize)> {
+    let receiver = match PENDING_CONNECT.take() {
+        Some(receiver) => receiver,
+        None => {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::Builder::new()
+                .name("x11-connect".into())
+                .spawn(move || {
+                    let _ = sender.send(RustConnection::connect(None));
+                })?;
+            receiver
+        }
+    };
+    match receiver.recv_timeout(wait) {
+        Ok(connected) => connected.context("cannot connect to the X server"),
+        Err(RecvTimeoutError::Timeout) => {
+            PENDING_CONNECT.set(Some(receiver));
+            anyhow::bail!("the X server does not answer")
+        }
+        Err(RecvTimeoutError::Disconnected) => anyhow::bail!("cannot connect to the X server"),
     }
 }
 

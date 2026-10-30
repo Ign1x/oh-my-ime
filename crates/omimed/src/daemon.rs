@@ -25,7 +25,7 @@ use crate::frontend::{ContextIds, Frontends, KeyRef, Origin};
 use crate::placement::{self, Rect};
 use crate::state::State;
 use crate::wayland::{EngineId, Frontend};
-use crate::xim::XimFrontend;
+use crate::xim::{self, XimFrontend};
 
 /// Options for [`run`].
 #[derive(Debug, Default)]
@@ -146,7 +146,7 @@ impl Daemon {
         let (fcitx_tx, fcitx_rx) = mpsc::unbounded_channel();
         let fcitx = FcitxFrontend::new(fcitx::start(fcitx_tx).await, context_ids.clone());
         let (xim, xim_retry) = if std::env::var_os("DISPLAY").is_some() {
-            match XimFrontend::connect(context_ids.clone()) {
+            match XimFrontend::connect(context_ids.clone(), xim::STARTUP_CONNECT_WAIT) {
                 Ok(xim) => (Some(xim), None),
                 Err(e) => {
                     warn!("XIM is not available yet: {e:#}");
@@ -379,7 +379,7 @@ impl Daemon {
         let Some((_, wait)) = self.xim_retry else {
             return;
         };
-        match XimFrontend::connect(self.context_ids.clone()) {
+        match XimFrontend::connect(self.context_ids.clone(), Duration::ZERO) {
             Ok(xim) => {
                 self.xim = Some(xim);
                 self.xim_retry = None;
