@@ -127,6 +127,41 @@ polling:
 }
 ```
 
+### Fcitx 5 as an engine
+
+Fcitx 5 can run inside oh-my-ime as one engine, unmodified and with all its input methods
+and addons: omimed starts it, gives it a private session bus and an input method of its
+own, and shows its candidate window at the text cursor like any engine's. `fcitx5` must be
+installed, and must not run on its own (step 2). Install the manifest the repository
+ships (the Nix package has it at `share/oh-my-ime/extra-engines/fcitx5`):
+
+```sh
+omime install /path/to/oh-my-ime/data/engines/fcitx5
+omime switch fcitx5
+```
+
+Or write `~/.local/share/oh-my-ime/engines/fcitx5/engine.toml` yourself:
+
+```toml
+[engine]
+id = "fcitx5"
+name = "Fcitx 5"
+exec = ["fcitx5"]
+protocol = "input-method-v2"
+```
+
+Fcitx 5 keeps its configuration in `~/.config/fcitx5` as usual. Its configuration tool
+talks to it over D-Bus, so point it at the private bus:
+
+```sh
+DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
+```
+
+Switch with omimed's hotkeys and `omime switch`, not with Fcitx 5's trigger key: omimed
+takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles itself, such as
+`Ctrl+Shift` between its input methods, keep working. Only the popups of Fcitx 5 are
+shown; windows of other kinds would need a display of their own.
+
 ## Which applications work
 
 oh-my-ime reaches Wayland applications through the compositor's text-input protocol, and

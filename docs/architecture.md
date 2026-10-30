@@ -195,11 +195,44 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.
 
+## Hosted input methods
+
+An unmodified Wayland input method, such as Fcitx 5, runs as an engine when its manifest
+says `protocol = "input-method-v2"`. It has no engine-protocol socket: it connects to its
+bridge socket like the UI of any engine, and its registry shows two globals more, a
+virtual `zwp_input_method_manager_v2` and a virtual `zwp_virtual_keyboard_manager_v1`,
+both answered by the bridge.
+
+- **Activation.** The core activates the virtual input method for a text field as a
+  compositor would: `activate`, the field's surrounding text and content type, `done`.
+  Every key goes to the input method's keyboard grab with the modifiers it was typed
+  with, so a batch of keys arrives in order. The grab gets the keymap and repeat rate of
+  the seat (no repeats for X11 fields; the X server repeats their keys). What the input
+  method does to the field (`commit_string`, `set_preedit_string`,
+  `delete_surrounding_text`, then `commit`) comes back as engine actions; a commit whose
+  serial is from before the field was activated is dropped.
+- **Keys it does not want.** An input method forwards them through its virtual keyboard.
+  The bridge turns them into `ForwardKey` actions, so omimed's own virtual keyboard
+  stays the only one the compositor sees, and keeps track of what the application holds.
+  Keys wait up to a second for a hosted engine that is still starting, or has not grabbed
+  the keyboard yet, then pass through.
+- **X11 fields.** Fields of XIM and Fcitx5-module applications use the input method of
+  any seat. XIM passes only presses, so each delivered key is released right away, and
+  modifier keys stay with the application: an input method would take a lone Shift for
+  a tap.
+- **Windows.** The input method's popup surfaces are engine windows, shown as input
+  popups or on a mirror, and the text cursor rectangle reaches it through its popup
+  role. Other windows of the input method (toplevels) cannot be shown.
+- **Process.** omimed starts the input method on a private session bus, a `dbus-daemon`
+  without service activation in the engine's runtime directory, so that it cannot take
+  `org.fcitx.Fcitx5` on the user's bus from omimed's Fcitx5 frontend. It gets the
+  `WAYLAND_DISPLAY` of its bridge socket and no `DISPLAY`. Engines get SIGTERM when
+  omimed exits, even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted input methods
+  up to two seconds to save their state. One input method per seat: a second
+  `get_input_method` gets `unavailable`.
+
 ## Compatibility layers (planned)
 
-- **Virtual `input-method-v2`:** the bridge can offer a virtual input method to a hosted client.
-  This lets unmodified Fcitx5, IBus (≥ 1.5.32) and other input-method-v2 programs run as one
-  oh-my-ime engine with their own UI.
 - **Per-engine hosts:** an IBus engine host (private bus, component discovery, Factory/Engine
   translation) and a Fcitx5 addon host (C++, libFcitx5Core).
 

@@ -130,7 +130,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Nix package with the systemd user unit | ✅ |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
 | Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
-| Hosting unmodified Fcitx5 / IBus (≥ 1.5.32) via a virtual `input-method-v2` | 📅 Phase 3 · 🧩 compat |
+| Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5, tested on sway · 🧩 compat (IBus ≥ 1.5.32 untested) |
 | Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
 
 ✅ native support · 🧩 compatibility layer · 🚧 in progress · 📅 planned
@@ -205,15 +205,17 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    validation, Nix package, Chinese guides ✅ → `v0.2.0`
 4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅ →
    `v0.3.0`
-5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2`
+5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
+   (not released yet)
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
 7. **Phase 5** — native Rime engine, settings GUI, tray, more compositors, C ABI SDK
 
 ## FAQ
 
 **Can I run oh-my-ime next to Fcitx5 or IBus?**
-Not on the same seat. Wayland allows a single input method per seat. Phase 3 will let you run
-Fcitx5 or IBus *inside* oh-my-ime as one switchable engine.
+Not on the same seat: Wayland allows a single input method per seat. Run Fcitx 5 *inside*
+oh-my-ime instead, unmodified, as one switchable engine; see
+[Fcitx 5 as an engine](docs/hyprland.md#fcitx-5-as-an-engine).
 
 **Does my engine have to be written in Rust?**
 No. The engine protocol is plain D-Bus and the UI is plain Wayland. The Rust SDK is a

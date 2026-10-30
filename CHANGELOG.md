@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Unmodified Wayland input methods run as engines. A manifest with
+  `protocol = "input-method-v2"` (and no `api`) starts a program such as `fcitx5` on a
+  private session bus, gives it a virtual `zwp_input_method_v2` and
+  `zwp_virtual_keyboard_v1` on its bridge connection, and switches it like any other
+  engine: Fcitx 5 runs inside oh-my-ime with all its input methods and addons. Its popups
+  are engine windows, so they follow the text cursor of Wayland and X11 applications, and
+  it serves XIM and Fcitx5-module applications too. `data/engines/fcitx5/engine.toml` is
+  the manifest for Fcitx 5, for `omime install`; the Nix package ships it under
+  `share/oh-my-ime/extra-engines`.
+- Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
+  input methods get SIGTERM and a moment to save their state before SIGKILL.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added
