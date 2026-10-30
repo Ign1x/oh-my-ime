@@ -248,8 +248,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         match &event {
             wl_keyboard::Event::Enter { keys, .. } => {
                 app.held = keys
-                    .chunks_exact(4)
-                    .map(|k| u32::from_ne_bytes([k[0], k[1], k[2], k[3]]))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|k| u32::from_ne_bytes(*k))
                     .collect();
             }
             wl_keyboard::Event::Leave { .. } => app.held.clear(),
