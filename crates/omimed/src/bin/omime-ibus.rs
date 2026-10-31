@@ -30,8 +30,8 @@ use tokio::signal::unix::{SignalKind, signal};
 
 /// How long ibus-daemon may take to write its address.
 const DAEMON_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a process gets after SIGTERM. omimed sends SIGKILL two seconds after its
-/// own SIGTERM.
+/// How long the processes get after SIGTERM, together. omimed sends SIGKILL two seconds
+/// after its own SIGTERM.
 const GRACE: Duration = Duration::from_millis(1500);
 
 #[tokio::main(flavor = "current_thread")]
@@ -100,8 +100,7 @@ async fn run() -> anyhow::Result<ExitCode> {
         _ = terminate.recv() => None,
         _ = interrupt.recv() => None,
     };
-    stop(&mut panel).await;
-    stop(&mut daemon).await;
+    tokio::join!(stop(&mut panel), stop(&mut daemon));
     Ok(match first {
         None => ExitCode::SUCCESS,
         Some((name, status)) => {

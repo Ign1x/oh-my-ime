@@ -1,9 +1,9 @@
 //! One seat's input method session.
 //!
 //! The session owns the seat's `zwp_input_method_v2`, keyboard grab and, while it
-//! holds the grab, a virtual keyboard. It reports focus changes and keys to the core as [`FrontendEvent`]s and
-//! carries out the core's decisions: forwarding or swallowing keys and applying the
-//! actions engines ask for.
+//! holds the grab, a virtual keyboard. It reports focus changes and keys to the core as
+//! [`FrontendEvent`]s and carries out the core's decisions: forwarding or swallowing
+//! keys and applying the actions engines ask for.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
