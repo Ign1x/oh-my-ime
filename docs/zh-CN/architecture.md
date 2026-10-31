@@ -90,6 +90,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - **X11 文本框。** XIM 与 Fcitx5 模块应用的文本框使用任意 seat 上的输入法。XIM 只传递按下事件，因此每个送达的按键都会立刻被释放，修饰键则留给应用：否则输入法会把单独按一下 Shift 当成一次点按。
 - **窗口。** 输入法的弹窗 surface 就是引擎窗口，以输入法弹窗的形式或显示在镜像上，文本光标矩形则通过它的弹窗角色送达它。输入法的其他窗口（toplevel）无法显示。
 - **进程。** omimed 在引擎的运行时目录中用一个私有会话总线启动输入法，即一个不提供服务激活的 `dbus-daemon`，这样它就无法从 omimed 的 Fcitx5 前端手中夺走用户总线上的 `org.fcitx.Fcitx5`。它会拿到自己 bridge socket 的 `WAYLAND_DISPLAY`，但拿不到 `DISPLAY`。omimed 退出时引擎都会收到 SIGTERM，即使 omimed 是被杀死的也一样（`PR_SET_PDEATHSIG`）；被托管的输入法最多有两秒来保存自己的状态。每个 seat 只有一个输入法：第二次 `get_input_method` 会得到 `unavailable`。
+- **IBus。** IBus 由多个进程组成，其中没有任何一个自己把它作为输入法运行：`ibus-daemon` 启动一个面板，但不启动 Wayland 客户端；而输入法模式下的面板（`ibus-ui-gtk3 --enable-wayland-im`，IBus 1.5.30 或更高版本）在没有守护进程应答时就会退出。`omime-ibus` 启动不带面板的守护进程，等待它的地址文件，再把面板作为输入法启动，两者一起停止。它会写入会话中 IBus 工具所查找的地址文件，其名称取自会话的显示（`OMIME_HOST_WAYLAND_DISPLAY`），因此 `ibus engine` 和 `ibus-setup` 能连到被托管的守护进程。dconf 的服务不在私有总线上：被托管的 IBus 会读取 dconf 中保存的设置，但无法保存任何更改。
 
 ## 兼容层（计划中）
 

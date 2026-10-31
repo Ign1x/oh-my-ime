@@ -133,7 +133,7 @@ flowchart LR
 | 附带 systemd 用户单元的 Nix 包 | ✅ |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
 | X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
-| 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5，已在 sway 上测试 · 🧩 兼容（IBus ≥ 1.5.32 未测试） |
+| 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5 与 IBus（≥ 1.5.32），已在 sway 上测试 · 🧩 兼容 |
 | 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
 
 ✅ 原生支持 · 🧩 兼容层 · 🚧 进行中 · 📅 计划中
@@ -209,7 +209,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 ## 常见问题
 
 **能和 Fcitx5 或 IBus 同时运行吗？**
-同一个 seat 上不行：Wayland 每个 seat 只允许一个输入法。改为把未修改的 Fcitx 5 作为 oh-my-ime **内部**的一个可切换引擎运行；见 [Fcitx 5 作为引擎](docs/zh-CN/hyprland.md#fcitx-5-作为引擎)。
+同一个 seat 上不行：Wayland 每个 seat 只允许一个输入法。改为把未修改的 Fcitx 5 或 IBus 作为 oh-my-ime **内部**的一个可切换引擎运行；见 [Fcitx 5 作为引擎](docs/zh-CN/hyprland.md#fcitx-5-作为引擎) 与 [IBus 作为引擎](docs/zh-CN/hyprland.md#ibus-作为引擎)。
 
 **引擎必须用 Rust 写吗？**
 不必。引擎协议就是普通的 D-Bus，UI 就是普通的 Wayland，Rust SDK 只是为了方便。

@@ -137,6 +137,17 @@ DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-
 
 请用 omimed 的热键和 `omime switch` 切换，而不要用 Fcitx 5 的触发键：omimed 会在任何引擎看到 `Ctrl+Space` 之前先处理它。由 Fcitx 5 自己处理的热键（例如它内部输入法之间的 `Ctrl+Shift`）仍然有效。只显示 Fcitx 5 的弹窗，它的其他窗口无法显示。
 
+### IBus 作为引擎
+
+IBus（1.5.32 或更高版本）以同样的方式在 oh-my-ime 内部运行，连同它的全部输入法（ibus-libpinyin、ibus-rime、ibus-hangul 等）。oh-my-ime 提供的 `omime-ibus` 启动 `ibus-daemon`，并把 IBus 的 GTK 面板作为 Wayland 输入法启动（`ibus-ui-gtk3 --enable-wayland-im`），因此候选窗口由 IBus 自己绘制，再由 omimed 放到文本光标处。必须安装 IBus，并且它不能单独运行。安装仓库自带的清单（Nix 包把它放在 `share/oh-my-ime/extra-engines/ibus`）：
+
+```sh
+omime install /path/to/oh-my-ime/data/engines/ibus
+omime switch ibus
+```
+
+被托管的守护进程把它的地址写到 IBus 工具查找的位置，因此这些工具照常工作：用 `ibus engine libpinyin` 或 `ibus-setup` 选择引擎，并在 `ibus-setup` 中配置引擎，它会启动各引擎自己的设置工具。这些工具在你的会话里运行，把设置保存到 dconf。被托管的 IBus 本身运行在 omimed 的私有会话总线上，那里无法访问 dconf 的服务：它在启动时读取 dconf 中保存的设置，但无法保存自己的更改，工具所做的更改要到它下次启动时才会看到（用 `omime switch` 切到另一个引擎再切回）。请用 omimed 的热键和 `omime switch` 切换；omimed 会在 IBus 看到 `Ctrl+Space` 之前先处理它。
+
 ## 哪些应用可用
 
 oh-my-ime 通过合成器的 text-input 协议连接 Wayland 应用，通过 XIM 或 Fcitx5 的 GTK 与 Qt 模块连接 X11 应用：

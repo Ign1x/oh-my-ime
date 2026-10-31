@@ -11,4 +11,4 @@ protocol = "input-method-v2"
 
 [engine.i18n.zh-CN]
 name = "IBus"
-description = "把 IBus 连同它的全部引擎作为一个引擎托管。"
+description = "把 IBus 连同它的全部输入法作为一个引擎托管。"
