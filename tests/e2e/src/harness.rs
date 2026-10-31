@@ -193,8 +193,11 @@ impl TestEnv {
             )?;
         }
         // No borders or title bars: windows start at the output's origin, so tests can
-        // compute where popups appear.
-        let mut config = "output HEADLESS-1 resolution 1280x720\ndefault_border none\n".to_owned();
+        // compute where popups appear. Keys repeat only after three seconds: on a busy
+        // machine, an input method that sees a release late would repeat its press.
+        let mut config = "output HEADLESS-1 resolution 1280x720\ndefault_border none\n\
+                          input type:keyboard repeat_delay 3000\n"
+            .to_owned();
         for seat in extra_seats {
             config += &format!("seat {seat} fallback false\n");
         }
@@ -202,6 +205,16 @@ impl TestEnv {
             config += "xwayland enable\n";
         }
         std::fs::write(dir.join("sway.conf"), config)?;
+        // The developer's font caches, or every toolkit would scan the fonts first.
+        std::fs::create_dir_all(dir.join("cache"))?;
+        let user_cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+        if let Some(fonts) = user_cache.map(|cache| cache.join("fontconfig"))
+            && fonts.is_dir()
+        {
+            std::os::unix::fs::symlink(fonts, dir.join("cache/fontconfig"))?;
+        }
 
         let mut env = TestEnv {
             env: vec![
@@ -217,6 +230,11 @@ impl TestEnv {
                 (
                     "XDG_STATE_HOME".into(),
                     dir.join("state").display().to_string(),
+                ),
+                // IBus and its engines keep their user data here.
+                (
+                    "XDG_CACHE_HOME".into(),
+                    dir.join("cache").display().to_string(),
                 ),
                 (
                     "XDG_DATA_DIRS".into(),

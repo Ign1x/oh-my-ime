@@ -203,7 +203,7 @@ async fn main() -> anyhow::Result<()> {
             properties,
             menu,
         };
-        let mut entries_now = followed.print().await?;
+        let mut entries_now = followed.print().await.unwrap_or_default();
         loop {
             tokio::select! {
                 registration = registrations.recv() => {
@@ -223,7 +223,10 @@ async fn main() -> anyhow::Result<()> {
                 }
                 signal = item_signals.next() => {
                     if signal.is_none() { break }
-                    entries_now = followed.print().await?;
+                    if let Ok(entries) = followed.print().await {
+                        // An item that goes away cannot be read; its name tells.
+                        entries_now = entries;
+                    }
                 }
                 signal = async {
                     match &mut menu_signals {
@@ -232,7 +235,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                 } => {
                     if signal.is_none() { break }
-                    entries_now = followed.print().await?;
+                    if let Ok(entries) = followed.print().await {
+                        // An item that goes away cannot be read; its name tells.
+                        entries_now = entries;
+                    }
                 }
                 command = commands.recv() => {
                     let Some(command) = command else { return Ok(()) };

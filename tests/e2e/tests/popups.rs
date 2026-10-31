@@ -127,11 +127,15 @@ fn engine_windows_of_x11_applications_take_clicks() -> anyhow::Result<()> {
         l.starts_with("preedit \":heart\"")
     })?;
     // The window opens below the cursor; Sparkle's fourth card is centred at (251, 93)
-    // inside it (see typing.rs).
-    std::thread::sleep(Duration::from_millis(300));
-    env.click(100 + 251, 100 + 20 + 93)?;
-    client.wait_for("a click on a card", |l| {
-        l.starts_with("commit \"") && !l.contains(':')
+    // inside it (see typing.rs). On a busy machine Sparkle may not have drawn the deck
+    // yet: click until a card takes the click.
+    omime_e2e::harness::wait_until("a click on a card", || {
+        env.click(100 + 251, 100 + 20 + 93).ok()?;
+        client
+            .lines()
+            .iter()
+            .any(|l| l.starts_with("commit \"") && !l.contains(':'))
+            .then_some(())
     })?;
     Ok(())
 }

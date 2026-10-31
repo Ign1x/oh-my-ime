@@ -17,8 +17,9 @@
 //! `preedit` is the whole preedit after every draw callback, `commit` a string the
 //! server committed, `forwarded` the key code and modifier state of an event the server
 //! sent back, `key` the character of a key the server sent back (handled like a key
-//! the application got itself), `release` a key release the server sent back (which it
-//! should not) and `text` the document after a commit or key.
+//! the application got itself; BackSpace deletes a character), `release` a key release
+//! the server sent back (which it should not) and `text` the document after a commit or
+//! key.
 //!
 //! `--spot X,Y` tells the server where the window draws text (0,0 by default).
 
@@ -196,18 +197,23 @@ impl Keymap {
         })
     }
 
-    /// The character `keycode` types with the modifiers in `state`, or none.
-    fn character(&self, keycode: u8, state: u16) -> Option<char> {
+    /// The keysym of `keycode` with the modifiers in `state`.
+    fn keysym(&self, keycode: u8, state: u16) -> Option<u32> {
         let per = usize::from(self.keysyms_per_keycode);
         let index = usize::from(keycode.checked_sub(self.min_keycode)?).checked_mul(per)?;
         let syms = self.keysyms.get(index..index.checked_add(per)?)?;
         let first = syms.first().copied()?;
         let second = syms.get(1).copied().unwrap_or(0);
-        let keysym = if state & SHIFT != 0 && second != 0 {
+        Some(if state & SHIFT != 0 && second != 0 {
             second
         } else {
             first
-        };
+        })
+    }
+
+    /// The character `keycode` types with the modifiers in `state`, or none.
+    fn character(&self, keycode: u8, state: u16) -> Option<char> {
+        let keysym = self.keysym(keycode, state)?;
         let text = xkb::keysym_to_utf8(xkb::Keysym::new(keysym));
         let mut chars = text.trim_end_matches('\0').chars();
         match (chars.next(), chars.next()) {
@@ -242,11 +248,19 @@ impl Handler {
 
     /// The character of a key the server sent back, handled like one of our own.
     fn press(&mut self, xev: &KeyPressEvent) {
+        /// BackSpace's keysym.
+        const BACKSPACE: u32 = 0xff08;
         emit(&format!(
             "forwarded {} {}",
             xev.detail,
             u16::from(xev.state)
         ));
+        let pressed = xev.response_type & 0x7f == 2;
+        if pressed && self.keymap.keysym(xev.detail, u16::from(xev.state)) == Some(BACKSPACE) {
+            self.document.pop();
+            emit(&format!("text {}", json_string(&self.document)));
+            return;
+        }
         let Some(c) = self.keymap.character(xev.detail, u16::from(xev.state)) else {
             return;
         };
