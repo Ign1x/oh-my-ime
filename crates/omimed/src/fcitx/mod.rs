@@ -141,6 +141,8 @@ struct Ic {
     /// Text, cursor and anchor in characters.
     surrounding: Option<(String, u32, u32)>,
     preedit_shown: bool,
+    /// The modifiers of the last key, which keys engines send back carry too.
+    last_mods: u32,
 }
 
 /// A key the engine has not answered yet.
@@ -239,6 +241,7 @@ impl FcitxFrontend {
                         ctx: None,
                         surrounding: None,
                         preedit_shown: false,
+                        last_mods: 0,
                     },
                 );
             }
@@ -381,11 +384,12 @@ impl FcitxFrontend {
     ) {
         // Like fcitx5, a key focuses its context.
         self.focus_in(ic);
-        let Some(state) = self.ics.get(&ic) else {
+        let Some(state) = self.ics.get_mut(&ic) else {
             let _ = reply.send(KeyAnswer::default());
             return;
         };
         let (keyval, keycode, mods, released, time) = key;
+        state.last_mods = mods;
         let Some(ctx) = state.ctx else {
             // A password field: the application handles the key itself. The answer
             // goes through the queue, behind anything sent before.
@@ -485,9 +489,13 @@ impl FcitxFrontend {
                     if self.keymap.is_none() {
                         self.keymap = default_keymap();
                     }
-                    if let Some(keymap) = &self.keymap {
-                        let keyval = keymap.key_get_one_sym(xkb::Keycode::new(keycode + 8)).raw();
-                        signals.push(Signal::Forward(keyval, 0, !pressed));
+                    if let Some(keymap) = &mut self.keymap {
+                        // With the modifiers of the application's last key, as a virtual
+                        // keyboard's keys reach Wayland applications: Ctrl+C an input
+                        // method does not want must arrive as Ctrl+C, Shift+a as A.
+                        let mods = state.last_mods;
+                        let keyval = keysym(keymap, *keycode, mods);
+                        signals.push(Signal::Forward(keyval, mods, !pressed));
                     }
                 }
             }
@@ -567,8 +575,32 @@ fn info(state: &Ic) -> ContextInfo {
 
 /// The keymap `ForwardKey` actions are interpreted with: the one XKB's defaults
 /// (`XKB_DEFAULT_LAYOUT` and friends) describe.
+/// The keysym the evdev key `keycode` gives with the X11 modifier mask `mods`.
+fn keysym(keymap: &mut xkb::State, keycode: u32, mods: u32) -> u32 {
+    // X11's core modifier masks are the bits of xkb's eight real modifiers, which come
+    // first in every keymap.
+    keymap.update_mask(mods & 0xff, 0, 0, 0, 0, 0);
+    keymap.key_get_one_sym(xkb::Keycode::new(keycode + 8)).raw()
+}
+
 fn default_keymap() -> Option<xkb::State> {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     xkb::Keymap::new_from_names(&context, "", "", "", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)
         .map(|keymap| xkb::State::new(&keymap))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_sent_back_get_the_keysym_of_their_modifiers() {
+        let mut keymap = default_keymap().expect("xkb's default keymap");
+        // evdev 30 is a, 46 is c; X11 masks: Shift 1, Control 4.
+        assert_eq!(keysym(&mut keymap, 30, 0), 0x61);
+        assert_eq!(keysym(&mut keymap, 30, 1), 0x41);
+        assert_eq!(keysym(&mut keymap, 46, 4), 0x63);
+        // The state does not stick to the next key.
+        assert_eq!(keysym(&mut keymap, 30, 0), 0x61);
+    }
 }

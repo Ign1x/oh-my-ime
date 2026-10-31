@@ -604,6 +604,31 @@ impl TestEnv {
         )
     }
 
+    /// Plays `script` on `seat` like a physical keyboard: lines such as `press ctrl`,
+    /// `tap c` and `release ctrl` (see `omime-keyboard --script`).
+    pub fn keys_on_seat(&self, seat: &str, script: &str) -> anyhow::Result<()> {
+        let mut child = self
+            .command(target_dir().join("omime-keyboard"))
+            .args(["--seat", seat, "--script"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .context("cannot start omime-keyboard")?;
+        // Closing stdin ends the script.
+        child
+            .stdin
+            .take()
+            .context("no stdin")?
+            .write_all(script.as_bytes())?;
+        let status = child.wait()?;
+        if !status.success() {
+            bail!("omime-keyboard --script failed with {status}");
+        }
+        // Let the keys travel through the compositor, daemon and engine.
+        std::thread::sleep(Duration::from_millis(150));
+        Ok(())
+    }
+
     /// Gives keyboard focus to the window with `app_id` and waits until omimed holds the
     /// keyboard for its text field.
     pub fn focus(&self, app_id: &str) -> anyhow::Result<()> {

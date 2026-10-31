@@ -45,6 +45,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- In X11 applications, keys an input method sends back keep their modifiers: with
+  Fcitx 5 or IBus as the engine, Ctrl+C in xterm no longer types a c, through XIM and
+  through the Fcitx5 modules alike.
 - A mistake in `config.toml` no longer goes unnoticed: `omime reload` reports it and
   omimed keeps the configuration it had, instead of silently falling back to the
   defaults for the whole file.

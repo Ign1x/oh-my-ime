@@ -179,6 +179,49 @@ fn pinyin_types_into_xim_applications() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn shortcuts_reach_xim_applications_with_their_modifiers() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start_with_x11(&[engine], None)?;
+    start_pinyin(&env)?;
+    let client = env.xim_client(&[])?;
+    env.type_on_seat("seat0", "nihao ")?;
+    client.wait_for_text("你好")?;
+    // Fcitx5 does not want Ctrl+C and sends it back: the application must get it with
+    // Control (mask 4), or it types a c. X11 key code 54 is c.
+    env.keys_on_seat("seat0", "press ctrl\ntap c\nrelease ctrl\n")?;
+    let line = client.wait_for("Ctrl+C sent back", |l| l.starts_with("forwarded 54 "))?;
+    assert_eq!(line, "forwarded 54 4", "{:?}", client.lines());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn shortcuts_reach_fcitx_module_applications_with_their_modifiers() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    start_pinyin(&env)?;
+    let client = env.fcitx_client(&[])?;
+    client.send("focus-in")?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // Ctrl+C (keyval 0x63, X11 key code 54, Control is mask 4), which Fcitx5 does not
+    // want: it must come back as Ctrl+C, not as a c.
+    client.send("key 0x63 54 4 press")?;
+    client.send("key 0x63 54 4 release")?;
+    let line = client.wait_for("Ctrl+C sent back", |l| {
+        l.starts_with("forward ") && l.ends_with(" false")
+    })?;
+    assert_eq!(line, "forward 99 4 false", "{:?}", client.lines());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn pinyin_types_into_fcitx_module_applications() -> anyhow::Result<()> {
     let Some(engine) = fcitx5() else {
         eprintln!("fcitx5 is not installed; nothing to test");

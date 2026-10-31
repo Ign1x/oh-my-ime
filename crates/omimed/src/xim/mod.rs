@@ -645,11 +645,14 @@ impl XimFrontend {
                     let detail = u8::try_from(*keycode)
                         .ok()
                         .and_then(|code| code.checked_add(X11_KEYCODE_OFFSET));
+                    // The key goes back with the modifiers of the key the application
+                    // sent last, as a virtual keyboard's keys reach Wayland applications
+                    // with the modifiers held: Ctrl+C an input method does not want
+                    // must arrive as Ctrl+C, not as a c.
                     if let (Some(template), Some(detail)) = (template, detail) {
                         let xev = XEvent {
                             response_type: if *pressed { KEY_PRESS } else { KEY_RELEASE },
                             detail,
-                            state: 0,
                             ..template
                         };
                         self.forward(key, xev);
