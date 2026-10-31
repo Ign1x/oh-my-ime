@@ -53,11 +53,20 @@ fn current_engine(env: &TestEnv) -> Option<String> {
 
 /// Picks libpinyin for the focused field, as a user would with `ibus engine`. The
 /// command cannot report success: after switching it runs `setxkbmap`, which fails
-/// without an X display. The engine the daemon reports is the truth.
+/// without an X display. The engine the daemon reports is the truth. IBus's panel
+/// picks its default engine on its own once it is up, which can come after the
+/// command on a busy machine, so the command is repeated until it sticks.
 fn select_libpinyin(env: &TestEnv) -> anyhow::Result<()> {
-    env.command("ibus").args(["engine", "libpinyin"]).output()?;
     wait_until("libpinyin to be the engine", || {
-        (current_engine(env).as_deref() == Some("libpinyin")).then_some(())
+        if current_engine(env).as_deref() == Some("libpinyin") {
+            return Some(());
+        }
+        env.command("ibus")
+            .args(["engine", "libpinyin"])
+            .output()
+            .ok()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        None
     })
 }
 
@@ -74,14 +83,16 @@ fn pinyin_types_into_wayland_applications() -> anyhow::Result<()> {
     env.wait_for_log("hosted input method grabbed the keyboard")?;
     select_libpinyin(&env)?;
     // Keys go in with real key codes: wtype uploads a keymap of its own for every
-    // string, whose made-up key codes a hosted IBus decodes with a stale keymap. Space
-    // picks the first candidate; libpinyin keeps the space.
-    env.type_on_seat("seat0", "nihao ")?;
+    // string, whose made-up key codes a hosted IBus decodes with a stale keymap.
+    env.type_on_seat("seat0", "nihao")?;
+    // The candidate window of IBus's panel is shown as a popup. Before space picks the
+    // first candidate: a panel that sees the commit first never shows the window.
+    env.wait_for_log("hosted input method popup created")?;
+    // libpinyin keeps the space.
+    env.type_on_seat("seat0", " ")?;
     editor.wait_for_text("你好")?;
     env.type_on_seat("seat0", "zhongguo ")?;
     editor.wait_for_text("你好中国")?;
-    // The candidate window of IBus's panel was shown as a popup.
-    env.wait_for_log("hosted input method popup created")?;
     Ok(())
 }
 

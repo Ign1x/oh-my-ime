@@ -160,9 +160,19 @@ fn sparkle_inserts_emoji_with_keys_and_clicks() -> anyhow::Result<()> {
         env.screenshot(&env.dir().join("sparkle.png"))?;
     }
     let column = 1; // after "🚀"
-    env.click(12 + 8 * column + 251, 20 + 18 + 93)?;
-    editor.wait_for("a click on a card", |l| {
-        l.starts_with("commit \"") && !l.contains(':')
+    // On a busy machine Sparkle may still be drawing the :rocket deck, which has no
+    // fourth card: click until a card takes the click.
+    let commits = || {
+        editor
+            .lines()
+            .iter()
+            .filter(|l| l.starts_with("commit \"") && !l.contains(':'))
+            .count()
+    };
+    let before = commits();
+    omime_e2e::harness::wait_until("a click on a card", || {
+        env.click(12 + 8 * column + 251, 20 + 18 + 93).ok()?;
+        (commits() > before).then_some(())
     })?;
     let text = editor.text();
     assert!(
