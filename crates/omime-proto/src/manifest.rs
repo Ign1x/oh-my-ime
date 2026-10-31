@@ -41,7 +41,6 @@ use crate::ApiVersion;
 pub const MANIFEST_FILE: &str = "engine.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub engine: EngineInfo,
 }
@@ -59,7 +58,6 @@ pub enum Protocol {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EngineInfo {
     pub id: String,
     pub name: String,
@@ -84,7 +82,6 @@ pub struct EngineInfo {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Translation {
     #[serde(default)]
     pub name: Option<String>,
@@ -131,11 +128,13 @@ pub fn parse_api_version(text: &str) -> Option<ApiVersion> {
 }
 
 impl Manifest {
-    pub fn parse(text: &str) -> Result<Self, ManifestError> {
-        let manifest: Self =
-            toml::from_str(text).map_err(|e| ManifestError::Syntax(e.to_string()))?;
+    /// Reads and checks a manifest. Keys this version does not know, perhaps from a
+    /// manifest written for a newer one, are left out and returned.
+    pub fn parse(text: &str) -> Result<(Self, Vec<String>), ManifestError> {
+        let (manifest, unknown): (Self, _) =
+            crate::from_toml(text).map_err(ManifestError::Syntax)?;
         manifest.validate()?;
-        Ok(manifest)
+        Ok((manifest, unknown))
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
@@ -199,6 +198,8 @@ impl Manifest {
 pub struct InstalledEngine {
     pub manifest: Manifest,
     pub dir: PathBuf,
+    /// Keys of the manifest this version does not know and left out.
+    pub unknown_keys: Vec<String>,
 }
 
 impl InstalledEngine {
@@ -238,7 +239,7 @@ pub fn discover(dirs: &[PathBuf]) -> (Vec<InstalledEngine>, Vec<(PathBuf, String
                 continue;
             };
             match Manifest::parse(&text) {
-                Ok(manifest) => {
+                Ok((manifest, unknown_keys)) => {
                     let dir_name = engine_dir
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned());
@@ -257,6 +258,7 @@ pub fn discover(dirs: &[PathBuf]) -> (Vec<InstalledEngine>, Vec<(PathBuf, String
                         .or_insert(InstalledEngine {
                             manifest,
                             dir: engine_dir,
+                            unknown_keys,
                         });
                 }
                 Err(e) => problems.push((path, e.to_string())),
@@ -284,7 +286,8 @@ name = "回声"
 
     #[test]
     fn parses_and_localizes() {
-        let manifest = Manifest::parse(ECHO).unwrap();
+        let (manifest, unknown) = Manifest::parse(ECHO).unwrap();
+        assert!(unknown.is_empty());
         assert_eq!(manifest.engine.id, "echo");
         assert_eq!(manifest.api_version(), ApiVersion { major: 1, minor: 0 });
         assert_eq!(manifest.localized_name("zh_CN.UTF-8"), "回声");
@@ -305,11 +308,17 @@ name = "回声"
         assert!(Manifest::parse(&bad_api).is_err());
         let no_api = ECHO.replace("api = \"1.0\"", "");
         assert!(Manifest::parse(&no_api).is_err());
-        let unknown = format!("{ECHO}\n[extra]\n");
-        assert!(matches!(
-            Manifest::parse(&unknown),
-            Err(ManifestError::Syntax(_))
-        ));
+    }
+
+    #[test]
+    fn unknown_keys_are_left_out() {
+        let newer = ECHO.replace(
+            "api = \"1.0\"",
+            "api = \"1.0\"\nsettings = [\"echo-setup\"]",
+        );
+        let (manifest, unknown) = Manifest::parse(&format!("{newer}\n[extra]\n")).unwrap();
+        assert_eq!(manifest.engine.id, "echo");
+        assert_eq!(unknown, ["engine.settings", "extra"]);
     }
 
     #[test]
@@ -321,10 +330,10 @@ name = "Fcitx 5"
 exec = ["fcitx5"]
 protocol = "input-method-v2"
 "#;
-        let manifest = Manifest::parse(fcitx5).unwrap();
+        let (manifest, _) = Manifest::parse(fcitx5).unwrap();
         assert!(manifest.is_hosted());
         assert_eq!(manifest.api_version(), ApiVersion { major: 0, minor: 0 });
-        assert!(!Manifest::parse(ECHO).unwrap().is_hosted());
+        assert!(!Manifest::parse(ECHO).unwrap().0.is_hosted());
         let unknown = fcitx5.replace("input-method-v2", "input-method-v1");
         assert!(matches!(
             Manifest::parse(&unknown),
@@ -335,8 +344,9 @@ protocol = "input-method-v2"
     #[test]
     fn resolves_relative_programs() {
         let engine = InstalledEngine {
-            manifest: Manifest::parse(ECHO).unwrap(),
+            manifest: Manifest::parse(ECHO).unwrap().0,
             dir: PathBuf::from("/usr/share/oh-my-ime/engines/echo"),
+            unknown_keys: Vec::new(),
         };
         assert_eq!(
             engine.command(),

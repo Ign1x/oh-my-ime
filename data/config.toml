@@ -1,5 +1,6 @@
 # oh-my-ime configuration: ~/.config/oh-my-ime/config.toml
-# Run `omime reload` after editing.
+# Run `omime reload` after editing; it says what is wrong if anything is, and omimed
+# keeps the configuration it had then.
 
 # Enabled engines, in switching order. Without this line every installed engine is
 # enabled. `omime enable <id>` and `omime disable <id>` edit it for you.

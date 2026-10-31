@@ -85,7 +85,7 @@ bind = SUPER, space, exec, omime next
 | 重新加载配置 | `omime reload` |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
-omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。
+omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
 
 ### 每个应用一个引擎
 

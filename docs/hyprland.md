@@ -96,7 +96,9 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in
 `~/.config/oh-my-ime/config.toml`; [`data/config.toml`](../data/config.toml) documents
-every option.
+every option. If the file has a mistake, `omime reload` says what it is and omimed keeps
+the configuration it had; options it does not know (misspelt, or from a newer version)
+are left out, and `omime doctor` lists them.
 
 ### One engine per application
 

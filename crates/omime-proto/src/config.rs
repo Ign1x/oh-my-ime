@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_FILE: &str = "config.toml";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Config {
     /// Enabled engine ids in switching order; `None` enables everything installed.
     pub engines: Option<Vec<String>>,
@@ -40,7 +40,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Hotkeys {
     /// Switch between direct input and the last engine. Empty disables the hotkey.
     pub toggle: String,
@@ -58,7 +58,7 @@ impl Default for Hotkeys {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct EngineSettings {
     /// Milliseconds to wait for an engine's answer to a key before passing it through.
     pub key_timeout_ms: u64,
@@ -73,14 +73,14 @@ impl Default for EngineSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AppSettings {
     /// Remember the engine of each application, instead of using one engine for all.
     pub remember: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct TraySettings {
     /// Show a tray item (StatusNotifierItem) with the current engine. Read when omimed
     /// starts.
@@ -94,8 +94,10 @@ impl Default for TraySettings {
 }
 
 impl Config {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        toml::from_str(text).map_err(|e| e.to_string())
+    /// Reads a configuration, and the keys in it that this version does not know
+    /// (misspelt, or from a newer version), which it ignores.
+    pub fn parse(text: &str) -> Result<(Self, Vec<String>), String> {
+        crate::from_toml(text)
     }
 }
 
@@ -145,19 +147,30 @@ mod tests {
 
     #[test]
     fn defaults_apply_to_missing_sections() {
-        let config = Config::parse("engines = [\"echo\"]").unwrap();
+        let (config, unknown) = Config::parse("engines = [\"echo\"]").unwrap();
         assert_eq!(config.engines.as_deref(), Some(&["echo".to_owned()][..]));
         assert_eq!(config.hotkeys, Hotkeys::default());
         assert_eq!(config.engine.key_timeout_ms, 200);
         assert!(!config.apps.remember);
+        assert!(unknown.is_empty());
         assert!(
             Config::parse("[apps]\nremember = true")
                 .unwrap()
+                .0
                 .apps
                 .remember
         );
-        assert_eq!(Config::parse("").unwrap(), Config::default());
-        assert!(Config::parse("bogus = 1").is_err());
+        assert_eq!(Config::parse("").unwrap(), (Config::default(), Vec::new()));
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored_and_reported() {
+        let (config, unknown) =
+            Config::parse("bogus = 1\n[hotkeys]\ntogle = \"Super+space\"\n[future]\nx = 1\n")
+                .unwrap();
+        assert_eq!(config, Config::default());
+        assert_eq!(unknown, ["bogus", "future", "hotkeys.togle"]);
+        assert!(Config::parse("[apps]\nremember = \"yes\"").is_err());
     }
 
     #[test]

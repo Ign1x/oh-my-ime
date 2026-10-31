@@ -64,33 +64,51 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     local.block_on(&runtime, async { Daemon::new(options).await?.run().await })
 }
 
-fn load_config() -> Config {
+/// Reads config.toml; no file is the defaults. Keys this version does not know are
+/// logged and left out.
+fn read_config() -> Result<Config, String> {
     let Some(path) = omime_proto::paths::config_dir().map(|d| d.join(CONFIG_FILE)) else {
-        return Config::default();
+        return Ok(Config::default());
     };
-    match std::fs::read_to_string(&path) {
-        Ok(text) => match Config::parse(&text) {
-            Ok(config) => {
-                info!("using {}", path.display());
-                config
-            }
-            Err(e) => {
-                warn!("ignoring {}: {e}", path.display());
-                Config::default()
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-        Err(e) => {
-            warn!("cannot read {}: {e}", path.display());
-            Config::default()
-        }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let (config, unknown) = Config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    info!("using {}", path.display());
+    if !unknown.is_empty() {
+        warn!(
+            "{}: ignoring what this version does not know: {}",
+            path.display(),
+            unknown.join(", ")
+        );
     }
+    Ok(config)
+}
+
+/// The configuration to start with: the defaults when config.toml is broken.
+fn load_config() -> Config {
+    read_config().unwrap_or_else(|e| {
+        warn!("{e}");
+        warn!("using the default configuration");
+        Config::default()
+    })
 }
 
 fn discover_engines() -> Vec<omime_proto::manifest::InstalledEngine> {
     let (installed, problems) = manifest::discover(&omime_proto::paths::engine_dirs());
     for (path, problem) in problems {
         warn!("ignoring {}: {problem}", path.display());
+    }
+    for engine in &installed {
+        if !engine.unknown_keys.is_empty() {
+            warn!(
+                engine = engine.id(),
+                "the manifest has what this version does not know: {}",
+                engine.unknown_keys.join(", ")
+            );
+        }
     }
     installed
 }
@@ -111,6 +129,8 @@ struct Signals {
 struct Daemon {
     options: Options,
     signals: Signals,
+    /// The configuration in effect; a broken config.toml does not replace it.
+    config: Config,
     core: Core,
     core_rx: mpsc::UnboundedReceiver<CoreEvent>,
     ui_rx: mpsc::UnboundedReceiver<UiConnection>,
@@ -210,6 +230,7 @@ impl Daemon {
         Ok(Self {
             options,
             signals,
+            config,
             core,
             core_rx,
             ui_rx,
@@ -491,10 +512,16 @@ impl Daemon {
                 ));
             }
             ControlRequest::Reload(reply) => {
-                let config = load_config();
+                // Engines are looked up again even when config.toml is broken: `omime
+                // install` reloads too.
+                let result = read_config().map(|config| self.config = config);
+                if let Err(e) = &result {
+                    warn!("{e}");
+                    warn!("keeping the configuration in effect");
+                }
                 let installed = discover_engines();
                 self.core.reconfigure(
-                    &config,
+                    &self.config,
                     installed,
                     &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 );
@@ -502,7 +529,9 @@ impl Daemon {
                 if let Some(tray) = &self.tray {
                     tray.changed();
                 }
-                let _ = reply.send(Ok(()));
+                let _ = reply.send(
+                    result.map_err(|e| format!("{e}\nomimed keeps the configuration it had")),
+                );
             }
         }
     }

@@ -183,3 +183,34 @@ fn engines_can_be_installed_and_uninstalled() -> anyhow::Result<()> {
     assert_eq!(env.omime(&["status"])?.trim(), "direct input");
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_broken_config_is_reported_and_the_one_in_effect_kept() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    env.configure("engines = [\"echo\"]\n")?;
+    assert_eq!(enabled(&env.omime(&["engines"])?, "sparkle"), Some(false));
+
+    // A value of the wrong type: the reload fails and says why, and the configuration
+    // in effect stays.
+    let path = env.dir().join("config/oh-my-ime/config.toml");
+    std::fs::write(
+        &path,
+        "engines = [\"sparkle\"]\n[apps]\nremember = \"yes\"\n",
+    )?;
+    let error = format!("{:#}", env.omime(&["reload"]).unwrap_err());
+    assert!(error.contains("remember"), "{error}");
+    assert!(error.contains("keeps the configuration"), "{error}");
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
+    assert_eq!(enabled(&list, "sparkle"), Some(false), "{list}");
+
+    // What this version does not know is left out, and the rest applies.
+    env.configure("engines = [\"sparkle\"]\nfuture = 1\n[hotkeys]\ntogle = \"Super+space\"\n")?;
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "sparkle"), Some(true), "{list}");
+    assert_eq!(enabled(&list, "echo"), Some(false), "{list}");
+    let log = env.daemon_log();
+    assert!(log.contains("future, hotkeys.togle"), "{log}");
+    Ok(())
+}

@@ -80,6 +80,9 @@ api = "1.0"
 name = "回声"
 ```
 
+Keys omimed does not know are left out with a warning, so a manifest that uses keys of
+a newer version still loads in an older one.
+
 To install the directory for the current user, run `omime install <dir>`: it checks the
 manifest, copies the directory to `~/.local/share/oh-my-ime/engines/<id>` and asks a
 running omimed to reload. `--force` replaces an earlier copy, and `omime uninstall <id>`

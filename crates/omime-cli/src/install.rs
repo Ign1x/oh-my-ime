@@ -23,7 +23,7 @@ pub fn install(source: &Path, engines_dir: &Path, force: bool) -> anyhow::Result
     let source = source
         .canonicalize()
         .with_context(|| format!("cannot find {}", source.display()))?;
-    let manifest = read_manifest(&source)?;
+    let (manifest, unknown_keys) = read_manifest(&source)?;
     let id = manifest.engine.id.clone();
 
     fs::create_dir_all(engines_dir)
@@ -68,6 +68,7 @@ pub fn install(source: &Path, engines_dir: &Path, force: bool) -> anyhow::Result
     Ok(InstalledEngine {
         manifest,
         dir: target,
+        unknown_keys,
     })
 }
 
@@ -112,8 +113,8 @@ pub fn command_warning(engine: &InstalledEngine) -> Option<String> {
     }
 }
 
-/// Reads and validates `<dir>/engine.toml`.
-fn read_manifest(dir: &Path) -> anyhow::Result<Manifest> {
+/// Reads and validates `<dir>/engine.toml`; also returns the keys omimed does not know.
+fn read_manifest(dir: &Path) -> anyhow::Result<(Manifest, Vec<String>)> {
     let path = dir.join(MANIFEST_FILE);
     let text =
         fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;

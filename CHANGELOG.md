@@ -37,8 +37,17 @@ All notable changes to this project are documented here. The format follows
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
 
+### Changed
+
+- Keys omimed does not know in `config.toml` and in engine manifests, misspelt or from a
+  newer version, are left out with a warning (`omime doctor` lists them) instead of
+  making the whole file invalid, so files written for newer versions still load.
+
 ### Fixed
 
+- A mistake in `config.toml` no longer goes unnoticed: `omime reload` reports it and
+  omimed keeps the configuration it had, instead of silently falling back to the
+  defaults for the whole file.
 - On Hyprland with `input:virtualkeyboard:share_states = 1`, leaving a text field with
   Ctrl held (Ctrl+W, Ctrl+Tab, a click elsewhere) no longer leaves Ctrl held for every
   application until the next text field. omimed's virtual keyboard now lives only as

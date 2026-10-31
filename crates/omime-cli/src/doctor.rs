@@ -222,11 +222,14 @@ fn busy_seat(seat: &str, busy: Option<&OtherIm>) -> String {
     text
 }
 
+/// What omimed does with a `config.toml` it cannot read or parse.
+const BROKEN_CONFIG: &str =
+    "omimed starts with the defaults then, and `omime reload` keeps the configuration it has";
+
 /// The findings of check 2.
 ///
 /// `display` is the path to `config.toml` as the user knows it; `content` is `Ok(None)`
-/// without the file and `Err` when it cannot be read. omimed ignores the whole file
-/// when it cannot read or parse it.
+/// without the file and `Err` when it cannot be read.
 pub fn config_findings(
     display: &str,
     content: Result<Option<&str>, &str>,
@@ -237,20 +240,25 @@ pub fn config_findings(
         Ok(Some(text)) => text,
         Err(e) => {
             return vec![Finding::problem(format!(
-                "config.toml: {display}: {e}; omimed ignores the whole file then"
+                "config.toml: {display}: {e}; {BROKEN_CONFIG}"
             ))];
         }
     };
-    let config = match Config::parse(text) {
-        Ok(config) => config,
+    let (config, unknown) = match Config::parse(text) {
+        Ok(parsed) => parsed,
         Err(e) => {
             return vec![Finding::problem(format!(
-                "config.toml: {display}: {e}; omimed ignores the whole file then"
+                "config.toml: {display}: {e}\n{BROKEN_CONFIG}"
             ))];
         }
     };
 
     let mut findings = vec![Finding::ok(format!("config.toml: {display}"))];
+    for key in unknown {
+        findings.push(Finding::warning(format!(
+            "config.toml: omimed does not know `{key}` and ignores it (misspelt, or for a newer version?)"
+        )));
+    }
     for id in config.engines.iter().flatten() {
         if !installed.iter().any(|known| known == id) {
             findings.push(Finding::warning(format!(
@@ -276,10 +284,12 @@ pub fn config_findings(
 /// `broken` is what [`discover`] reported for manifests it could not load; `warnings`
 /// are the `(id, warning)` pairs of [`crate::install::command_warning`] for the engines
 /// it did load. The warnings look up bare programs in *this* command's `$PATH`, so they
-/// describe what a daemon started from the same environment would find.
+/// describe what a daemon started from the same environment would find. `unknown` are
+/// the `(id, key)` pairs of manifest keys omimed left out.
 pub fn engine_findings(
     broken: &[(PathBuf, String)],
     warnings: &[(String, String)],
+    unknown: &[(String, String)],
 ) -> Vec<Finding> {
     let mut findings: Vec<Finding> = broken
         .iter()
@@ -290,6 +300,11 @@ pub fn engine_findings(
             .iter()
             .map(|(id, warning)| Finding::problem(format!("engine {id}: {warning}"))),
     );
+    findings.extend(unknown.iter().map(|(id, key)| {
+        Finding::warning(format!(
+            "engine {id}: omimed does not know `{key}` in its manifest and ignores it"
+        ))
+    }));
     findings
 }
 
@@ -334,10 +349,20 @@ pub async fn run() -> anyhow::Result<bool> {
             crate::install::command_warning(engine).map(|warning| (engine.id().to_owned(), warning))
         })
         .collect();
+    let unknown: Vec<(String, String)> = engines
+        .iter()
+        .flat_map(|engine| {
+            let id = engine.id().to_owned();
+            engine
+                .unknown_keys
+                .iter()
+                .map(move |key| (id.clone(), key.clone()))
+        })
+        .collect();
 
     let mut findings = daemon_check(&others).await;
     findings.extend(config_check(&installed));
-    findings.extend(engine_findings(&broken, &warnings));
+    findings.extend(engine_findings(&broken, &warnings, &unknown));
     findings.extend(environment_findings(&environment()));
 
     for finding in &findings {
@@ -678,14 +703,31 @@ mod tests {
                 .text
                 .contains("/cfg/config.toml: Permission denied")
         );
-        assert!(findings[0].text.contains("ignores the whole file"));
+        assert!(findings[0].text.contains("starts with the defaults"));
     }
 
     #[test]
     fn a_config_with_a_syntax_error_is_a_problem() {
-        let findings = config_findings("/cfg/config.toml", Ok(Some("bogus = 1")), &[]);
+        let findings = config_findings("/cfg/config.toml", Ok(Some("[apps\n")), &[]);
         assert_eq!(levels(&findings), [Level::Problem]);
-        assert!(findings[0].text.contains("ignores the whole file"));
+        assert!(findings[0].text.contains("starts with the defaults"));
+        let findings = config_findings("/cfg/config.toml", Ok(Some("engines = 1")), &[]);
+        assert_eq!(levels(&findings), [Level::Problem]);
+    }
+
+    #[test]
+    fn unknown_keys_are_warnings() {
+        let findings = config_findings(
+            "/cfg/config.toml",
+            Ok(Some("bogus = 1\n[hotkeys]\ntogle = \"Super+space\"\n")),
+            &[],
+        );
+        assert_eq!(
+            levels(&findings),
+            [Level::Ok, Level::Warning, Level::Warning]
+        );
+        assert!(findings[1].text.contains("`bogus`"));
+        assert!(findings[2].text.contains("`hotkeys.togle`"));
     }
 
     #[test]
@@ -727,13 +769,18 @@ mod tests {
             "echo".to_owned(),
             "`omimed-echo` is not in PATH, so omimed cannot start this engine".to_owned(),
         )];
-        let findings = engine_findings(&broken, &warnings);
-        assert_eq!(levels(&findings), [Level::Problem; 2]);
+        let unknown = [("echo".to_owned(), "engine.settings".to_owned())];
+        let findings = engine_findings(&broken, &warnings, &unknown);
+        assert_eq!(
+            levels(&findings),
+            [Level::Problem, Level::Problem, Level::Warning]
+        );
         assert_eq!(
             findings[0].text,
             "/engines/broken/engine.toml: `name` must not be empty"
         );
         assert!(findings[1].text.starts_with("engine echo: "));
+        assert!(findings[2].text.contains("`engine.settings`"));
     }
 
     #[test]
@@ -804,9 +851,12 @@ mod tests {
 
     #[test]
     fn problems_are_what_makes_the_command_fail() {
-        let findings = config_findings("config.toml", Ok(Some("bogus = 1")), &[]);
+        let findings = config_findings("config.toml", Ok(Some("[apps\n")), &[]);
         assert!(findings.iter().any(Finding::is_problem));
         let findings = config_findings("config.toml", Ok(None), &[]);
+        assert!(!findings.iter().any(Finding::is_problem));
+        // An unknown key is only a warning.
+        let findings = config_findings("config.toml", Ok(Some("bogus = 1")), &[]);
         assert!(!findings.iter().any(Finding::is_problem));
     }
 }

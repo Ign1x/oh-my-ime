@@ -40,9 +40,42 @@ impl std::fmt::Display for ApiVersion {
     }
 }
 
+/// Reads `T` from TOML, leaving out keys `T` does not know, and returns them as dotted
+/// paths (`hotkeys.togle`), sorted. Files written for a newer version must still load
+/// in older ones, so unknown keys are for warnings, not errors.
+pub(crate) fn from_toml<T: serde::de::DeserializeOwned>(
+    text: &str,
+) -> Result<(T, Vec<String>), String> {
+    let mut unknown = Vec::new();
+    let deserializer = toml::Deserializer::parse(text).map_err(|e| e.to_string())?;
+    let value = serde_ignored::deserialize(deserializer, |path| unknown.push(path.to_string()))
+        .map_err(|e| e.to_string())?;
+    unknown.sort();
+    Ok((value, unknown))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_toml_keys_are_reported_not_rejected() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Inner {
+            known: bool,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        struct Outer {
+            inner: Inner,
+        }
+        let (value, unknown) =
+            from_toml::<Outer>("extra = 1\n[inner]\nknown = true\nnew = \"x\"\n").unwrap();
+        assert!(value.inner.known);
+        assert_eq!(unknown, ["extra", "inner.new"]);
+        // Wrong types and syntax are still errors.
+        assert!(from_toml::<Outer>("[inner]\nknown = 1\n").is_err());
+        assert!(from_toml::<Outer>("[inner\n").is_err());
+    }
 
     #[test]
     fn api_compatibility_follows_major_version() {

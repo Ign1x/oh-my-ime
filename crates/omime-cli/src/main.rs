@@ -223,6 +223,9 @@ async fn install_engine(dir: &Path, force: bool) -> anyhow::Result<()> {
     if let Some(warning) = install::command_warning(&engine) {
         eprintln!("warning: {warning}");
     }
+    for key in &engine.unknown_keys {
+        eprintln!("warning: omimed does not know `{key}` in the manifest and ignores it");
+    }
     edit_config_engines(engine.id(), true)?;
     let running = reload_if_running().await?;
     println!(
@@ -258,8 +261,22 @@ async fn reload_if_running() -> anyhow::Result<bool> {
         return Ok(false);
     }
     let daemon = DaemonProxy::new(&conn).await?;
-    daemon.reload().await?;
+    // The engines are looked up again even when config.toml is broken.
+    if let Err(e) = daemon.reload().await {
+        eprintln!(
+            "warning: omimed kept its configuration: {}",
+            dbus_message(&e)
+        );
+    }
     Ok(true)
+}
+
+/// The message of a D-Bus error reply, or the error itself.
+fn dbus_message(e: &zbus::Error) -> String {
+    match e {
+        zbus::Error::MethodError(_, Some(detail), _) => detail.clone(),
+        e => e.to_string(),
+    }
 }
 
 /// Whether omimed currently owns its bus name.
@@ -436,7 +453,7 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(e) => {
             let message = match e.downcast_ref::<zbus::Error>() {
-                Some(zbus::Error::MethodError(_, Some(detail), _)) => detail.clone(),
+                Some(e @ zbus::Error::MethodError(..)) => dbus_message(e),
                 _ => format!("{e:#}"),
             };
             eprintln!("omime: {message}");
