@@ -147,15 +147,16 @@ fn the_tray_shows_fcitx5s_input_method() -> anyhow::Result<()> {
     start_pinyin(&env)?;
     let _editor = env.editor(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
-    // In a text field, omimed's item shows what Fcitx 5's own item shows on its
-    // private bus: the input method and its icon, from Fcitx 5's icons.
+    // omimed's item names the input method in use inside Fcitx 5, and shows the icon
+    // of Fcitx 5's own item, from Fcitx 5's icons.
     let tooltip = tray.wait_for_latest("Pinyin in the tooltip", "tooltip ", |t| {
-        t.starts_with("fcitx5 · ") && (t.contains("Pinyin") || t.contains("拼音"))
+        (t.starts_with("Pinyin") || t.starts_with("拼音")) && t.ends_with("(fcitx5)")
     })?;
-    let icon = tray.latest("icon ").unwrap_or_default();
-    assert!(icon.contains("pinyin"), "icon {icon:?} for {tooltip:?}");
-    let theme = tray.latest("theme ").unwrap_or_default();
-    assert!(theme.ends_with("share/icons"), "icons from {theme:?}");
+    // The icon comes from Fcitx 5's item, which may report a moment later.
+    tray.wait_for_latest(&format!("Fcitx 5's icon for {tooltip:?}"), "icon ", |i| {
+        i.contains("pinyin")
+    })?;
+    tray.wait_for_latest("Fcitx 5's icons", "theme ", |t| t.ends_with("share/icons"))?;
     Ok(())
 }
 
@@ -291,5 +292,84 @@ fn fcitx5_types_through_omimed() -> anyhow::Result<()> {
         text.starts_with("hello中") && !text.contains("4e00"),
         "{text:?}"
     );
+    Ok(())
+}
+
+/// Xiaohe shuangpin and pinyin, with Xiaohe's keys.
+const SHUANGPIN_PROFILE: &str = "\
+[Groups/0]
+Name=Default
+Default Layout=us
+DefaultIM=pinyin
+
+[Groups/0/Items/0]
+Name=keyboard-us
+Layout=
+
+[Groups/0/Items/1]
+Name=pinyin
+Layout=
+
+[Groups/0/Items/2]
+Name=shuangpin
+Layout=
+
+[GroupOrder]
+0=Default
+";
+
+/// Waits until `omime list` shows `id`, and returns the list.
+fn wait_for_method(env: &TestEnv, id: &str) -> anyhow::Result<String> {
+    omime_e2e::harness::wait_until(&format!("{id} in omime list"), || {
+        let list = env.omime(&["list"]).ok()?;
+        list.lines()
+            .any(|l| l.split_whitespace().nth(l.starts_with('*') as usize) == Some(id))
+            .then_some(list)
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_input_methods_inside_fcitx5_are_chosen_directly() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let mut env = TestEnv::start(&[engine], None)?;
+    let config: PathBuf = env.dir().join("config/fcitx5");
+    std::fs::create_dir_all(config.join("conf"))?;
+    std::fs::write(config.join("profile"), SHUANGPIN_PROFILE)?;
+    std::fs::write(config.join("config"), "[Behavior]\nActiveByDefault=True\n")?;
+    std::fs::write(config.join("conf/pinyin.conf"), "ShuangpinProfile=Xiaohe\n")?;
+    env.omime(&["switch", "fcitx5"])?;
+    env.wait_for_log("hosted input method ready")?;
+
+    // Fcitx 5's input methods are what users choose from; its keyboard layout is not
+    // one, direct input is.
+    let list = wait_for_method(&env, "fcitx5/shuangpin")?;
+    assert!(list.contains("fcitx5/pinyin"), "{list}");
+    assert!(!list.contains("keyboard-us"), "{list}");
+
+    let editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    env.omime(&["switch", "fcitx5/shuangpin"])?;
+    env.wait_for_status_starting("fcitx5/shuangpin")?;
+    // Xiaohe: ni hao is n i h c.
+    env.type_on_seat("seat0", "nihc ")?;
+    editor.wait_for_text("你好")?;
+
+    // The next input method is pinyin, inside the same Fcitx 5.
+    env.omime(&["next"])?;
+    env.wait_for_status_starting("fcitx5/pinyin")?;
+    env.type_on_seat("seat0", "zhongguo ")?;
+    editor.wait_for_text("你好中国")?;
+
+    // After a restart omimed lists them before Fcitx 5 is up, and gives Fcitx 5 back
+    // the input method that was in use.
+    env.omime(&["switch", "fcitx5/shuangpin"])?;
+    env.wait_for_status_starting("fcitx5/shuangpin")?;
+    env.restart_daemon()?;
+    wait_for_method(&env, "fcitx5/pinyin")?;
+    env.wait_for_status_starting("fcitx5/shuangpin")?;
     Ok(())
 }

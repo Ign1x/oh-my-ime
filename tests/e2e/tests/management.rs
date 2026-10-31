@@ -129,14 +129,14 @@ fn enabled(list: &str, id: &str) -> Option<bool> {
 #[ignore = "end-to-end test; see typing.rs"]
 fn engines_can_be_disabled_enabled_and_are_remembered() -> anyhow::Result<()> {
     let mut env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
-    let list = env.omime(&["list"])?;
+    let list = env.omime(&["engines"])?;
     assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
     assert_eq!(enabled(&list, "sparkle"), Some(true), "{list}");
 
     env.omime(&["switch", "echo"])?;
     // Disabling the engine in use falls back to direct input.
     env.omime(&["disable", "echo"])?;
-    let list = env.omime(&["list"])?;
+    let list = env.omime(&["engines"])?;
     assert_eq!(enabled(&list, "echo"), Some(false), "{list}");
     assert_eq!(env.omime(&["status"])?.trim(), "direct input");
     let config = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
@@ -146,7 +146,7 @@ fn engines_can_be_disabled_enabled_and_are_remembered() -> anyhow::Result<()> {
     env.omime(&["next"])?;
     assert!(env.omime(&["status"])?.starts_with("sparkle"));
     env.omime(&["enable", "echo"])?;
-    assert_eq!(enabled(&env.omime(&["list"])?, "echo"), Some(true));
+    assert_eq!(enabled(&env.omime(&["engines"])?, "echo"), Some(true));
 
     // The daemon starts with the engine that was in use when it stopped.
     env.restart_daemon()?;
@@ -172,13 +172,13 @@ fn engines_can_be_installed_and_uninstalled() -> anyhow::Result<()> {
 
     let output = env.omime(&["install", source])?;
     assert!(output.contains("Installed echo2"), "{output}");
-    let list = env.omime(&["list"])?;
+    let list = env.omime(&["engines"])?;
     assert_eq!(enabled(&list, "echo2"), Some(true), "{list}");
     env.omime(&["switch", "echo2"])?;
     assert!(env.omime(&["status"])?.starts_with("echo2"));
 
     env.omime(&["uninstall", "echo2"])?;
-    let list = env.omime(&["list"])?;
+    let list = env.omime(&["engines"])?;
     assert!(!list.contains("echo2"), "{list}");
     assert_eq!(env.omime(&["status"])?.trim(), "direct input");
     Ok(())

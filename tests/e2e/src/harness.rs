@@ -714,6 +714,15 @@ impl TestEnv {
         })
     }
 
+    /// Waits until `omime status` starts with `prefix`.
+    pub fn wait_for_status_starting(&self, prefix: &str) -> anyhow::Result<()> {
+        wait_until(&format!("a status starting with {prefix:?}"), || {
+            let status = self.omime(&["status"]).ok()?;
+            status.trim().starts_with(prefix).then_some(())
+        })
+        .with_context(|| format!("omime status says {:?}", self.omime(&["status"])))
+    }
+
     /// Runs the `omime` CLI and returns its exit status and stdout, also when the status
     /// is not success (for `omime doctor`, which fails when it finds a problem).
     pub fn omime_status(&self, args: &[&str]) -> anyhow::Result<(ExitStatus, String)> {

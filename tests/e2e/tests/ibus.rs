@@ -20,6 +20,19 @@ fn ibus() -> Option<TestEngine> {
     })
 }
 
+/// Chooses `engines` in IBus, as `ibus-setup` does: `preload-engines` in the user's dconf
+/// database, which the test environment has its own of.
+fn choose_engines(env: &TestEnv, engines: &[&str]) -> anyhow::Result<()> {
+    let mut table = gvdb::write::HashTableBuilder::new();
+    let engines: Vec<String> = engines.iter().map(|e| (*e).to_owned()).collect();
+    table.insert("/desktop/ibus/general/preload-engines", engines)?;
+    let data = gvdb::write::FileWriter::new().write_to_vec_with_table(table)?;
+    let dir = env.dir().join("config/dconf");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("user"), data)?;
+    Ok(())
+}
+
 /// Switches to the hosted IBus and waits until it serves the seat.
 fn switch_to_ibus(env: &TestEnv) -> anyhow::Result<()> {
     env.omime(&["switch", "ibus"])?;
@@ -128,5 +141,32 @@ fn the_tray_shows_ibus_engines() -> anyhow::Result<()> {
     select_libpinyin(&env)?;
     // IBus's panel shows the engine's icon in its item; omimed's item shows it too.
     tray.wait_for_latest("libpinyin's icon", "icon ", |i| i.contains("pinyin"))?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn ibus_engines_are_chosen_directly() -> anyhow::Result<()> {
+    let Some(engine) = ibus() else {
+        eprintln!("IBus is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    choose_engines(&env, &["xkb:us::eng", "libpinyin"])?;
+    switch_to_ibus(&env)?;
+    // The engines chosen in IBus are what users choose from, keyboard layouts are not.
+    let list = wait_until("libpinyin in omime list", || {
+        let list = env.omime(&["list"]).ok()?;
+        list.contains("ibus/libpinyin").then_some(list)
+    })?;
+    assert!(!list.contains("xkb:"), "{list}");
+    let editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // Choosing libpinyin through omimed selects it in IBus.
+    env.omime(&["switch", "ibus/libpinyin"])?;
+    env.wait_for_status_starting("ibus/libpinyin")?;
+    assert_eq!(current_engine(&env).as_deref(), Some("libpinyin"));
+    env.type_on_seat("seat0", "nihao ")?;
+    editor.wait_for_text("你好")?;
     Ok(())
 }
