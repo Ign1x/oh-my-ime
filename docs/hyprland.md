@@ -115,9 +115,9 @@ surfaces are not windows: switching in them counts for the window below.
 
 ### Tray
 
-omimed shows the current engine in the tray of status bars (StatusNotifierItem):
-waybar's `tray` module, KDE's system tray and others. The tooltip names the engine and,
-for Fcitx 5 and IBus, the input method they use, such as "Fcitx 5 · 双拼"; the icon is
+omimed shows the input method in use in the tray of status bars (StatusNotifierItem):
+waybar's `tray` module, KDE's system tray and others. The tooltip names it, such as
+"双拼 (Fcitx 5)" for an input method inside Fcitx 5, and for Fcitx 5 and IBus the icon is
 theirs too. A click switches between direct input and the last engine, a middle click to
 the next input method, and the menu lists the input methods and direct input. To hide it, set
 this in `~/.config/oh-my-ime/config.toml` and restart omimed:
