@@ -404,6 +404,11 @@ impl Frontend {
         self.bridge.hosted_deactivate(engine, ctx);
     }
 
+    /// How much of what was sent to the hosted engine `engine` it has not read yet.
+    pub fn hosted_unread(&self, engine: &EngineId) -> Option<usize> {
+        self.bridge.hosted_unread(engine)
+    }
+
     /// Passes a key to the keyboard grab of the hosted engine `engine`.
     pub fn hosted_key(
         &mut self,

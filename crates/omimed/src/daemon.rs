@@ -649,6 +649,10 @@ impl Frontends for Outputs<'_> {
         self.wayland.hosted_deactivate(engine, ctx);
     }
 
+    fn hosted_unread(&self, engine: &EngineId) -> Option<usize> {
+        self.wayland.hosted_unread(engine)
+    }
+
     fn hosted_key(&mut self, engine: &EngineId, key: &KeyRef, event: &KeyEvent) -> KeyDelivery {
         // XIM passes only presses on, so each key is released right after its press,
         // or the input method would think it is still held. A modifier would then

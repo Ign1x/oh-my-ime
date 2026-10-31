@@ -137,6 +137,10 @@ pub trait Frontends {
     /// Hands a key reported in [`FrontendEvent::Key`] to the hosted engine `engine`.
     /// Unless it is delivered, the key still needs [`Self::finish_key`].
     fn hosted_key(&mut self, engine: &EngineId, key: &KeyRef, event: &KeyEvent) -> KeyDelivery;
+
+    /// How much of what was sent to the hosted engine `engine` it has not read yet, in
+    /// bytes; `None` if it has no input method.
+    fn hosted_unread(&self, engine: &EngineId) -> Option<usize>;
 }
 
 /// Hands out context ids, unique among all frontends for the daemon's lifetime.

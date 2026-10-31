@@ -17,7 +17,7 @@
 //!   of other engines: as input popups, or on a mirror for X11 applications.
 
 use std::collections::BTreeSet;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::rc::{Rc, Weak};
 
 use omime_proto::engine::{Action, ContextId, ContextInfo, Preedit};
@@ -192,6 +192,27 @@ impl Bridge {
         {
             handler.update(&im, info, reset);
         }
+    }
+
+    /// How much of what the bridge sent to the input methods of the hosted engine
+    /// `engine` they have not read yet, in bytes; `None` without one. An input method
+    /// that stops reading for long has hung.
+    pub fn hosted_unread(&self, engine: &EngineId) -> Option<usize> {
+        let shared = self.shared.borrow();
+        let clients: Vec<_> = shared
+            .hosted
+            .iter()
+            .filter(|((e, _), _)| e == engine)
+            .filter_map(|(_, im)| im.upgrade()?.client())
+            .collect();
+        let sockets = clients.iter().filter_map(|client| {
+            shared
+                .hosted_sockets
+                .iter()
+                .find(|(c, _)| c.upgrade().is_some_and(|c| Rc::ptr_eq(&c, client)))
+                .map(|(_, socket)| socket)
+        });
+        sockets.filter_map(unread_bytes).max()
     }
 
     /// The text field `ctx` lost focus or another engine took over.
@@ -936,6 +957,23 @@ impl ZwpVirtualKeyboardV1Handler for VirtualKeyboard {
     fn handle_destroy(&mut self, slf: &Rc<ZwpVirtualKeyboardV1>) {
         slf.delete_id();
     }
+}
+
+/// The bytes written to `socket` that its peer has not read yet (`SIOCOUTQ`).
+#[allow(unsafe_code)]
+fn unread_bytes(socket: impl AsFd) -> Option<usize> {
+    /// `SIOCOUTQ`, also known as `TIOCOUTQ`.
+    const SIOCOUTQ: rustix::ioctl::Opcode = 0x5411;
+    // SAFETY: SIOCOUTQ on a socket writes one `c_int` to the pointer it is given, which
+    // is what `Getter` provides; it reads nothing else.
+    let unread = unsafe {
+        rustix::ioctl::ioctl(
+            socket,
+            rustix::ioctl::Getter::<SIOCOUTQ, std::ffi::c_int>::new(),
+        )
+    }
+    .ok()?;
+    usize::try_from(unread).ok()
 }
 
 #[cfg(test)]

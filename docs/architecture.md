@@ -222,6 +222,12 @@ both answered by the bridge.
   stays the only one the compositor sees, and keeps track of what the application holds.
   Keys wait up to a second for a hosted engine that is still starting, or has not grabbed
   the keyboard yet, then pass through.
+- **Hung input methods.** A key handed to an input method is its own, so one that
+  hangs would swallow every key. After handing it keys, the core looks every 250 ms at
+  how much of what the bridge sent it is still unread on its socket (`SIOCOUTQ`); an
+  input method that reads nothing for three seconds is killed and restarted, and the
+  keys it held are lost. This works for any Wayland input method, with or without
+  D-Bus.
 - **X11 fields.** Fields of XIM and Fcitx5-module applications use the input method of
   any seat. XIM passes only presses, so each delivered key is released right away, and
   modifier keys stay with the application: an input method would take a lone Shift for

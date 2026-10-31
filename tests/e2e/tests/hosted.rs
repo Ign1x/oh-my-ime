@@ -15,6 +15,16 @@ const GREEN: u32 = 0x00ff00;
 /// at x = 12, y = 20 with a height of 18 in an empty editor.
 const CENTRE: (u32, u32) = (12 + 50, 20 + 18 + 20);
 
+/// Lets a stopped process go on when a test ends, also when it fails: a stopped process
+/// would outlive the test and keep its output open.
+struct Resume(rustix::process::Pid);
+
+impl Drop for Resume {
+    fn drop(&mut self) {
+        let _ = rustix::process::kill_process(self.0, rustix::process::Signal::CONT);
+    }
+}
+
 /// Waits until the input method said `line` `count` times in all.
 fn wait_for_count(env: &TestEnv, line: &str, count: usize) -> anyhow::Result<()> {
     let deadline = Instant::now() + TIMEOUT;
@@ -151,6 +161,34 @@ fn a_crashing_hosted_input_method_is_restarted() -> anyhow::Result<()> {
     wait_for_count(&env, "activate", 2)?;
     env.type_text(" ef ")?;
     editor.wait_for_text("AB cd EF ")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_hung_hosted_input_method_is_restarted() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
+    let editor = env.editor(&[])?;
+    env.wait_for_hosted("the input method to be activated", |l| l == "activate")?;
+    env.type_text("ab ")?;
+    editor.wait_for_text("AB ")?;
+
+    // A stopped process reads nothing from its socket, like a hung one.
+    let pid = env
+        .engine_pid("hosted")
+        .expect("the input method was launched");
+    let pid = rustix::process::Pid::from_raw(pid as i32).expect("valid pid");
+    rustix::process::kill_process(pid, rustix::process::Signal::STOP)?;
+    let _resume = Resume(pid);
+    // These keys are lost with the input method; omimed notices it does not read them.
+    env.type_text("cd")?;
+    env.wait_for_log("does not read what it is sent")?;
+    env.wait_for_log("engine exited unexpectedly")?;
+
+    // The new input method serves the field again.
+    wait_for_count(&env, "activate", 2)?;
+    env.type_text("ef ")?;
+    editor.wait_for_text("AB EF ")?;
     Ok(())
 }
 

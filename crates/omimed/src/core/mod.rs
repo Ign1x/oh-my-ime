@@ -36,6 +36,21 @@ use engines::{EngineManager, EngineState, HostCall, UiConnection};
 /// How long keys wait for a hosted input method to start, or to grab the keyboard
 /// once it was activated, before they pass through.
 const HOSTED_WAIT: Duration = Duration::from_secs(1);
+/// How often to look whether a hosted input method reads the keys it was given, and
+/// for how long it may read nothing before it counts as hung. Keys handed to a hung
+/// input method are gone, so it is killed and restarted.
+const HOSTED_CHECK: Duration = Duration::from_millis(250);
+const HOSTED_HUNG: Duration = Duration::from_secs(3);
+
+/// A hosted engine that was handed keys it has not been seen reading yet.
+#[derive(Debug, Clone, Copy)]
+struct HostedWatch {
+    /// Since when it has read nothing.
+    since: Instant,
+    next_check: Instant,
+    /// What it had not read at the last check.
+    unread: usize,
+}
 
 /// Events from engines and background tasks, handled on the core's thread.
 #[derive(Debug)]
@@ -221,6 +236,8 @@ pub struct Core {
     stale_tokens: HashSet<u64>,
     /// Consecutive timeouts per engine.
     timeouts: BTreeMap<String, u32>,
+    /// Hosted engines that may not have read the keys they were given yet.
+    hosted_watch: BTreeMap<String, HostedWatch>,
     /// Called whenever `current` changes.
     on_state: Option<StateListener>,
     on_status: Option<StatusListener>,
@@ -262,6 +279,7 @@ impl Core {
             next_token: 0,
             stale_tokens: HashSet::new(),
             timeouts: BTreeMap::new(),
+            hosted_watch: BTreeMap::new(),
             on_state: None,
             on_status: None,
             remember_apps: config.apps.remember,
@@ -492,13 +510,15 @@ impl Core {
             .contexts
             .values()
             .filter_map(|c| c.in_flight.as_ref().map(|f| f.deadline).or(c.hold_until));
-        requests.chain(self.engines.deadline()).min()
+        let watches = self.hosted_watch.values().map(|w| w.next_check);
+        requests.chain(watches).chain(self.engines.deadline()).min()
     }
 
     pub fn on_timer(&mut self, now: Instant, out: &mut dyn Frontends) {
         for failed in self.engines.on_timer(now) {
             self.engine_unavailable(&failed, out);
         }
+        self.check_hosted(now, out);
         let held: Vec<ContextId> = self
             .contexts
             .iter()
@@ -1004,6 +1024,46 @@ impl Core {
         }
     }
 
+    /// Kills hosted engines that stopped reading what they are sent: the keys they were
+    /// handed are gone, and every key after them would be too.
+    fn check_hosted(&mut self, now: Instant, out: &mut dyn Frontends) {
+        let due: Vec<String> = self
+            .hosted_watch
+            .iter()
+            .filter(|(_, w)| w.next_check <= now)
+            .map(|(engine, _)| engine.clone())
+            .collect();
+        for engine in due {
+            let Some(watch) = self.hosted_watch.get_mut(&engine) else {
+                continue;
+            };
+            let unread = out.hosted_unread(&EngineId::from(engine.as_str()));
+            match unread {
+                // It read everything, or it is gone anyway.
+                None | Some(0) => {
+                    self.hosted_watch.remove(&engine);
+                }
+                Some(unread) => {
+                    if unread < watch.unread {
+                        // It read something since; more has come.
+                        watch.since = now;
+                    } else if now.duration_since(watch.since) >= HOSTED_HUNG {
+                        warn!(
+                            engine,
+                            unread,
+                            "the hosted input method does not read what it is sent; restarting it"
+                        );
+                        self.hosted_watch.remove(&engine);
+                        self.engines.kill_unresponsive(&engine);
+                        continue;
+                    }
+                    watch.unread = unread;
+                    watch.next_check = now + HOSTED_CHECK;
+                }
+            }
+        }
+    }
+
     /// Hands the next request of `ctx` to its hosted engine, which takes it at once.
     /// Returns `false` if the request has to wait.
     fn pump_hosted(&mut self, ctx: ContextId, out: &mut dyn Frontends) -> bool {
@@ -1033,7 +1093,17 @@ impl Core {
                 }
             }
             Request::Key(key, event) => match out.hosted_key(&engine, &key, &event) {
-                KeyDelivery::Delivered => context.hold_until = None,
+                KeyDelivery::Delivered => {
+                    context.hold_until = None;
+                    let now = Instant::now();
+                    self.hosted_watch
+                        .entry(engine.to_string())
+                        .or_insert(HostedWatch {
+                            since: now,
+                            next_check: now + HOSTED_CHECK,
+                            unread: 0,
+                        });
+                }
                 KeyDelivery::NotReady => {
                     // The input method grabs the keyboard once it learns about the
                     // field; until then, keys wait a moment rather than slip past it.

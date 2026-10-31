@@ -253,7 +253,8 @@ pub struct EngineSlot {
     framework: Option<mpsc::UnboundedSender<FrameworkCommand>>,
     /// Increases with every launch; events of older processes are ignored.
     generation: u64,
-    kill: Option<oneshot::Sender<()>>,
+    /// Stops the process; dropping it stops the process politely.
+    kill: Option<oneshot::Sender<Stop>>,
     crashes: Vec<Instant>,
     sockets_ready: bool,
 }
@@ -407,7 +408,7 @@ impl EngineManager {
                 EngineState::Starting { .. } => {
                     warn!(engine = id, "the engine did not register in time");
                     if let Some(kill) = slot.kill.take() {
-                        let _ = kill.send(());
+                        let _ = kill.send(Stop::Politely);
                     }
                     slot.state = EngineState::Failed;
                     failed.push(id);
@@ -703,10 +704,20 @@ impl EngineManager {
 
     /// Kills the engine (it is restarted on demand).
     pub fn restart(&mut self, id: &str) {
+        self.stop(id, Stop::Politely);
+    }
+
+    /// Kills an engine that does not respond right away, without waiting for it to
+    /// save its state; it is restarted on demand.
+    pub fn kill_unresponsive(&mut self, id: &str) {
+        self.stop(id, Stop::Now);
+    }
+
+    fn stop(&mut self, id: &str, how: Stop) {
         if let Some(slot) = self.slots.get_mut(id)
             && let Some(kill) = slot.kill.take()
         {
-            let _ = kill.send(());
+            let _ = kill.send(how);
         }
     }
 
@@ -823,7 +834,7 @@ async fn supervise_hosted(
     mut command: tokio::process::Command,
     dir: PathBuf,
     icon_dir: Option<String>,
-    kill: oneshot::Receiver<()>,
+    kill: oneshot::Receiver<Stop>,
     events: mpsc::UnboundedSender<CoreEvent>,
     _alive: Alive,
 ) {
@@ -886,9 +897,25 @@ async fn supervise_hosted(
     info!(engine, pid = child.id().unwrap_or(0), "engine launched");
     let status = tokio::select! {
         status = child.wait() => status,
-        _ = kill => terminate(&mut child).await,
+        how = kill => match how {
+            Ok(Stop::Now) => {
+                let _ = child.start_kill();
+                child.wait().await
+            }
+            Ok(Stop::Politely) | Err(_) => terminate(&mut child).await,
+        },
     };
     exited(status.ok());
+}
+
+/// How to stop an engine process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    /// SIGTERM, and SIGKILL if it does not exit in time, for hosted input methods:
+    /// they save their state when they exit. Other engines get SIGKILL.
+    Politely,
+    /// SIGKILL: the process does not respond anyway.
+    Now,
 }
 
 /// Stops a process politely: SIGTERM, and SIGKILL if it does not exit in time. Input

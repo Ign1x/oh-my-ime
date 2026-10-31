@@ -172,6 +172,8 @@ pub(super) struct BridgeShared {
     last_scale: Option<u32>,
     /// The input methods of hosted engines, one per engine and seat.
     hosted: BTreeMap<(EngineId, SeatId), Weak<ZwpInputMethodV2>>,
+    /// The sockets of hosted engines' connections, to see whether they read them.
+    hosted_sockets: Vec<(Weak<Client>, Rc<std::os::fd::OwnedFd>)>,
     /// The keyboards of seats, for the keyboard grabs of hosted input methods.
     keyboards: BTreeMap<SeatId, SeatKeyboard>,
     /// XKB's default keymap, for X11 applications typing before any Wayland field.
@@ -239,6 +241,7 @@ impl Bridge {
             configure_serial: 0,
             last_scale: None,
             hosted: BTreeMap::new(),
+            hosted_sockets: Vec::new(),
             keyboards: BTreeMap::new(),
             default_keymap: None,
             events,
@@ -300,10 +303,16 @@ impl Bridge {
         hosted: bool,
         socket: std::os::fd::OwnedFd,
     ) -> anyhow::Result<()> {
+        let socket = Rc::new(socket);
         let client = self
             .state
-            .add_client(&Rc::new(socket))
+            .add_client(&socket)
             .map_err(|e| anyhow::anyhow!("cannot add a UI client: {e}"))?;
+        if hosted {
+            let mut shared = self.shared.borrow_mut();
+            shared.hosted_sockets.retain(|(c, _)| c.strong_count() > 0);
+            shared.hosted_sockets.push((Rc::downgrade(&client), socket));
+        }
         client.display().set_handler(BridgeDisplay {
             shared: self.shared.clone(),
             engine: engine.clone(),
@@ -381,6 +390,10 @@ impl ClientHandler for BridgeClient {
         let mut shared = self.shared.borrow_mut();
         shared.registries.retain(|r| r.strong_count() > 0);
         shared.windows.retain(|w| w.strong_count() > 0);
+        // Keeping the socket would keep it open.
+        shared
+            .hosted_sockets
+            .retain(|(c, _)| c.strong_count() > 0 && !c.ptr_eq(&self.client));
     }
 }
 
