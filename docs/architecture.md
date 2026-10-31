@@ -236,6 +236,15 @@ both answered by the bridge.
   omimed exits, even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted input methods
   up to two seconds to save their state. One input method per seat: a second
   `get_input_method` gets `unavailable`.
+- **IBus.** IBus is several processes, and none of them runs it as an input method on
+  its own: `ibus-daemon` starts a panel but no Wayland client, and the panel in input
+  method mode (`ibus-ui-gtk3 --enable-wayland-im`, IBus 1.5.30 or later) exits when no
+  daemon answers. `omime-ibus` starts the daemon without a panel, waits for its address
+  file, starts the panel as the input method, and stops both together. It writes the
+  address file IBus tools in the session look for, named after the session's display
+  (`OMIME_HOST_WAYLAND_DISPLAY`), so `ibus engine` and `ibus-setup` reach the hosted
+  daemon. dconf's service is not on the private bus: the hosted IBus reads the settings
+  dconf holds, but cannot save any.
 
 ## Compatibility layers (planned)
 

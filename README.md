@@ -130,7 +130,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Nix package with the systemd user unit | ✅ |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
 | Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
-| Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5, tested on sway · 🧩 compat (IBus ≥ 1.5.32 untested) |
+| Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5 and IBus (≥ 1.5.32), tested on sway · 🧩 compat |
 | Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
 
 ✅ native support · 🧩 compatibility layer · 🚧 in progress · 📅 planned
@@ -213,9 +213,10 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 ## FAQ
 
 **Can I run oh-my-ime next to Fcitx5 or IBus?**
-Not on the same seat: Wayland allows a single input method per seat. Run Fcitx 5 *inside*
-oh-my-ime instead, unmodified, as one switchable engine; see
-[Fcitx 5 as an engine](docs/hyprland.md#fcitx-5-as-an-engine).
+Not on the same seat: Wayland allows a single input method per seat. Run Fcitx 5 or IBus
+*inside* oh-my-ime instead, unmodified, as one switchable engine; see
+[Fcitx 5 as an engine](docs/hyprland.md#fcitx-5-as-an-engine) and
+[IBus as an engine](docs/hyprland.md#ibus-as-an-engine).
 
 **Does my engine have to be written in Rust?**
 No. The engine protocol is plain D-Bus and the UI is plain Wayland. The Rust SDK is a

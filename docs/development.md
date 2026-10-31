@@ -10,7 +10,7 @@ nix develop .#e2e      # only what the end-to-end tests need (used by CI)
 ```
 
 The shells provide the native libraries, a headless-capable sway with XWayland, wtype,
-grim, dbus-daemon and Fcitx 5. Rust comes from rustup and `rust-toolchain.toml`.
+grim, dbus-daemon, Fcitx 5 and IBus. Rust comes from rustup and `rust-toolchain.toml`.
 
 ## Checks
 
@@ -32,8 +32,8 @@ provide. `xim.rs` types into `omime-xim-client`, an X11 client that uses XIM, an
 `fcitx.rs` drives the Fcitx5 module protocol with `omime-fcitx-client`. `popups.rs`
 checks where engine windows open, that they stay hidden until the engine asks, how they
 follow X11 text cursors, and that clicks on them reach the engine; it reads pixels with
-`grim`. `hosted.rs` hosts `omime-im-client`, a small Wayland input method, as an engine,
-and `fcitx5.rs` hosts the real Fcitx 5 from the shell.
+`grim`. `hosted.rs` hosts `omime-im-client`, a small Wayland input method, as an engine;
+`fcitx5.rs` and `ibus.rs` host the real Fcitx 5 and IBus from the shell.
 
 ```sh
 cargo build --workspace

@@ -162,6 +162,30 @@ takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles itsel
 `Ctrl+Shift` between its input methods, keep working. Only the popups of Fcitx 5 are
 shown; its other windows cannot be.
 
+### IBus as an engine
+
+IBus (1.5.32 or later) runs inside oh-my-ime the same way, with all its engines
+(ibus-libpinyin, ibus-rime, ibus-hangul, ...). `omime-ibus`, which oh-my-ime provides,
+starts `ibus-daemon` and IBus's GTK panel as the Wayland input method
+(`ibus-ui-gtk3 --enable-wayland-im`), so IBus draws its candidate window, and omimed
+places it at the text cursor. IBus must be installed, and must not run on its own.
+Install the manifest the repository ships (the Nix package has it at
+`share/oh-my-ime/extra-engines/ibus`):
+
+```sh
+omime install /path/to/oh-my-ime/data/engines/ibus
+omime switch ibus
+```
+
+The hosted daemon writes its address where IBus tools look for it, so they work as
+usual: pick an engine with `ibus engine libpinyin` or `ibus-setup`, and configure
+engines with their own tools, such as `ibus-setup-libpinyin`. These tools save to dconf
+from your session. The hosted IBus itself runs on omimed's private session bus, where
+dconf's service is not reachable: it reads the settings dconf holds when it starts,
+but cannot save changes of its own, and sees what the tools changed the next time it
+starts (`omime switch` to another engine and back). Switch with omimed's hotkeys and
+`omime switch`; omimed takes `Ctrl+Space` before IBus sees it.
+
 ## Which applications work
 
 oh-my-ime reaches Wayland applications through the compositor's text-input protocol, and
