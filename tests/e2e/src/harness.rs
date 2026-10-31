@@ -397,10 +397,20 @@ impl TestEnv {
         &self.dir
     }
 
-    /// A command that runs inside this environment.
+    /// A command that runs inside this environment. The programs under test come first
+    /// on its `$PATH`, for manifests that name them.
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
+        let path = match std::env::var_os("PATH") {
+            Some(path) => {
+                let mut paths = vec![program_dir()];
+                paths.extend(std::env::split_paths(&path));
+                std::env::join_paths(paths).unwrap_or(path)
+            }
+            None => program_dir().into_os_string(),
+        };
         let mut command = Command::new(program);
         command
+            .env("PATH", path)
             .env_remove("DISPLAY")
             .env_remove("WAYLAND_SOCKET")
             .env_remove("GTK_IM_MODULE")

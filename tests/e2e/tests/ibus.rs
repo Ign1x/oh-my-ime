@@ -38,10 +38,11 @@ fn current_engine(env: &TestEnv) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Picks libpinyin for the focused field, as a user would with `ibus engine`.
+/// Picks libpinyin for the focused field, as a user would with `ibus engine`. The
+/// command cannot report success: after switching it runs `setxkbmap`, which fails
+/// without an X display. The engine the daemon reports is the truth.
 fn select_libpinyin(env: &TestEnv) -> anyhow::Result<()> {
-    let status = env.command("ibus").args(["engine", "libpinyin"]).status()?;
-    anyhow::ensure!(status.success(), "ibus engine libpinyin failed with {status}");
+    env.command("ibus").args(["engine", "libpinyin"]).output()?;
     wait_until("libpinyin to be the engine", || {
         (current_engine(env).as_deref() == Some("libpinyin")).then_some(())
     })
@@ -59,10 +60,12 @@ fn pinyin_types_into_wayland_applications() -> anyhow::Result<()> {
     let editor = env.editor(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
     select_libpinyin(&env)?;
-    // Space picks the first candidate; libpinyin keeps the space.
-    env.type_text("nihao ")?;
+    // Keys go in with real key codes: wtype uploads a keymap of its own for every
+    // string, whose made-up key codes a hosted IBus decodes with a stale keymap. Space
+    // picks the first candidate; libpinyin keeps the space.
+    env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("你好")?;
-    env.type_text("zhongguo ")?;
+    env.type_on_seat("seat0", "zhongguo ")?;
     editor.wait_for_text("你好中国")?;
     // The candidate window of IBus's panel was shown as a popup.
     env.wait_for_log("hosted input method popup created")?;
@@ -105,7 +108,7 @@ fn the_shipped_manifest_installs_ibus() -> anyhow::Result<()> {
     let editor = env.editor(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
     // Without an engine picked, IBus passes keys on.
-    env.type_text("ok")?;
+    env.type_on_seat("seat0", "ok")?;
     editor.wait_for_text("ok")?;
     Ok(())
 }
