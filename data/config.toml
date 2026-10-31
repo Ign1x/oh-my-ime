@@ -25,5 +25,5 @@ remember = false
 
 [tray]
 # Show the current engine in the tray of status bars (StatusNotifierItem), with a menu
-# to switch. Takes effect when omimed starts.
+# to switch.
 enabled = true

@@ -214,3 +214,20 @@ fn a_broken_config_is_reported_and_the_one_in_effect_kept() -> anyhow::Result<()
     assert!(log.contains("future, hotkeys.togle"), "{log}");
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn sighup_reloads_the_configuration() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    let path = env.dir().join("config/oh-my-ime/config.toml");
+    std::fs::create_dir_all(path.parent().context("no parent")?)?;
+    std::fs::write(&path, "engines = [\"echo\"]\n")?;
+    env.signal_daemon(rustix::process::Signal::HUP)?;
+    omime_e2e::harness::wait_until("omimed to read the configuration", || {
+        let list = env.omime(&["engines"]).ok()?;
+        (enabled(&list, "sparkle") == Some(false)).then_some(())
+    })?;
+    // It still runs.
+    assert_eq!(enabled(&env.omime(&["engines"])?, "echo"), Some(true));
+    Ok(())
+}

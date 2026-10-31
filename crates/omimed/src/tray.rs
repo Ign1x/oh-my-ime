@@ -551,7 +551,14 @@ pub async fn start(requests: mpsc::UnboundedSender<ControlRequest>) -> zbus::Res
         )
         .build()
         .await?;
-    let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
+    // A new name each time: the connection of an item turned off and on again may not
+    // be gone yet.
+    static ITEMS: AtomicU32 = AtomicU32::new(0);
+    let item_number = ITEMS.fetch_add(1, Ordering::Relaxed) + 1;
+    let name = format!(
+        "org.kde.StatusNotifierItem-{}-{item_number}",
+        std::process::id()
+    );
     conn.request_name(name.as_str()).await?;
 
     let (changed, mut changes) = mpsc::unbounded_channel();

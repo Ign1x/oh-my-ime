@@ -1,8 +1,8 @@
 //! `omime-tray-host` — the tray of a status bar, for the end-to-end tests.
 //!
 //! It plays `org.kde.StatusNotifierWatcher` on the session bus, follows the item that
-//! registers, and prints what the item shows whenever it changes, ending each snapshot
-//! with `end`:
+//! registered last, and prints what the item shows whenever it changes, ending each
+//! snapshot with `end`, and when the item goes away:
 //!
 //! ```text
 //! ready
@@ -14,6 +14,7 @@
 //! label <XAyatanaLabel>
 //! menu <entry>|<entry>*|...      (* marks the checked entry)
 //! end
+//! unregistered <service>
 //! ```
 //!
 //! It reads commands from stdin: `activate` (a click), `secondary` (a middle click) and
@@ -159,83 +160,103 @@ async fn main() -> anyhow::Result<()> {
     });
     say("ready");
 
-    let Some((name, path)) = registrations.recv().await else {
-        return Ok(());
-    };
-    say(&format!("registered {name}"));
-    let item: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
-        .destination(name.as_str())
-        .path(path.as_str())
-        .interface("org.kde.StatusNotifierItem")
-        .cache_properties(zbus::proxy::CacheProperties::No)
-        .build()
-        .await?;
-    let properties = zbus::fdo::PropertiesProxy::builder(&conn)
-        .destination(name.as_str())
-        .path(path.as_str())
-        .build()
-        .await?;
-    let menu_path: Option<zbus::OwnedObjectPath> = item.get_property("Menu").await.ok();
-    let menu: Option<zbus::Proxy<'_>> = match menu_path.filter(|p| p.as_str() != "/NO_DBUSMENU") {
-        Some(menu_path) => Some(
-            zbus::proxy::Builder::new(&conn)
-                .destination(name.as_str())
-                .path(menu_path)
-                .interface("com.canonical.dbusmenu")
-                .cache_properties(zbus::proxy::CacheProperties::No)
-                .build()
-                .await?,
-        ),
-        None => None,
-    };
-    let mut item_signals = item.receive_all_signals().await?;
-    let mut menu_signals = match &menu {
-        Some(menu) => Some(menu.receive_all_signals().await?),
-        None => None,
-    };
-    let followed = Followed {
-        item,
-        properties,
-        menu,
-    };
-    let mut entries_now = followed.print().await?;
-    loop {
-        tokio::select! {
-            signal = item_signals.next() => {
-                if signal.is_none() { break }
-                entries_now = followed.print().await?;
-            }
-            signal = async {
-                match &mut menu_signals {
-                    Some(signals) => signals.next().await,
-                    None => std::future::pending().await,
+    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
+    let mut next = registrations.recv().await;
+    while let Some((name, path)) = next.take() {
+        say(&format!("registered {name}"));
+        let mut owners = dbus
+            .receive_name_owner_changed_with_args(&[(0, name.as_str())])
+            .await?;
+        let item: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
+            .destination(name.as_str())
+            .path(path.as_str())
+            .interface("org.kde.StatusNotifierItem")
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await?;
+        let properties = zbus::fdo::PropertiesProxy::builder(&conn)
+            .destination(name.as_str())
+            .path(path.as_str())
+            .build()
+            .await?;
+        let menu_path: Option<zbus::OwnedObjectPath> = item.get_property("Menu").await.ok();
+        let menu: Option<zbus::Proxy<'_>> = match menu_path.filter(|p| p.as_str() != "/NO_DBUSMENU")
+        {
+            Some(menu_path) => Some(
+                zbus::proxy::Builder::new(&conn)
+                    .destination(name.as_str())
+                    .path(menu_path)
+                    .interface("com.canonical.dbusmenu")
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await?,
+            ),
+            None => None,
+        };
+        let mut item_signals = item.receive_all_signals().await?;
+        let mut menu_signals = match &menu {
+            Some(menu) => Some(menu.receive_all_signals().await?),
+            None => None,
+        };
+        let followed = Followed {
+            item,
+            properties,
+            menu,
+        };
+        let mut entries_now = followed.print().await?;
+        loop {
+            tokio::select! {
+                registration = registrations.recv() => {
+                    // A new item: follow that one.
+                    next = registration;
+                    break;
                 }
-            } => {
-                if signal.is_none() { break }
-                entries_now = followed.print().await?;
-            }
-            command = commands.recv() => {
-                let Some(command) = command else { break };
-                match command.split_once(' ').unwrap_or((command.as_str(), "")) {
-                    ("activate", _) => {
-                        followed.item.call_method("Activate", &(0i32, 0i32)).await?;
+                owner = owners.next() => {
+                    let gone = owner.is_none_or(|owner| {
+                        owner.args().is_ok_and(|args| args.new_owner().is_none())
+                    });
+                    if gone {
+                        say(&format!("unregistered {name}"));
+                        next = registrations.recv().await;
+                        break;
                     }
-                    ("secondary", _) => {
-                        followed.item.call_method("SecondaryActivate", &(0i32, 0i32)).await?;
+                }
+                signal = item_signals.next() => {
+                    if signal.is_none() { break }
+                    entries_now = followed.print().await?;
+                }
+                signal = async {
+                    match &mut menu_signals {
+                        Some(signals) => signals.next().await,
+                        None => std::future::pending().await,
                     }
-                    ("click", label) => {
-                        let menu = followed.menu.as_ref().context("the item has no menu")?;
-                        let (id, ..) = entries_now
-                            .iter()
-                            .find(|(_, l, _)| l == label)
-                            .with_context(|| format!("no menu entry {label:?}"))?;
-                        menu.call_method(
-                            "Event",
-                            &(*id, "clicked", Variant::from(0i32), 0u32),
-                        )
-                        .await?;
+                } => {
+                    if signal.is_none() { break }
+                    entries_now = followed.print().await?;
+                }
+                command = commands.recv() => {
+                    let Some(command) = command else { return Ok(()) };
+                    match command.split_once(' ').unwrap_or((command.as_str(), "")) {
+                        ("activate", _) => {
+                            followed.item.call_method("Activate", &(0i32, 0i32)).await?;
+                        }
+                        ("secondary", _) => {
+                            followed.item.call_method("SecondaryActivate", &(0i32, 0i32)).await?;
+                        }
+                        ("click", label) => {
+                            let menu = followed.menu.as_ref().context("the item has no menu")?;
+                            let (id, ..) = entries_now
+                                .iter()
+                                .find(|(_, l, _)| l == label)
+                                .with_context(|| format!("no menu entry {label:?}"))?;
+                            menu.call_method(
+                                "Event",
+                                &(*id, "clicked", Variant::from(0i32), 0u32),
+                            )
+                            .await?;
+                        }
+                        _ => anyhow::bail!("unknown command {command:?}"),
                     }
-                    _ => anyhow::bail!("unknown command {command:?}"),
                 }
             }
         }

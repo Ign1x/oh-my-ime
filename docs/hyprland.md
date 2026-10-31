@@ -91,7 +91,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Find out what is wrong | `omime doctor` (exit status 1 when it finds a problem) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
-| Reload the configuration | `omime reload` |
+| Reload the configuration | `omime reload`, `systemctl --user reload omimed` or SIGHUP |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in
@@ -122,7 +122,7 @@ waybar's `tray` module, KDE's system tray and others. The tooltip names it, such
 "双拼 (Fcitx 5)" for an input method inside Fcitx 5, and for Fcitx 5 and IBus the icon is
 theirs too. A click switches between direct input and the last engine, a middle click to
 the next input method, and the menu lists the input methods and direct input. To hide it, set
-this in `~/.config/oh-my-ime/config.toml` and restart omimed:
+this in `~/.config/oh-my-ime/config.toml` and run `omime reload`:
 
 ```toml
 [tray]

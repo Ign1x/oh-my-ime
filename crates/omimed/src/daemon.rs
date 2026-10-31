@@ -124,7 +124,12 @@ enum SessionEnd {
 struct Signals {
     term: Signal,
     int: Signal,
+    /// Reloads the configuration, as daemons do.
+    hup: Signal,
 }
+
+/// The tray item while it is shown, shared with the status listener.
+type SharedTray = Rc<std::cell::RefCell<Option<TrayService>>>;
 
 struct Daemon {
     options: Options,
@@ -137,8 +142,10 @@ struct Daemon {
     control_rx: mpsc::UnboundedReceiver<ControlRequest>,
     /// Kept alive for the control service's lifetime.
     _control: Option<Rc<ControlService>>,
+    /// For the tray item, which asks the daemon loop what to show.
+    control_tx: mpsc::UnboundedSender<ControlRequest>,
     /// The tray item, unless it is turned off.
-    tray: Option<Rc<TrayService>>,
+    tray: SharedTray,
     context_ids: ContextIds,
     /// Applications using the Fcitx5 module; they outlive compositor connections.
     fcitx: FcitxFrontend,
@@ -154,6 +161,7 @@ impl Daemon {
         let signals = Signals {
             term: signal(SignalKind::terminate())?,
             int: signal(SignalKind::interrupt())?,
+            hup: signal(SignalKind::hangup())?,
         };
 
         let (control_tx, control_rx) = mpsc::unbounded_channel();
@@ -183,17 +191,10 @@ impl Daemon {
         };
 
         let config = load_config();
-        let tray = if config.tray.enabled && control.is_some() {
-            match tray::start(control_tx).await {
-                Ok(tray) => Some(Rc::new(tray)),
-                Err(e) => {
-                    warn!("cannot show the tray item: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let tray = SharedTray::default();
+        if config.tray.enabled && control.is_some() {
+            *tray.borrow_mut() = start_tray(&control_tx).await;
+        }
         let installed = discover_engines();
         if installed.is_empty() {
             warn!("no engines are installed; keys pass through unchanged");
@@ -218,7 +219,7 @@ impl Daemon {
             if let Some(service) = &service {
                 service.status_changed(current, control::status_dict(current, method, status));
             }
-            if let Some(tray) = &tray_item {
+            if let Some(tray) = &*tray_item.borrow() {
                 tray.changed();
             }
         });
@@ -236,6 +237,7 @@ impl Daemon {
             ui_rx,
             control_rx,
             _control: control,
+            control_tx,
             tray,
             context_ids,
             fcitx,
@@ -379,7 +381,7 @@ impl Daemon {
                     }
                 }
                 Some(request) = self.control_rx.recv() => {
-                    self.on_control(request, frontend);
+                    self.on_control(request, frontend).await;
                 }
                 Some(request) = self.fcitx_rx.recv() => self.fcitx.handle(request),
                 ready = xim_readable(self.xim.as_ref()) => {
@@ -393,6 +395,10 @@ impl Daemon {
                 }
                 _ = self.signals.term.recv() => break SessionEnd::Shutdown,
                 _ = self.signals.int.recv() => break SessionEnd::Shutdown,
+                _ = self.signals.hup.recv() => {
+                    info!("reloading on SIGHUP");
+                    let _ = self.reload(frontend).await;
+                }
             }
         };
 
@@ -457,7 +463,7 @@ impl Daemon {
         self.xim_retry = Some((Instant::now() + XIM_RETRY_MIN, XIM_RETRY_MIN));
     }
 
-    fn on_control(&mut self, request: ControlRequest, frontend: &mut Frontend) {
+    async fn on_control(&mut self, request: ControlRequest, frontend: &mut Frontend) {
         let result = |r: anyhow::Result<()>| r.map_err(|e| format!("{e:#}"));
         match request {
             ControlRequest::List(reply) => {
@@ -517,27 +523,50 @@ impl Daemon {
                 ));
             }
             ControlRequest::Reload(reply) => {
-                // Engines are looked up again even when config.toml is broken: `omime
-                // install` reloads too.
-                let result = read_config().map(|config| self.config = config);
-                if let Err(e) = &result {
-                    warn!("{e}");
-                    warn!("keeping the configuration in effect");
-                }
-                let installed = discover_engines();
-                self.core.reconfigure(
-                    &self.config,
-                    installed,
-                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
-                );
-                // Engines may have come or gone from the menu.
-                if let Some(tray) = &self.tray {
-                    tray.changed();
-                }
-                let _ = reply.send(
-                    result.map_err(|e| format!("{e}\nomimed keeps the configuration it had")),
-                );
+                let _ = reply.send(self.reload(frontend).await);
             }
+        }
+    }
+
+    /// Reads the configuration again and looks for engines; a broken config.toml keeps
+    /// the configuration in effect, and the engines are looked up anyway: `omime
+    /// install` reloads too.
+    async fn reload(&mut self, frontend: &mut Frontend) -> Result<(), String> {
+        let result = read_config().map(|config| self.config = config);
+        if let Err(e) = &result {
+            warn!("{e}");
+            warn!("keeping the configuration in effect");
+        }
+        let installed = discover_engines();
+        self.core.reconfigure(
+            &self.config,
+            installed,
+            &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+        );
+        let wanted = self.config.tray.enabled && self._control.is_some();
+        let shown = self.tray.borrow().is_some();
+        if wanted && !shown {
+            let tray = start_tray(&self.control_tx).await;
+            *self.tray.borrow_mut() = tray;
+        } else if !wanted && shown {
+            info!("the tray item is off");
+            self.tray.borrow_mut().take();
+        }
+        // Engines may have come or gone from the menu.
+        if let Some(tray) = &*self.tray.borrow() {
+            tray.changed();
+        }
+        result.map_err(|e| format!("{e}\nomimed keeps the configuration it had"))
+    }
+}
+
+/// Shows the tray item; `None` if it cannot be shown.
+async fn start_tray(requests: &mpsc::UnboundedSender<ControlRequest>) -> Option<TrayService> {
+    match tray::start(requests.clone()).await {
+        Ok(tray) => Some(tray),
+        Err(e) => {
+            warn!("cannot show the tray item: {e}");
+            None
         }
     }
 }

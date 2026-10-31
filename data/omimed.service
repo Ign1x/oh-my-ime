@@ -9,6 +9,8 @@ Type=dbus
 BusName=io.github.ign1x.OhMyIme
 # Adjust if omimed is installed elsewhere (e.g. /usr/bin/omimed).
 ExecStart=%h/.local/bin/omimed
+# Fails, and says why, when config.toml has a mistake.
+ExecReload=%h/.local/bin/omime reload
 Restart=on-failure
 RestartSec=1
 

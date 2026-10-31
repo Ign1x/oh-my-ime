@@ -392,6 +392,13 @@ impl TestEnv {
         self.start_daemon(None)
     }
 
+    /// Sends `signal` to omimed.
+    pub fn signal_daemon(&self, signal: rustix::process::Signal) -> anyhow::Result<()> {
+        let daemon = self.daemon.as_ref().context("omimed does not run")?;
+        rustix::process::kill_process(rustix::process::Pid::from_child(daemon), signal)?;
+        Ok(())
+    }
+
     /// The runtime directory of this environment.
     pub fn dir(&self) -> &Path {
         &self.dir

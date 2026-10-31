@@ -85,7 +85,8 @@ rustPlatform.buildRustPackage {
 
     install -Dm644 data/omimed.service $out/lib/systemd/user/omimed.service
     substituteInPlace $out/lib/systemd/user/omimed.service \
-      --replace-fail "ExecStart=%h/.local/bin/omimed" "ExecStart=$out/bin/omimed"
+      --replace-fail "ExecStart=%h/.local/bin/omimed" "ExecStart=$out/bin/omimed" \
+      --replace-fail "ExecReload=%h/.local/bin/omime reload" "ExecReload=$out/bin/omime reload"
     install -Dm644 data/config.toml $out/share/oh-my-ime/config.toml
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
     # Manifests for programs this package does not provide, for `omime install`: not

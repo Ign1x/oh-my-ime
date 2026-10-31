@@ -82,8 +82,7 @@ pub struct AppSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TraySettings {
-    /// Show a tray item (StatusNotifierItem) with the current engine. Read when omimed
-    /// starts.
+    /// Show a tray item (StatusNotifierItem) with the current engine.
     pub enabled: bool,
 }
 

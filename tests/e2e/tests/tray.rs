@@ -61,3 +61,21 @@ fn the_tray_shows_what_hosted_input_methods_show() -> anyhow::Result<()> {
     assert!(status.contains("Test IM"), "{status}");
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_tray_item_comes_and_goes_with_the_configuration() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    let tray = env.tray_host()?;
+    let first = tray.wait_for("omimed's item", |l| l.starts_with("registered "))?;
+    let name = first.trim_start_matches("registered ").to_owned();
+
+    env.configure("[tray]\nenabled = false\n")?;
+    tray.wait_for("the item to go away", |l| {
+        l == format!("unregistered {name}")
+    })?;
+    env.configure("[tray]\nenabled = true\n")?;
+    tray.wait_for("a new item", |l| l.starts_with("registered ") && l != first)?;
+    tray.wait_for_latest("the engine in the tooltip", "tooltip ", |t| t == "echo")?;
+    Ok(())
+}

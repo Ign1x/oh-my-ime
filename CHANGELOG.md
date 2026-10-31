@@ -41,18 +41,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `[tray] enabled` takes effect with `omime reload`. omimed also reloads its
+  configuration on SIGHUP, and the systemd unit can reload it
+  (`systemctl --user reload omimed`).
 - Keys omimed does not know in `config.toml` and in engine manifests, misspelt or from a
   newer version, are left out with a warning (`omime doctor` lists them) instead of
   making the whole file invalid, so files written for newer versions still load.
 
 ### Fixed
 
-- An engine that keeps running while omimed reconnects to the compositor shows its
-  windows again afterwards, and engines are told that the text fields of the lost
-  connection are gone.
 - In X11 applications, keys an input method sends back keep their modifiers: with
   Fcitx 5 or IBus as the engine, Ctrl+C in xterm no longer types a c, through XIM and
   through the Fcitx5 modules alike.
+- An engine that keeps running while omimed reconnects to the compositor shows its
+  windows again afterwards, and engines are told that the text fields of the lost
+  connection are gone.
 - A mistake in `config.toml` no longer goes unnoticed: `omime reload` reports it and
   omimed keeps the configuration it had, instead of silently falling back to the
   defaults for the whole file.
