@@ -150,7 +150,8 @@ Fcitx 5 can run inside oh-my-ime as one engine, unmodified and with all its inpu
 and addons: omimed starts it, gives it a private session bus and an input method of its
 own, and shows its candidate window at the text cursor like any engine's. `fcitx5` must be
 installed, and must not run on its own (step 2). Install the manifest the repository
-ships (the Nix package has it at `share/oh-my-ime/extra-engines/fcitx5`):
+ships (the Nix package and `scripts/install.sh` put it in
+`share/oh-my-ime/extra-engines/fcitx5`):
 
 ```sh
 omime install /path/to/oh-my-ime/data/engines/fcitx5
@@ -193,8 +194,8 @@ IBus (1.5.32 or later) runs inside oh-my-ime the same way, with all its engines
 starts `ibus-daemon` and IBus's GTK panel as the Wayland input method
 (`ibus-ui-gtk3 --enable-wayland-im`), so IBus draws its candidate window, and omimed
 places it at the text cursor. IBus must be installed, and must not run on its own.
-Install the manifest the repository ships (the Nix package has it at
-`share/oh-my-ime/extra-engines/ibus`):
+Install the manifest the repository ships (the Nix package and `scripts/install.sh` put
+it in `share/oh-my-ime/extra-engines/ibus`):
 
 ```sh
 omime install /path/to/oh-my-ime/data/engines/ibus
