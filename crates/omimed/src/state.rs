@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use crate::core::frameworks::InnerMethod;
+
 const STATE_FILE: &str = "state.toml";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,6 +19,11 @@ pub struct State {
     pub last: Option<String>,
     /// The engine last used in each application, by app id (`""` for direct input).
     pub apps: BTreeMap<String, String>,
+    /// The input method in use inside each hosted framework, by engine.
+    pub inner: BTreeMap<String, String>,
+    /// The input methods each hosted framework had when omimed last saw it, so that
+    /// they can be chosen before it starts.
+    pub methods: BTreeMap<String, Vec<InnerMethod>>,
 }
 
 fn path() -> Option<PathBuf> {
@@ -67,7 +74,18 @@ mod tests {
             apps: BTreeMap::from([
                 ("org.mozilla.firefox".into(), "sparkle".into()),
                 ("foot".into(), String::new()),
+                ("kitty".into(), "fcitx5/shuangpin".into()),
             ]),
+            inner: BTreeMap::from([("fcitx5".into(), "shuangpin".into())]),
+            methods: BTreeMap::from([(
+                "fcitx5".into(),
+                vec![InnerMethod {
+                    id: "shuangpin".into(),
+                    name: "双拼".into(),
+                    icon: "fcitx-shuangpin".into(),
+                    label: "双".into(),
+                }],
+            )]),
         };
         let text = toml::to_string(&state).unwrap();
         assert_eq!(toml::from_str::<State>(&text).unwrap(), state);

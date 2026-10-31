@@ -14,6 +14,7 @@
 
 mod bus;
 pub mod engines;
+pub mod frameworks;
 pub mod sni_watcher;
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -63,6 +64,36 @@ pub enum CoreEvent {
         generation: u64,
         tray: Option<sni_watcher::HostedTray>,
     },
+    /// The adapter of a hosted framework (launch `generation`) learnt something.
+    Framework {
+        engine: String,
+        generation: u64,
+        update: frameworks::FrameworkUpdate,
+    },
+}
+
+/// What users choose: an engine of omimed's, or an input method inside a hosted
+/// framework (`fcitx5/shuangpin`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputMethod {
+    /// `engine` or `engine/inner`, what `switch` takes.
+    pub id: String,
+    pub name: String,
+    pub engine: String,
+    pub engine_name: String,
+    /// An icon name or file.
+    pub icon: Option<String>,
+    /// A short label, such as 双.
+    pub label: Option<String>,
+}
+
+/// Splits a switch target `engine/inner` into the engine and the input method inside.
+pub fn split_target(target: &str) -> (&str, Option<&str>) {
+    match target.split_once('/') {
+        Some((engine, inner)) if !inner.is_empty() => (engine, Some(inner)),
+        Some((engine, _)) => (engine, None),
+        None => (target, None),
+    }
 }
 
 /// An engine's answer to a request.
@@ -160,7 +191,7 @@ impl Context {
 /// Callback for changes of what is kept across restarts.
 type StateListener = Box<dyn Fn(&State)>;
 /// Callback for changes of the current engine or of the status it published.
-type StatusListener = Box<dyn Fn(Option<&str>, Option<&Status>)>;
+type StatusListener = Box<dyn Fn(Option<&str>, Option<&str>, Option<&Status>)>;
 
 /// One row of [`Core::engines`].
 #[derive(Debug, Clone)]
@@ -247,6 +278,11 @@ impl Core {
 
     fn state_changed(&self) {
         if let Some(listener) = &self.on_state {
+            let slots = || {
+                self.engines
+                    .ids()
+                    .filter_map(|id| Some((id.to_owned(), self.engines.get(id)?)))
+            };
             listener(&State {
                 current: self.current.clone(),
                 last: self.last_engine.clone(),
@@ -255,21 +291,33 @@ impl Core {
                     .iter()
                     .map(|(app, engine)| (app.clone(), engine.clone().unwrap_or_default()))
                     .collect(),
+                inner: slots()
+                    .filter_map(|(id, slot)| Some((id, slot.inner.clone()?)))
+                    .collect(),
+                methods: slots()
+                    .filter(|(_, slot)| !slot.methods.is_empty())
+                    .map(|(id, slot)| (id, slot.methods.clone()))
+                    .collect(),
             });
         }
     }
 
-    /// Calls `listener` with the current engine and its status whenever either changes.
+    /// Calls `listener` with the current engine, input method and status whenever any
+    /// of them changes.
     pub fn set_status_listener(
         &mut self,
-        listener: impl Fn(Option<&str>, Option<&Status>) + 'static,
+        listener: impl Fn(Option<&str>, Option<&str>, Option<&Status>) + 'static,
     ) {
         self.on_status = Some(Box::new(listener));
     }
 
     fn status_changed(&self) {
         if let Some(listener) = &self.on_status {
-            listener(self.current(), self.current_status());
+            listener(
+                self.current(),
+                self.current_method().as_deref(),
+                self.current_status().as_ref(),
+            );
         }
     }
 
@@ -282,6 +330,17 @@ impl Core {
             .iter()
             .map(|(app, engine)| (app.clone(), (!engine.is_empty()).then(|| engine.clone())))
             .collect();
+        for (engine, methods) in &state.methods {
+            if let Some(slot) = self.engines.get_mut(engine) {
+                slot.methods = methods.clone();
+            }
+        }
+        // A framework starts with its own default; give it back the input method in use.
+        for (engine, inner) in &state.inner {
+            if let Some(slot) = self.engines.get_mut(engine) {
+                slot.wanted_inner = Some(inner.clone());
+            }
+        }
     }
 
     /// Whether `id` is installed and enabled.
@@ -329,12 +388,77 @@ impl Core {
             .and_then(|slot| slot.tray.as_ref())
     }
 
-    /// The status the current engine published.
-    pub fn current_status(&self) -> Option<&Status> {
-        self.current
+    /// The status of the current engine: what it published, and for a hosted framework
+    /// the input method in use.
+    pub fn current_status(&self) -> Option<Status> {
+        let slot = self
+            .current
             .as_deref()
-            .and_then(|id| self.engines.get(id))
-            .map(|slot| &slot.status)
+            .and_then(|id| self.engines.get(id))?;
+        let mut status = slot.status.clone();
+        if let Some(method) = slot
+            .inner
+            .as_deref()
+            .and_then(|inner| slot.methods.iter().find(|m| m.id == inner))
+        {
+            let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+            status.tooltip = Some(method.name.clone());
+            status.label = text(&method.label).or(status.label);
+            status.icon = status.icon.or_else(|| text(&method.icon));
+        }
+        Some(status)
+    }
+
+    /// What users choose from: the enabled engines in switching order, each hosted
+    /// framework replaced by the input methods inside it once they are known.
+    pub fn input_methods(&self) -> Vec<InputMethod> {
+        let locale = std::env::var("LC_ALL")
+            .or_else(|_| std::env::var("LC_MESSAGES"))
+            .or_else(|_| std::env::var("LANG"))
+            .unwrap_or_default();
+        let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+        let mut methods = Vec::new();
+        for id in &self.enabled {
+            let Some(slot) = self.engines.get(id) else {
+                continue;
+            };
+            let engine_name = slot.installed.manifest.localized_name(&locale).to_owned();
+            if slot.methods.is_empty() {
+                methods.push(InputMethod {
+                    id: id.clone(),
+                    name: engine_name.clone(),
+                    engine: id.clone(),
+                    engine_name,
+                    icon: slot.installed.manifest.engine.icon.clone(),
+                    label: None,
+                });
+                continue;
+            }
+            for method in &slot.methods {
+                methods.push(InputMethod {
+                    id: format!("{id}/{}", method.id),
+                    name: method.name.clone(),
+                    engine: id.clone(),
+                    engine_name: engine_name.clone(),
+                    icon: text(&method.icon),
+                    label: text(&method.label),
+                });
+            }
+        }
+        methods
+    }
+
+    /// The input method in use: the current engine, or the input method inside it. `None`
+    /// is direct input.
+    pub fn current_method(&self) -> Option<String> {
+        let engine = self.current.as_deref()?;
+        let slot = self.engines.get(engine)?;
+        Some(match &slot.inner {
+            Some(inner) if slot.methods.iter().any(|m| &m.id == inner) => {
+                format!("{engine}/{inner}")
+            }
+            _ => engine.to_owned(),
+        })
     }
 
     /// All installed engines, enabled ones first in switching order.
@@ -604,7 +728,10 @@ impl Core {
         let Some(engine) = self.app_engines.get(&app).cloned() else {
             return;
         };
-        if engine.as_ref().is_some_and(|e| !self.is_enabled(e)) {
+        if engine
+            .as_deref()
+            .is_some_and(|e| !self.is_enabled(split_target(e).0))
+        {
             return;
         }
         if let Err(e) = self.set_current(engine, out) {
@@ -659,9 +786,21 @@ impl Core {
                 generation,
                 tray,
             } => {
-                if self.engines.set_tray(&engine, generation, tray)
-                    && self.current.as_deref() == Some(&engine)
-                {
+                if self.engines.set_tray(&engine, generation, tray) {
+                    // The tray item changes when the input method does.
+                    self.engines.refresh_inner(&engine);
+                    if self.current.as_deref() == Some(&engine) {
+                        self.status_changed();
+                    }
+                }
+            }
+            CoreEvent::Framework {
+                engine,
+                generation,
+                update,
+            } => {
+                if self.engines.framework_update(&engine, generation, update) {
+                    self.state_changed();
                     self.status_changed();
                 }
             }
@@ -984,19 +1123,34 @@ impl Core {
         Ok(())
     }
 
-    /// Makes `target` (or direct input) the engine of all fields.
+    /// Makes `target` (or direct input) the engine of all fields. A target
+    /// `engine/inner` also selects the input method `inner` inside a hosted framework.
     pub fn set_current(
         &mut self,
         target: Option<String>,
         out: &mut dyn Frontends,
     ) -> anyhow::Result<()> {
+        let (target, inner) = match target.as_deref().map(split_target) {
+            Some((engine, inner)) => (Some(engine.to_owned()), inner.map(str::to_owned)),
+            None => (None, None),
+        };
         if let Some(id) = &target {
-            anyhow::ensure!(
-                self.engines.get(id).is_some(),
-                "no engine `{id}` is installed"
-            );
+            let Some(slot) = self.engines.get(id) else {
+                anyhow::bail!("no engine `{id}` is installed");
+            };
+            if let Some(inner) = &inner {
+                anyhow::ensure!(
+                    slot.methods.is_empty() || slot.methods.iter().any(|m| &m.id == inner),
+                    "`{id}` has no input method `{inner}`"
+                );
+            }
             // An explicit switch also retries an engine that gave up after crashing.
             self.engines.ensure_started(id, true)?;
+            if let Some(inner) = inner
+                && self.engines.get(id).and_then(|s| s.inner.as_deref()) != Some(inner.as_str())
+            {
+                self.engines.select_inner(id, inner);
+            }
         }
         if target == self.current {
             return Ok(());
@@ -1045,16 +1199,17 @@ impl Core {
         Ok(())
     }
 
-    /// Switches to the next enabled engine (wrapping around to the first).
+    /// Switches to the next input method (wrapping around to the first).
     pub fn next(&mut self, out: &mut dyn Frontends) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.enabled.is_empty(), "no engines are enabled");
-        let position = self
-            .current
+        let methods = self.input_methods();
+        anyhow::ensure!(!methods.is_empty(), "no engines are enabled");
+        let current = self.current_method();
+        let position = current
             .as_ref()
-            .and_then(|c| self.enabled.iter().position(|e| e == c));
+            .and_then(|c| methods.iter().position(|m| &m.id == c));
         let next = match position {
-            Some(i) => self.enabled[(i + 1) % self.enabled.len()].clone(),
-            None => self.enabled[0].clone(),
+            Some(i) => methods[(i + 1) % methods.len()].id.clone(),
+            None => methods[0].id.clone(),
         };
         self.switch_to(Some(next), out)
     }

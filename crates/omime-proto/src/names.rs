@@ -32,5 +32,9 @@ pub const ENV_ENGINE_ID: &str = "OMIME_ENGINE_ID";
 /// not go through the UI bridge (for example a settings dialog).
 pub const ENV_HOST_WAYLAND_DISPLAY: &str = "OMIME_HOST_WAYLAND_DISPLAY";
 
+/// Environment variable naming a hosted input method's runtime directory, where it may
+/// leave files for the daemon (`omime-ibus` names IBus's address file there).
+pub const ENV_ENGINE_RUNTIME_DIR: &str = "OMIME_ENGINE_RUNTIME_DIR";
+
 /// Name of the per-user runtime directory below `$XDG_RUNTIME_DIR`.
 pub const RUNTIME_DIR_NAME: &str = "oh-my-ime";

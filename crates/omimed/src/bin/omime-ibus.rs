@@ -16,7 +16,9 @@
 //! The address file is the one IBus tools in the session look for, named after the
 //! session's display (`~/.config/ibus/bus/<machine id>-unix-<WAYLAND_DISPLAY>`), so
 //! `ibus engine`, `ibus-setup` and friends reach the hosted daemon unchanged;
-//! `IBUS_ADDRESS_FILE` overrides it. `OMIME_IBUS_DAEMON` and `OMIME_IBUS_PANEL` name the
+//! `IBUS_ADDRESS_FILE` overrides it. omimed learns its path from the file
+//! `ibus-address-file` in `$OMIME_ENGINE_RUNTIME_DIR`, and through it lists and switches
+//! IBus's engines. `OMIME_IBUS_DAEMON` and `OMIME_IBUS_PANEL` name the
 //! programs when they are not `ibus-daemon` on `$PATH` and `ibus-ui-gtk3` in the
 //! matching `libexec`.
 
@@ -51,6 +53,13 @@ async fn run() -> anyhow::Result<ExitCode> {
     let address_file = address_file()?;
     // A stale file would send the panel to a daemon that is gone.
     let _ = std::fs::remove_file(&address_file);
+    // Where omimed finds IBus, to list and switch its engines.
+    if let Some(dir) = std::env::var_os("OMIME_ENGINE_RUNTIME_DIR") {
+        let note = std::path::Path::new(&dir).join("ibus-address-file");
+        if let Err(e) = std::fs::write(&note, address_file.as_os_str().as_encoded_bytes()) {
+            eprintln!("omime-ibus: cannot write {}: {e}", note.display());
+        }
+    }
 
     // No panel of the daemon's own: the one started below is the panel. The emoji
     // extension is a window that needs the keyboard, which an engine window cannot get.

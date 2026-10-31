@@ -11,12 +11,14 @@ use tokio::sync::{mpsc, oneshot};
 use zbus::object_server::SignalEmitter;
 use zbus::{OwnedVariant, Variant};
 
-use crate::core::EngineSummary;
+use crate::core::{EngineSummary, InputMethod};
 
 /// Requests from D-Bus clients, answered by the daemon loop.
 #[derive(Debug)]
 pub enum ControlRequest {
     List(oneshot::Sender<Vec<EngineSummary>>),
+    /// The input methods, and the one in use (`None` for direct input).
+    ListInputMethods(oneshot::Sender<(Vec<InputMethod>, Option<String>)>),
     Status(oneshot::Sender<Dict>),
     /// `None` selects direct input.
     Switch(Option<String>, oneshot::Sender<Result<(), String>>),
@@ -62,13 +64,38 @@ impl ControlObject {
             .collect())
     }
 
-    /// Current state: "engine" (s, empty for direct input), and the engine's "label",
-    /// "icon" and "tooltip" (s) when it published them.
+    /// What users choose from: input methods (id, name, engine name, label, in use), in
+    /// switching order. An id is an engine's (`sparkle`), or names an input method
+    /// inside a hosted framework (`fcitx5/shuangpin`); `Switch` takes either.
+    async fn list_input_methods(
+        &self,
+    ) -> zbus::fdo::Result<Vec<(String, String, String, String, bool)>> {
+        let (methods, current) = self.ask(ControlRequest::ListInputMethods).await?;
+        Ok(methods
+            .into_iter()
+            .map(|m| {
+                let in_use = current.as_deref() == Some(m.id.as_str());
+                (
+                    m.id,
+                    m.name,
+                    m.engine_name,
+                    m.label.unwrap_or_default(),
+                    in_use,
+                )
+            })
+            .collect())
+    }
+
+    /// Current state: "engine" (s, empty for direct input), "input-method" (s, the id
+    /// `ListInputMethods` gives it), and the engine's "label", "icon" and "tooltip" (s)
+    /// when it published them; for a hosted framework the tooltip names the input
+    /// method in use.
     async fn status(&self) -> zbus::fdo::Result<Dict> {
         self.ask(ControlRequest::Status).await
     }
 
-    /// Switches to `engine`; an empty string selects direct input.
+    /// Switches to `engine`, or to an input method inside a hosted framework
+    /// (`fcitx5/shuangpin`); an empty string selects direct input.
     async fn switch(&self, engine: String) -> zbus::fdo::Result<()> {
         let target = (!engine.is_empty()).then_some(engine);
         failed(self.ask(|tx| ControlRequest::Switch(target, tx)).await?)
@@ -193,12 +220,15 @@ pub fn diagnosis(display: &str, seats: Vec<(String, bool)>, focused_app: bool) -
 }
 
 /// Builds the reply of `Status`.
-pub fn status_dict(engine: Option<&str>, status: Option<&omime_proto::engine::Status>) -> Dict {
+pub fn status_dict(
+    engine: Option<&str>,
+    method: Option<&str>,
+    status: Option<&omime_proto::engine::Status>,
+) -> Dict {
     let mut dict = status.map(|s| s.to_dict()).unwrap_or_default();
-    dict.insert(
-        "engine".into(),
-        OwnedVariant::try_from(Variant::from(engine.unwrap_or_default()))
-            .expect("strings can be owned"),
-    );
+    let owned =
+        |value: &str| OwnedVariant::try_from(Variant::from(value)).expect("strings can be owned");
+    dict.insert("engine".into(), owned(engine.unwrap_or_default()));
+    dict.insert("input-method".into(), owned(method.unwrap_or_default()));
     dict
 }

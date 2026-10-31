@@ -22,12 +22,18 @@ All notable changes to this project are documented here. The format follows
   method (`ibus-ui-gtk3 --enable-wayland-im`), so IBus's candidate window is a popup at
   the text cursor, and it writes the daemon's address where `ibus engine`, `ibus-setup`
   and friends look for it. `data/engines/ibus/engine.toml` is the manifest.
-- A tray item (StatusNotifierItem) shows the current engine in status bars such as
-  waybar's tray: its icon, and in the tooltip the engine and, for Fcitx 5 and IBus, the
-  input method they use ("Fcitx 5 · 双拼"), which omimed reads from their own tray item on
-  the private bus. A click toggles direct input, a middle click switches to the next
-  engine, and its menu switches to any enabled engine. `omime status` reports the hosted
-  input method too. `[tray] enabled = false` hides it.
+- Users choose input methods, not frameworks: the input methods inside a hosted Fcitx 5
+  or IBus are choices of their own, such as `fcitx5/shuangpin` and `ibus/libpinyin`, in
+  `omime list`, `omime switch`, `Ctrl+Shift+Space`, the tray menu and per-application
+  engines. omimed asks the framework which input methods it has and which one is in
+  use, follows its own switching, and remembers both across restarts. `omime list` now
+  lists input methods; `omime engines` lists the installed engines as `omime list` did.
+- A tray item (StatusNotifierItem) shows the input method in use in status bars such
+  as waybar's tray: in the tooltip ("双拼 (Fcitx 5)"), and with the icon of Fcitx 5's or
+  IBus's own tray item, which omimed follows on the private bus. A click toggles direct
+  input, a middle click switches to the next input method, and its menu switches to any
+  input method. `omime status` reports the input method too. `[tray] enabled = false`
+  hides it.
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
 

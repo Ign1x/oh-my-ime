@@ -24,8 +24,8 @@ use zbus::{ObjectPath, OwnedObjectPath, Structure};
 use zbus::{OwnedVariant, Variant};
 
 use crate::control::ControlRequest;
-use crate::core::EngineSummary;
 use crate::core::sni_watcher::{HostedTray, Pixmap};
+use crate::core::{EngineSummary, InputMethod};
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
@@ -45,6 +45,10 @@ pub struct TrayInfo {
     pub status: Status,
     /// What the tray item of the current engine shows, for hosted engines.
     pub hosted: Option<HostedTray>,
+    /// What users choose from, in switching order.
+    pub methods: Vec<InputMethod>,
+    /// The input method in use; `None` is direct input.
+    pub method: Option<String>,
 }
 
 impl TrayInfo {
@@ -80,8 +84,20 @@ impl TrayInfo {
             .unwrap_or_default()
     }
 
-    /// "Fcitx 5 · 双拼": the engine, and what it says it is doing.
+    /// The input method in use, if it is one inside a hosted framework.
+    fn inner_method(&self) -> Option<&InputMethod> {
+        let method = self.method.as_deref()?;
+        self.methods
+            .iter()
+            .find(|m| m.id == method && m.id != m.engine)
+    }
+
+    /// "双拼 (Fcitx 5)" for an input method inside a framework; for an engine of
+    /// omimed's, "Sparkle · emoji": the engine and what it says it is doing.
     fn title(&self) -> String {
+        if let Some(method) = self.inner_method() {
+            return format!("{} ({})", method.name, method.engine_name);
+        }
         let Some(engine) = self.current() else {
             return direct_input_label().to_owned();
         };
@@ -101,15 +117,21 @@ impl TrayInfo {
         self.status.label.clone().unwrap_or_default()
     }
 
-    /// The menu entries: enabled engines, then direct input. `None` is direct input.
+    /// The menu entries: the input methods, then direct input. `None` is direct input.
+    /// Input methods of the same name in two frameworks say which one they are in.
     fn menu(&self) -> Vec<(Option<String>, String, bool)> {
         let mut entries: Vec<_> = self
-            .engines
+            .methods
             .iter()
-            .filter(|e| e.enabled)
-            .map(|e| {
-                let current = self.engine.as_deref() == Some(e.id.as_str());
-                (Some(e.id.clone()), e.name.clone(), current)
+            .map(|m| {
+                let twins = self.methods.iter().filter(|o| o.name == m.name).count();
+                let label = if twins > 1 {
+                    format!("{} ({})", m.name, m.engine_name)
+                } else {
+                    m.name.clone()
+                };
+                let current = self.method.as_deref() == Some(m.id.as_str());
+                (Some(m.id.clone()), label, current)
             })
             .collect();
         entries.push((None, direct_input_label().to_owned(), self.engine.is_none()));
@@ -602,28 +624,47 @@ mod tests {
         }
     }
 
-    fn info(current: Option<&str>) -> TrayInfo {
+    fn method(id: &str, name: &str, engine: &str, engine_name: &str) -> InputMethod {
+        InputMethod {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            engine: engine.to_owned(),
+            engine_name: engine_name.to_owned(),
+            icon: None,
+            label: None,
+        }
+    }
+
+    fn info(current: Option<&str>, method_in_use: Option<&str>) -> TrayInfo {
         TrayInfo {
             engine: current.map(str::to_owned),
             engines: vec![
                 engine("fcitx5", "Fcitx 5", true, None),
+                engine("ibus", "IBus", true, None),
                 engine("sparkle", "Sparkle", true, Some("sparkle-icon")),
                 engine("echo", "Echo", false, None),
             ],
+            methods: vec![
+                method("fcitx5/shuangpin", "双拼", "fcitx5", "Fcitx 5"),
+                method("fcitx5/pinyin", "拼音", "fcitx5", "Fcitx 5"),
+                method("ibus/pinyin", "拼音", "ibus", "IBus"),
+                method("sparkle", "Sparkle", "sparkle", "Sparkle"),
+            ],
+            method: method_in_use.map(str::to_owned),
             ..TrayInfo::default()
         }
     }
 
     #[test]
     fn direct_input_shows_a_keyboard() {
-        let info = info(None);
+        let info = info(None, None);
         assert_eq!(info.icon_name(), KEYBOARD_ICON);
         assert_eq!(info.title(), direct_input_label());
     }
 
     #[test]
     fn engines_show_their_icon_and_status() {
-        let mut info = info(Some("sparkle"));
+        let mut info = info(Some("sparkle"), Some("sparkle"));
         assert_eq!(info.icon_name(), "sparkle-icon");
         assert_eq!(info.title(), "Sparkle");
         info.status.tooltip = Some("emoji".to_owned());
@@ -633,25 +674,23 @@ mod tests {
     }
 
     #[test]
-    fn hosted_input_methods_show_their_own_icon() {
-        let mut info = info(Some("fcitx5"));
+    fn input_methods_inside_frameworks_show_their_own_icon_and_name() {
+        let mut info = info(Some("fcitx5"), Some("fcitx5/shuangpin"));
         assert_eq!(info.icon_name(), KEYBOARD_ICON);
         info.hosted = Some(HostedTray {
             icon_name: "fcitx-shuangpin".to_owned(),
             icon_theme_path: "/fcitx/share/icons".to_owned(),
-            title: "双拼".to_owned(),
+            title: "Shuangpin".to_owned(),
             ..HostedTray::default()
         });
-        // The core makes the status from the item.
-        info.status.tooltip = Some("双拼".to_owned());
         assert_eq!(info.icon_name(), "fcitx-shuangpin");
         assert_eq!(info.icon_theme_path(), "/fcitx/share/icons");
-        assert_eq!(info.title(), "Fcitx 5 · 双拼");
+        assert_eq!(info.title(), "双拼 (Fcitx 5)");
     }
 
     #[test]
-    fn the_menu_lists_enabled_engines_and_direct_input() {
-        let menu = info(Some("sparkle")).menu();
+    fn the_menu_lists_input_methods_and_direct_input() {
+        let menu = info(Some("fcitx5"), Some("fcitx5/pinyin")).menu();
         let entries: Vec<(Option<&str>, &str, bool)> = menu
             .iter()
             .map(|(id, name, current)| (id.as_deref(), name.as_str(), *current))
@@ -659,8 +698,11 @@ mod tests {
         assert_eq!(
             entries,
             [
-                (Some("fcitx5"), "Fcitx 5", false),
-                (Some("sparkle"), "Sparkle", true),
+                (Some("fcitx5/shuangpin"), "双拼", false),
+                // Two frameworks have a 拼音: each says which it is.
+                (Some("fcitx5/pinyin"), "拼音 (Fcitx 5)", true),
+                (Some("ibus/pinyin"), "拼音 (IBus)", false),
+                (Some("sparkle"), "Sparkle", false),
                 (None, direct_input_label(), false),
             ]
         );

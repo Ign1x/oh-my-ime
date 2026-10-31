@@ -16,11 +16,13 @@ const USAGE: &str = "\
 Usage: omime <COMMAND>
 
 Commands:
-  list             List installed engines
+  list             List the input methods to choose from (* marks the one in use)
+  engines          List installed engines (* marks enabled ones)
   status [--json] [--watch]
-                   Show the current engine (`--watch` keeps streaming changes)
-  switch <ENGINE>  Switch to an engine (`direct` for no engine)
-  next             Switch to the next enabled engine
+                   Show the input method in use (`--watch` keeps streaming changes)
+  switch <ID>      Switch to an input method from `list`, such as `sparkle` or
+                   `fcitx5/shuangpin` (`direct` for no input method)
+  next             Switch to the next input method
   toggle           Switch between direct input and the last engine
   enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
@@ -41,6 +43,7 @@ for it.";
 )]
 trait Daemon {
     fn list_engines(&self) -> zbus::Result<Vec<(String, String, bool, String)>>;
+    fn list_input_methods(&self) -> zbus::Result<Vec<(String, String, String, String, bool)>>;
     fn status(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     fn switch(&self, engine: &str) -> zbus::Result<()>;
     fn next(&self) -> zbus::Result<()>;
@@ -73,6 +76,7 @@ enum Command {
 
 enum DaemonCommand {
     List,
+    Engines,
     Status { json: bool },
     Switch(String),
     Next,
@@ -102,6 +106,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
         }
         args => Command::Daemon(match args {
             ["list"] => DaemonCommand::List,
+            ["engines"] => DaemonCommand::Engines,
             ["status"] => DaemonCommand::Status { json: false },
             ["status", "--json"] => DaemonCommand::Status { json: true },
             ["switch", engine] => DaemonCommand::Switch((*engine).to_owned()),
@@ -113,6 +118,15 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
         }),
     }))
+}
+
+/// `text` padded to `width` columns; CJK characters take two.
+fn pad(text: &str, width: usize) -> String {
+    let columns: usize = text
+        .chars()
+        .map(|c| if (c as u32) >= 0x1100 { 2 } else { 1 })
+        .sum();
+    format!("{text}{}", " ".repeat(width.saturating_sub(columns)))
 }
 
 fn string(dict: &HashMap<String, OwnedVariant>, key: &str) -> Option<String> {
@@ -142,6 +156,7 @@ fn json_string(s: &str) -> String {
 /// `StatusChanged`) as the line `omime status` prints.
 fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
     let engine = string(status, "engine");
+    let method = string(status, "input-method").or_else(|| engine.clone());
     let label = string(status, "label");
     if json {
         let field = |v: &Option<String>| v.as_deref().map_or("null".into(), json_string);
@@ -153,18 +168,19 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
             .unwrap_or_else(|| "⌨".into());
         let class = engine.clone().unwrap_or_else(|| "direct".into());
         format!(
-            "{{\"engine\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
+            "{{\"engine\":{},\"input_method\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
             field(&engine),
+            field(&method),
             field(&label),
             field(&tooltip),
             json_string(&text),
             json_string(&class),
         )
     } else {
-        match (engine, label) {
+        match (method, label) {
             (None, _) => "direct input".into(),
-            (Some(engine), Some(label)) => format!("{engine} ({label})"),
-            (Some(engine), None) => engine,
+            (Some(method), Some(label)) => format!("{method} ({label})"),
+            (Some(method), None) => method,
         }
     }
 }
@@ -173,7 +189,7 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
 fn format_stopped(json: bool) -> String {
     if json {
         // `class` is `stopped`, so status bars can tell it from direct input.
-        "{\"engine\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
+        "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
          \"text\":\"⌨\",\"class\":\"stopped\"}"
             .into()
     } else {
@@ -298,6 +314,17 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
 
     match command {
         DaemonCommand::List => {
+            for (id, name, engine, _label, in_use) in daemon.list_input_methods().await? {
+                let mark = if in_use { '*' } else { ' ' };
+                let engine = if engine == name {
+                    String::new()
+                } else {
+                    engine
+                };
+                println!("{mark} {id:<24} {} {engine}", pad(&name, 24));
+            }
+        }
+        DaemonCommand::Engines => {
             for (id, name, enabled, state) in daemon.list_engines().await? {
                 let mark = if enabled { '*' } else { ' ' };
                 println!("{mark} {id:<16} {name:<24} {state}");
@@ -434,6 +461,10 @@ mod tests {
             Ok(Some(Command::Daemon(DaemonCommand::List)))
         ));
         assert!(matches!(
+            parse(&args("engines")),
+            Ok(Some(Command::Daemon(DaemonCommand::Engines)))
+        ));
+        assert!(matches!(
             parse(&args("status --json")),
             Ok(Some(Command::Daemon(DaemonCommand::Status { json: true })))
         ));
@@ -508,18 +539,18 @@ mod tests {
         assert_eq!(format_status(&status, false), "echo");
         assert_eq!(
             format_status(&status, true),
-            "{\"engine\":\"echo\",\"label\":null,\"tooltip\":null,\
+            "{\"engine\":\"echo\",\"input_method\":\"echo\",\"label\":null,\"tooltip\":null,\
              \"text\":\"echo\",\"class\":\"echo\"}"
         );
         assert_eq!(
             format_status(&HashMap::new(), true),
-            "{\"engine\":null,\"label\":null,\"tooltip\":null,\
+            "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":null,\
              \"text\":\"⌨\",\"class\":\"direct\"}"
         );
         assert_eq!(format_stopped(false), "omimed is not running");
         assert_eq!(
             format_stopped(true),
-            "{\"engine\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
+            "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
              \"text\":\"⌨\",\"class\":\"stopped\"}"
         );
     }

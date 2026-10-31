@@ -21,7 +21,7 @@ use anyhow::Context as _;
 use omime_proto::engine::{Dict, KeyEvent, WireAction};
 use omime_proto::manifest::InstalledEngine;
 use omime_proto::names::{
-    DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID,
+    DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
     ENV_HOST_WAYLAND_DISPLAY,
 };
 use omime_proto::{ApiVersion, engine::Status};
@@ -30,6 +30,7 @@ use tracing::{debug, info, warn};
 use zbus::{OwnedVariant, Variant};
 
 use super::CoreEvent;
+use super::frameworks::{self, FrameworkCommand, FrameworkUpdate, InnerMethod};
 use super::sni_watcher::{self, HostedTray};
 use crate::runtime_dir;
 
@@ -237,6 +238,14 @@ pub struct EngineSlot {
     pub status: Status,
     /// What the tray item of a hosted engine shows; its status is made from it.
     pub tray: Option<HostedTray>,
+    /// The input methods inside a hosted framework, as it last reported them.
+    pub methods: Vec<InnerMethod>,
+    /// The input method the framework uses, as it last reported it.
+    pub inner: Option<String>,
+    /// The input method to select once the framework can be asked.
+    pub wanted_inner: Option<String>,
+    /// Commands for the framework's adapter, while it runs.
+    framework: Option<mpsc::UnboundedSender<FrameworkCommand>>,
     /// Increases with every launch; events of older processes are ignored.
     generation: u64,
     kill: Option<oneshot::Sender<()>>,
@@ -299,6 +308,10 @@ impl EngineManager {
             proxy: None,
             status: Status::default(),
             tray: None,
+            methods: Vec::new(),
+            inner: None,
+            wanted_inner: None,
+            framework: None,
             generation: 0,
             kill: None,
             crashes: Vec::new(),
@@ -589,6 +602,57 @@ impl EngineManager {
         true
     }
 
+    /// Takes what the framework adapter of `id` (launch `generation`) reports. Returns
+    /// whether the input methods or the current one changed.
+    pub fn framework_update(&mut self, id: &str, generation: u64, update: FrameworkUpdate) -> bool {
+        let Some(slot) = self.slots.get_mut(id) else {
+            return false;
+        };
+        if generation != slot.generation {
+            return false;
+        }
+        match update {
+            FrameworkUpdate::Connected(commands) => {
+                if let Some(wanted) = slot.wanted_inner.take() {
+                    let _ = commands.send(FrameworkCommand::Select(wanted));
+                }
+                slot.framework = Some(commands);
+                false
+            }
+            FrameworkUpdate::Methods(methods) => {
+                let changed = slot.methods != methods;
+                slot.methods = methods;
+                changed
+            }
+            FrameworkUpdate::Current(inner) => {
+                let changed = slot.inner != inner;
+                slot.inner = inner;
+                changed
+            }
+        }
+    }
+
+    /// Selects the input method `inner` inside the framework of `id`: now, or once its
+    /// adapter runs.
+    pub fn select_inner(&mut self, id: &str, inner: String) {
+        let Some(slot) = self.slots.get_mut(id) else {
+            return;
+        };
+        match &slot.framework {
+            Some(commands) => {
+                let _ = commands.send(FrameworkCommand::Select(inner));
+            }
+            None => slot.wanted_inner = Some(inner),
+        }
+    }
+
+    /// Asks the framework adapter of `id` to look at the current input method again.
+    pub fn refresh_inner(&self, id: &str) {
+        if let Some(commands) = self.slots.get(id).and_then(|s| s.framework.as_ref()) {
+            let _ = commands.send(FrameworkCommand::Refresh);
+        }
+    }
+
     pub fn exited(&mut self, id: &str, generation: u64, status: Option<ExitStatus>, needed: bool) {
         let Some(slot) = self.slots.get_mut(id) else {
             return;
@@ -598,6 +662,7 @@ impl EngineManager {
         }
         slot.proxy = None;
         slot.kill = None;
+        slot.framework = None;
         // The status of a hosted engine came from its tray item, which is gone.
         if slot.tray.take().is_some() {
             slot.status = Status::default();
@@ -757,8 +822,17 @@ async fn supervise_hosted(
     // Kept until the input method exits; dropping it stops the bus.
     // The tray watcher goes before the bus, and the bus before the input method.
     let mut _tray = None;
+    let mut _framework = None;
+    command.env(ENV_ENGINE_RUNTIME_DIR, &dir);
     let _bus = match super::bus::start(&dir).await {
         Ok((bus, address)) => {
+            _framework = Some(frameworks::start(
+                engine.clone(),
+                generation,
+                address.clone(),
+                dir.clone(),
+                events.clone(),
+            ));
             match sni_watcher::start(
                 engine.clone(),
                 generation,

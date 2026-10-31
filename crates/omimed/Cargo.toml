@@ -22,6 +22,7 @@ xkbcommon.workspace = true
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false }
+gvdb = { version = "0.10", default-features = false }
 x11rb = { version = "0.14", features = ["randr"] }
 xim = { version = "0.6", default-features = false, features = ["std", "x11rb-server"] }
 xim-ctext = "0.5"

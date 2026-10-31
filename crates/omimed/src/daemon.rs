@@ -194,9 +194,9 @@ impl Daemon {
         core.set_state_listener(State::save);
         let service = control.clone();
         let tray_item = tray.clone();
-        core.set_status_listener(move |current, status| {
+        core.set_status_listener(move |current, method, status| {
             if let Some(service) = &service {
-                service.status_changed(current, control::status_dict(current, status));
+                service.status_changed(current, control::status_dict(current, method, status));
             }
             if let Some(tray) = &tray_item {
                 tray.changed();
@@ -437,10 +437,14 @@ impl Daemon {
             ControlRequest::List(reply) => {
                 let _ = reply.send(self.core.engines());
             }
+            ControlRequest::ListInputMethods(reply) => {
+                let _ = reply.send((self.core.input_methods(), self.core.current_method()));
+            }
             ControlRequest::Status(reply) => {
                 let _ = reply.send(control::status_dict(
                     self.core.current(),
-                    self.core.current_status(),
+                    self.core.current_method().as_deref(),
+                    self.core.current_status().as_ref(),
                 ));
             }
             ControlRequest::Switch(target, reply) => {
@@ -467,8 +471,10 @@ impl Daemon {
                 let _ = reply.send(TrayInfo {
                     engine: self.core.current().map(str::to_owned),
                     engines: self.core.engines(),
-                    status: self.core.current_status().cloned().unwrap_or_default(),
+                    status: self.core.current_status().unwrap_or_default(),
                     hosted: self.core.current_tray().cloned(),
+                    methods: self.core.input_methods(),
+                    method: self.core.current_method(),
                 });
             }
             ControlRequest::Diagnose(reply) => {
