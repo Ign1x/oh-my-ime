@@ -129,7 +129,8 @@ flowchart LR
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
-| 托盘项：当前引擎，Fcitx 5 与 IBus 还显示它们所用的输入法；菜单用于切换 | ✅ |
+| 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
+| Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
 | 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
 | 附带 systemd 用户单元的 Nix 包 | ✅ |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
@@ -183,9 +184,9 @@ end)
 | 操作 | 方式 |
 |---|---|
 | 在直接输入与上一个引擎之间切换 | `Ctrl+Space` |
-| 下一个引擎 | `Ctrl+Shift+Space` 或 `omime next` |
-| 指定引擎 | `omime switch sparkle`、`omime switch direct` |
-| 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
+| 下一个输入法 | `Ctrl+Shift+Space` 或 `omime next` |
+| 指定输入法 | `omime list`，然后 `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`；或使用托盘菜单 |
+| 管理引擎 | `omime engines`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 状态栏 | 托盘项（StatusNotifierItem）；`omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 
 omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置 `remember = true` 后，则会记住每个应用各自的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。

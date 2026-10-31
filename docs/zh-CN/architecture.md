@@ -91,11 +91,12 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - **窗口。** 输入法的弹窗 surface 就是引擎窗口，以输入法弹窗的形式或显示在镜像上，文本光标矩形则通过它的弹窗角色送达它。输入法的其他窗口（toplevel）无法显示。
 - **进程。** omimed 在引擎的运行时目录中用一个私有会话总线启动输入法，即一个不提供服务激活的 `dbus-daemon`，这样它就无法从 omimed 的 Fcitx5 前端手中夺走用户总线上的 `org.fcitx.Fcitx5`。它会拿到自己 bridge socket 的 `WAYLAND_DISPLAY`，但拿不到 `DISPLAY`。omimed 退出时引擎都会收到 SIGTERM，即使 omimed 是被杀死的也一样（`PR_SET_PDEATHSIG`）；被托管的输入法最多有两秒来保存自己的状态。每个 seat 只有一个输入法：第二次 `get_input_method` 会得到 `unavailable`。
 - **IBus。** IBus 由多个进程组成，其中没有任何一个自己把它作为输入法运行：`ibus-daemon` 启动一个面板，但不启动 Wayland 客户端；而输入法模式下的面板（`ibus-ui-gtk3 --enable-wayland-im`，IBus 1.5.30 或更高版本）在没有守护进程应答时就会退出。`omime-ibus` 启动不带面板的守护进程，等待它的地址文件，再把面板作为输入法启动，两者一起停止。它会写入会话中 IBus 工具所查找的地址文件，其名称取自会话的显示（`OMIME_HOST_WAYLAND_DISPLAY`），因此 `ibus engine` 和 `ibus-setup` 能连到被托管的守护进程。dconf 的服务不在私有总线上：被托管的 IBus 会读取 dconf 中保存的设置，但无法保存任何更改。
+- **框架内的输入法。** 用户选择的是输入法，而不是框架：Fcitx 5 的双拼与拼音、IBus 的 libpinyin 都是独立的选择，id 分别为 `fcitx5/shuangpin` 与 `ibus/libpinyin`，凡是引擎 id 出现的地方都能用（`Switch`、每个应用各自的引擎、`Ctrl+Shift+Space`、托盘菜单）。每次启动被托管的引擎时，都有一个适配任务在旁边运行：它在私有总线上按名字找到 Fcitx 5，或者按 `omime-ibus` 在 `$OMIME_ENGINE_RUNTIME_DIR` 中给出的地址文件找到 IBus，并报告有哪些输入法（Fcitx 5 的当前分组；IBus 的 `preload-engines`，取自用户的 dconf 数据库，按文件读取）以及正在使用的是哪一个（`CurrentInputMethod`、`GlobalEngine`），同时跟随 `InputMethodGroupChanged`、`GlobalEngineChanged` 和框架的托盘项。选择操作是 `SetCurrentIM` 或 `SetGlobalEngine`，即使没有获得焦点的文本框也能生效。键盘布局被排除在外：直接输入属于 omimed。输入法列表和正在使用的输入法都会跨重启保留，因此可以在框架启动之前就选好，而框架启动时会拿回正在使用的输入法。
 - **托盘项。** Fcitx 5 与 IBus 会发布一个托盘项（`org.kde.StatusNotifierItem`），其中带有它们当前的输入法。私有总线上没有状态栏接收它，于是 omimed 在那里扮演 `org.kde.StatusNotifierWatcher`，跟随输入法注册的那个托盘项，并由它得出引擎的状态：悬停提示的标题、`XAyatanaLabel` 和图标。omimed 自己的托盘项显示这个图标；托盘项没有给出图标主题时，用输入法的 `share/icons` 作为主题路径。
 
 ## 托盘项
 
-omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个引擎，菜单以单选项列出已启用的引擎与直接输入。`[tray] enabled = false` 可以关掉它。
+omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。`[tray] enabled = false` 可以关掉它。
 
 ## 兼容层（计划中）
 

@@ -75,9 +75,10 @@ bind = SUPER, space, exec, omime next
 | 操作 | 方式 |
 |---|---|
 | 在直接输入与上次使用的引擎之间切换 | `Ctrl+Space`（在文本框获得焦点时） |
-| 下一个引擎 | `Ctrl+Shift+Space`，或 `omime next` |
-| 指定引擎 | `omime switch sparkle`、`omime switch direct` |
-| 查看已安装的内容 | `omime list`（`*` 标记已启用的引擎） |
+| 下一个输入法 | `Ctrl+Shift+Space`，或 `omime next` |
+| 指定输入法 | `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`，或使用托盘菜单 |
+| 查看可选项 | `omime list`（`*` 标记正在使用的输入法） |
+| 查看已安装的内容 | `omime engines`（`*` 标记已启用的引擎） |
 | 排查问题 | `omime doctor`（发现问题时退出状态为 1） |
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
 | 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
@@ -99,7 +100,7 @@ remember = true
 
 ### 托盘
 
-omimed 在状态栏的托盘中显示当前引擎（StatusNotifierItem）：waybar 的 `tray` 模块、KDE 的系统托盘等等。悬停提示写出引擎，Fcitx 5 与 IBus 还写出它们所用的输入法，例如“Fcitx 5 · 双拼”；图标也来自它们。单击在直接输入与上一个引擎之间切换，中键单击切到下一个引擎，菜单列出已启用的引擎与直接输入。要隐藏它，在 `~/.config/oh-my-ime/config.toml` 中这样设置，然后重启 omimed：
+omimed 在状态栏的托盘中显示正在使用的输入法（StatusNotifierItem）：waybar 的 `tray` 模块、KDE 的系统托盘等等。悬停提示写出它的名字，Fcitx 5 内的输入法会写成“双拼 (Fcitx 5)”这样；用 Fcitx 5 与 IBus 时，图标也来自它们。单击在直接输入与上一个引擎之间切换，中键单击切到下一个输入法，菜单列出输入法与直接输入。要隐藏它，在 `~/.config/oh-my-ime/config.toml` 中这样设置，然后重启 omimed：
 
 ```toml
 [tray]
@@ -144,7 +145,9 @@ Fcitx 5 照常把配置保存在 `~/.config/fcitx5`。它的配置工具通过 D
 DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
 ```
 
-请用 omimed 的热键和 `omime switch` 切换，而不要用 Fcitx 5 的触发键：omimed 会在任何引擎看到 `Ctrl+Space` 之前先处理它。由 Fcitx 5 自己处理的热键（例如它内部输入法之间的 `Ctrl+Shift`）仍然有效。只显示 Fcitx 5 的弹窗，它的其他窗口无法显示。
+你在 Fcitx 5 中设置的输入法就是可供选择的对象，每个都单独成项：`omime list` 会显示 `fcitx5/shuangpin`、`fcitx5/pinyin` 等等（它的键盘布局不在其中；直接输入属于 omimed），`omime switch fcitx5/shuangpin`、`Ctrl+Shift+Space` 与托盘菜单都能选中它们。omimed 会向 Fcitx 5 询问它有哪些输入法并记住，因此即使 Fcitx 5 尚未启动，它们也会被列出；Fcitx 5 再次启动时，omimed 会把正在使用的输入法还给它。
+
+请用 omimed 的热键、`omime switch` 和托盘切换，而不要用 Fcitx 5 的触发键：omimed 会在任何引擎看到 `Ctrl+Space` 之前先处理它。由 Fcitx 5 自己处理的热键（例如它内部输入法之间的 `Ctrl+Shift`）仍然有效，omimed 也会跟随它们。只显示 Fcitx 5 的弹窗，它的其他窗口无法显示。
 
 ### IBus 作为引擎
 
@@ -155,7 +158,9 @@ omime install /path/to/oh-my-ime/data/engines/ibus
 omime switch ibus
 ```
 
-被托管的守护进程把它的地址写到 IBus 工具查找的位置，因此这些工具照常工作：用 `ibus engine libpinyin` 或 `ibus-setup` 选择引擎，并在 `ibus-setup` 中配置引擎，它会启动各引擎自己的设置工具。这些工具在你的会话里运行，把设置保存到 dconf。被托管的 IBus 本身运行在 omimed 的私有会话总线上，那里无法访问 dconf 的服务：它在启动时读取 dconf 中保存的设置，但无法保存自己的更改，工具所做的更改要到它下次启动时才会看到（用 `omime switch` 切到另一个引擎再切回）。请用 omimed 的热键和 `omime switch` 切换；omimed 会在 IBus 看到 `Ctrl+Space` 之前先处理它。
+你在 IBus 中选定的引擎（`ibus-setup`，或 dconf 中的 `preload-engines`）就是可供选择的对象，每个都单独成项，和 Fcitx 5 的一样：`omime switch ibus/libpinyin`、`Ctrl+Shift+Space` 与托盘菜单都能选中它们。没有选定任何引擎时，omimed 会列出 IBus 正在使用的引擎，以及你用 IBus 自己的工具切换到的每一个引擎。
+
+被托管的守护进程把它的地址写到 IBus 工具查找的位置，因此这些工具照常工作：`ibus engine libpinyin` 也能切换，`ibus-setup` 则用来配置引擎，它会启动各引擎自己的设置工具。这些工具在你的会话里运行，把设置保存到 dconf。被托管的 IBus 本身运行在 omimed 的私有会话总线上，那里无法访问 dconf 的服务：它在启动时读取 dconf 中保存的设置，但无法保存自己的更改，工具所做的更改要到它下次启动时才会看到（用 `omime switch` 切到另一个引擎再切回）。请用 omimed 的热键和 `omime switch` 切换；omimed 会在 IBus 看到 `Ctrl+Space` 之前先处理它。
 
 ## 哪些应用可用
 
