@@ -179,8 +179,8 @@ omime switch ibus
 
 The hosted daemon writes its address where IBus tools look for it, so they work as
 usual: pick an engine with `ibus engine libpinyin` or `ibus-setup`, and configure
-engines with their own tools, such as `ibus-setup-libpinyin`. These tools save to dconf
-from your session. The hosted IBus itself runs on omimed's private session bus, where
+engines from `ibus-setup`, which starts each engine's own setup tool. These tools save
+to dconf from your session. The hosted IBus itself runs on omimed's private session bus, where
 dconf's service is not reachable: it reads the settings dconf holds when it starts,
 but cannot save changes of its own, and sees what the tools changed the next time it
 starts (`omime switch` to another engine and back). Switch with omimed's hotkeys and
