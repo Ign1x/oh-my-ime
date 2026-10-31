@@ -21,3 +21,8 @@ key_timeout_ms = 200
 # compositor that tells clients which window has focus (Hyprland, sway and other
 # compositors with wlr-foreign-toplevel-management).
 remember = false
+
+[tray]
+# Show the current engine in the tray of status bars (StatusNotifierItem), with a menu
+# to switch. Takes effect when omimed starts.
+enabled = true

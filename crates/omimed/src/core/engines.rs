@@ -30,6 +30,7 @@ use tracing::{debug, info, warn};
 use zbus::{OwnedVariant, Variant};
 
 use super::CoreEvent;
+use super::sni_watcher::{self, HostedTray};
 use crate::runtime_dir;
 
 /// How long an engine may take to start and register.
@@ -234,6 +235,8 @@ pub struct EngineSlot {
     pub state: EngineState,
     pub proxy: Option<EngineProxy<'static>>,
     pub status: Status,
+    /// What the tray item of a hosted engine shows; its status is made from it.
+    pub tray: Option<HostedTray>,
     /// Increases with every launch; events of older processes are ignored.
     generation: u64,
     kill: Option<oneshot::Sender<()>>,
@@ -295,6 +298,7 @@ impl EngineManager {
             state: EngineState::Stopped,
             proxy: None,
             status: Status::default(),
+            tray: None,
             generation: 0,
             kill: None,
             crashes: Vec::new(),
@@ -479,16 +483,17 @@ impl EngineManager {
         if hosted {
             // The private bus has to be up before the input method starts, which takes
             // a moment; a missing program is better reported right away.
-            if find_program(program).is_none() {
+            let Some(path) = find_program(program) else {
                 slot.state = EngineState::Stopped;
                 slot.kill = None;
                 anyhow::bail!("cannot launch `{program}` for engine `{id}`: it is not installed");
-            }
+            };
             tokio::task::spawn_local(supervise_hosted(
                 engine,
                 generation,
                 command,
                 dir,
+                icon_dir(&path),
                 kill_rx,
                 events,
                 Alive::new(&self.alive),
@@ -562,6 +567,28 @@ impl EngineManager {
     }
 
     /// The engine process exited. If it is `needed`, it is restarted after a backoff.
+    /// Takes what the tray item of the hosted engine `id` (launch `generation`) shows,
+    /// and makes the engine's status from it. Returns whether anything changed.
+    pub fn set_tray(&mut self, id: &str, generation: u64, tray: Option<HostedTray>) -> bool {
+        let Some(slot) = self.slots.get_mut(id) else {
+            return false;
+        };
+        if generation != slot.generation || slot.tray == tray {
+            return false;
+        }
+        let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+        slot.status = tray
+            .as_ref()
+            .map(|tray| Status {
+                label: text(&tray.label),
+                icon: text(&tray.icon_name),
+                tooltip: text(&tray.title),
+            })
+            .unwrap_or_default();
+        slot.tray = tray;
+        true
+    }
+
     pub fn exited(&mut self, id: &str, generation: u64, status: Option<ExitStatus>, needed: bool) {
         let Some(slot) = self.slots.get_mut(id) else {
             return;
@@ -571,6 +598,10 @@ impl EngineManager {
         }
         slot.proxy = None;
         slot.kill = None;
+        // The status of a hosted engine came from its tray item, which is gone.
+        if slot.tray.take().is_some() {
+            slot.status = Status::default();
+        }
         if !needed {
             slot.state = EngineState::Stopped;
             debug!(engine = id, ?status, "engine exited");
@@ -705,11 +736,13 @@ impl Drop for Alive {
 
 /// Runs a hosted input method: starts its private bus, then the input method, and
 /// reports when it exits.
+#[allow(clippy::too_many_arguments)]
 async fn supervise_hosted(
     engine: String,
     generation: u64,
     mut command: tokio::process::Command,
     dir: PathBuf,
+    icon_dir: Option<String>,
     kill: oneshot::Receiver<()>,
     events: mpsc::UnboundedSender<CoreEvent>,
     _alive: Alive,
@@ -722,8 +755,22 @@ async fn supervise_hosted(
         });
     };
     // Kept until the input method exits; dropping it stops the bus.
+    // The tray watcher goes before the bus, and the bus before the input method.
+    let mut _tray = None;
     let _bus = match super::bus::start(&dir).await {
         Ok((bus, address)) => {
+            match sni_watcher::start(
+                engine.clone(),
+                generation,
+                &address,
+                icon_dir,
+                events.clone(),
+            )
+            .await
+            {
+                Ok(watcher) => _tray = Some(watcher),
+                Err(e) => debug!(engine, "no tray item for the hosted input method: {e}"),
+            }
             command.env("DBUS_SESSION_BUS_ADDRESS", address);
             Some(bus)
         }
@@ -772,6 +819,18 @@ async fn terminate(child: &mut tokio::process::Child) -> std::io::Result<ExitSta
 }
 
 /// Where `program` is: itself if it is a path, or the first match in `$PATH`.
+/// The icons of the program at `path`: `share/icons` of its installation prefix, if it
+/// has one.
+fn icon_dir(path: &Path) -> Option<String> {
+    let prefix = std::fs::canonicalize(path)
+        .ok()?
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    let icons = prefix.join("share/icons");
+    icons.is_dir().then(|| icons.to_string_lossy().into_owned())
+}
+
 fn find_program(program: &str) -> Option<PathBuf> {
     let executable = |path: &Path| {
         rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok() && path.is_file()

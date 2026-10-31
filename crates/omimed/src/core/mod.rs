@@ -14,6 +14,7 @@
 
 mod bus;
 pub mod engines;
+pub mod sni_watcher;
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::process::ExitStatus;
@@ -55,6 +56,12 @@ pub enum CoreEvent {
         ctx: ContextId,
         token: u64,
         reply: Reply,
+    },
+    /// The tray item of a hosted engine (launch `generation`) changed, or went away.
+    HostedTray {
+        engine: String,
+        generation: u64,
+        tray: Option<sni_watcher::HostedTray>,
     },
 }
 
@@ -162,6 +169,8 @@ pub struct EngineSummary {
     pub name: String,
     pub enabled: bool,
     pub state: &'static str,
+    /// The icon the manifest names.
+    pub icon: Option<String>,
 }
 
 /// The core state.
@@ -312,6 +321,14 @@ impl Core {
         self.current.as_deref()
     }
 
+    /// What the tray item of the current engine shows, for hosted engines that have one.
+    pub fn current_tray(&self) -> Option<&sni_watcher::HostedTray> {
+        self.current
+            .as_deref()
+            .and_then(|id| self.engines.get(id))
+            .and_then(|slot| slot.tray.as_ref())
+    }
+
     /// The status the current engine published.
     pub fn current_status(&self) -> Option<&Status> {
         self.current
@@ -332,6 +349,7 @@ impl Core {
                 name: slot.installed.manifest.localized_name(&locale).to_owned(),
                 enabled,
                 state: slot.state.name(),
+                icon: slot.installed.manifest.engine.icon.clone(),
             })
         };
         let enabled = self.enabled.iter().filter_map(|id| summary(id, true));
@@ -632,6 +650,20 @@ impl Core {
                 // A new process has to ask for its window again.
                 out.set_engine_visible(engine.as_str().into(), false);
                 self.engine_unavailable(&engine, out);
+                if self.current.as_deref() == Some(&engine) {
+                    self.status_changed();
+                }
+            }
+            CoreEvent::HostedTray {
+                engine,
+                generation,
+                tray,
+            } => {
+                if self.engines.set_tray(&engine, generation, tray)
+                    && self.current.as_deref() == Some(&engine)
+                {
+                    self.status_changed();
+                }
             }
             CoreEvent::Host { engine, call } => self.on_host_call(&engine, call, out),
             CoreEvent::Reply { ctx, token, reply } => self.on_reply(ctx, token, reply, out),

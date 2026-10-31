@@ -10,6 +10,7 @@ mod keyboard;
 mod placement;
 mod runtime_dir;
 mod state;
+mod tray;
 mod wayland;
 mod xim;
 

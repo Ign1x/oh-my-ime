@@ -17,6 +17,10 @@
 //! [apps]
 //! # Give each application the engine last used in it.
 //! remember = true
+//!
+//! [tray]
+//! # Show the current engine in the tray of status bars.
+//! enabled = true
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +36,7 @@ pub struct Config {
     pub hotkeys: Hotkeys,
     pub engine: EngineSettings,
     pub apps: AppSettings,
+    pub tray: TraySettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +77,20 @@ impl Default for EngineSettings {
 pub struct AppSettings {
     /// Remember the engine of each application, instead of using one engine for all.
     pub remember: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TraySettings {
+    /// Show a tray item (StatusNotifierItem) with the current engine. Read when omimed
+    /// starts.
+    pub enabled: bool,
+}
+
+impl Default for TraySettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 impl Config {

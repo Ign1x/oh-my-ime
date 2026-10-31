@@ -25,6 +25,7 @@ use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyDelivery, KeyRef, Origin};
 use crate::placement::{self, Rect};
 use crate::state::State;
+use crate::tray::{self, TrayInfo, TrayService};
 use crate::wayland::{EngineId, Frontend};
 use crate::xim::{self, XimFrontend};
 
@@ -116,6 +117,8 @@ struct Daemon {
     control_rx: mpsc::UnboundedReceiver<ControlRequest>,
     /// Kept alive for the control service's lifetime.
     _control: Option<Rc<ControlService>>,
+    /// The tray item, unless it is turned off.
+    tray: Option<Rc<TrayService>>,
     context_ids: ContextIds,
     /// Applications using the Fcitx5 module; they outlive compositor connections.
     fcitx: FcitxFrontend,
@@ -134,7 +137,7 @@ impl Daemon {
         };
 
         let (control_tx, control_rx) = mpsc::unbounded_channel();
-        let control = match control::start(control_tx).await {
+        let control = match control::start(control_tx.clone()).await {
             Ok(service) => Some(Rc::new(service)),
             Err(e @ control::ControlError::AlreadyRunning) => return Err(e.into()),
             Err(e) => {
@@ -160,6 +163,17 @@ impl Daemon {
         };
 
         let config = load_config();
+        let tray = if config.tray.enabled && control.is_some() {
+            match tray::start(control_tx).await {
+                Ok(tray) => Some(Rc::new(tray)),
+                Err(e) => {
+                    warn!("cannot show the tray item: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let installed = discover_engines();
         if installed.is_empty() {
             warn!("no engines are installed; keys pass through unchanged");
@@ -179,9 +193,13 @@ impl Daemon {
         core.restore(&saved);
         core.set_state_listener(State::save);
         let service = control.clone();
+        let tray_item = tray.clone();
         core.set_status_listener(move |current, status| {
             if let Some(service) = &service {
                 service.status_changed(current, control::status_dict(current, status));
+            }
+            if let Some(tray) = &tray_item {
+                tray.changed();
             }
         });
         // Without --engine, start where the user left off.
@@ -197,6 +215,7 @@ impl Daemon {
             ui_rx,
             control_rx,
             _control: control,
+            tray,
             context_ids,
             fcitx,
             fcitx_rx,
@@ -444,6 +463,14 @@ impl Daemon {
                     self.xim.as_mut(),
                 ))));
             }
+            ControlRequest::Tray(reply) => {
+                let _ = reply.send(TrayInfo {
+                    engine: self.core.current().map(str::to_owned),
+                    engines: self.core.engines(),
+                    status: self.core.current_status().cloned().unwrap_or_default(),
+                    hosted: self.core.current_tray().cloned(),
+                });
+            }
             ControlRequest::Diagnose(reply) => {
                 let display = self
                     .options
@@ -465,6 +492,10 @@ impl Daemon {
                     installed,
                     &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 );
+                // Engines may have come or gone from the menu.
+                if let Some(tray) = &self.tray {
+                    tray.changed();
+                }
                 let _ = reply.send(Ok(()));
             }
         }

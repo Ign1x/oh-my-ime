@@ -24,6 +24,8 @@ pub enum ControlRequest {
     Toggle(oneshot::Sender<Result<(), String>>),
     Reload(oneshot::Sender<Result<(), String>>),
     Diagnose(oneshot::Sender<Dict>),
+    /// What the tray item shows.
+    Tray(oneshot::Sender<crate::tray::TrayInfo>),
 }
 
 struct ControlObject {
