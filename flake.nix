@@ -44,8 +44,9 @@
               xwayland
               wtype
               grim
-              # The hosting tests run the real Fcitx 5, with pinyin.
+              # The hosting tests run the real Fcitx 5 and IBus, both with pinyin.
               (qt6Packages.fcitx5-with-addons.override { addons = [ qt6Packages.fcitx5-chinese-addons ]; })
+              (ibus-with-plugins.override { plugins = [ ibus-engines.libpinyin ]; })
             ])
             ++ extraPackages;
 

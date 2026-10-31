@@ -90,8 +90,12 @@ rustPlatform.buildRustPackage {
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
     # Manifests for programs this package does not provide, for `omime install`: not
     # on the engine search path, or omimed would list them where they are not installed.
-    install -Dm644 data/engines/fcitx5/engine.toml \
-      $out/share/oh-my-ime/extra-engines/fcitx5/engine.toml
+    for engine in fcitx5 ibus; do
+      install -Dm644 data/engines/$engine/engine.toml \
+        $out/share/oh-my-ime/extra-engines/$engine/engine.toml
+    done
+    substituteInPlace $out/share/oh-my-ime/extra-engines/ibus/engine.toml \
+      --replace-fail 'exec = ["omime-ibus"]' "exec = [\"$out/bin/omime-ibus\"]"
 
     # NixOS links only some of share/ into profiles; find the bundled engines anyway.
     # Hosted input methods run on a private bus, which omimed starts with dbus-daemon.

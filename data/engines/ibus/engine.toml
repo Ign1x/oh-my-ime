@@ -1,0 +1,14 @@
+# IBus, unmodified, hosted by omimed as one engine with all its engines (ibus-libpinyin,
+# ibus-rime, ...). omime-ibus starts ibus-daemon and IBus's GTK panel as the Wayland input
+# method. Install with `omime install` (IBus 1.5.32 or later must be installed, and must
+# not run on its own); see docs/hyprland.md.
+[engine]
+id = "ibus"
+name = "IBus"
+description = "IBus with all its engines, hosted as one engine."
+exec = ["omime-ibus"]
+protocol = "input-method-v2"
+
+[engine.i18n.zh-CN]
+name = "IBus"
+description = "把 IBus 连同它的全部引擎作为一个引擎托管。"

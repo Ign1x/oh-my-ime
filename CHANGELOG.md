@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   it serves XIM and Fcitx5-module applications too. `data/engines/fcitx5/engine.toml` is
   the manifest for Fcitx 5, for `omime install`; the Nix package ships it under
   `share/oh-my-ime/extra-engines`.
+- IBus (1.5.32 or later) runs as an engine the same way, through the new `omime-ibus`:
+  it starts `ibus-daemon` without a panel and IBus's GTK panel as the Wayland input
+  method (`ibus-ui-gtk3 --enable-wayland-im`), so IBus's candidate window is a popup at
+  the text cursor, and it writes the daemon's address where `ibus engine`, `ibus-setup`
+  and friends look for it. `data/engines/ibus/engine.toml` is the manifest.
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
 
