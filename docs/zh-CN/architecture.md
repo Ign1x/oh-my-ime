@@ -91,6 +91,11 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - **窗口。** 输入法的弹窗 surface 就是引擎窗口，以输入法弹窗的形式或显示在镜像上，文本光标矩形则通过它的弹窗角色送达它。输入法的其他窗口（toplevel）无法显示。
 - **进程。** omimed 在引擎的运行时目录中用一个私有会话总线启动输入法，即一个不提供服务激活的 `dbus-daemon`，这样它就无法从 omimed 的 Fcitx5 前端手中夺走用户总线上的 `org.fcitx.Fcitx5`。它会拿到自己 bridge socket 的 `WAYLAND_DISPLAY`，但拿不到 `DISPLAY`。omimed 退出时引擎都会收到 SIGTERM，即使 omimed 是被杀死的也一样（`PR_SET_PDEATHSIG`）；被托管的输入法最多有两秒来保存自己的状态。每个 seat 只有一个输入法：第二次 `get_input_method` 会得到 `unavailable`。
 - **IBus。** IBus 由多个进程组成，其中没有任何一个自己把它作为输入法运行：`ibus-daemon` 启动一个面板，但不启动 Wayland 客户端；而输入法模式下的面板（`ibus-ui-gtk3 --enable-wayland-im`，IBus 1.5.30 或更高版本）在没有守护进程应答时就会退出。`omime-ibus` 启动不带面板的守护进程，等待它的地址文件，再把面板作为输入法启动，两者一起停止。它会写入会话中 IBus 工具所查找的地址文件，其名称取自会话的显示（`OMIME_HOST_WAYLAND_DISPLAY`），因此 `ibus engine` 和 `ibus-setup` 能连到被托管的守护进程。dconf 的服务不在私有总线上：被托管的 IBus 会读取 dconf 中保存的设置，但无法保存任何更改。
+- **托盘项。** Fcitx 5 与 IBus 会发布一个托盘项（`org.kde.StatusNotifierItem`），其中带有它们当前的输入法。私有总线上没有状态栏接收它，于是 omimed 在那里扮演 `org.kde.StatusNotifierWatcher`，跟随输入法注册的那个托盘项，并由它得出引擎的状态：悬停提示的标题、`XAyatanaLabel` 和图标。omimed 自己的托盘项显示这个图标；托盘项没有给出图标主题时，用输入法的 `share/icons` 作为主题路径。
+
+## 托盘项
+
+omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个引擎，菜单以单选项列出已启用的引擎与直接输入。`[tray] enabled = false` 可以关掉它。
 
 ## 兼容层（计划中）
 

@@ -24,7 +24,7 @@ cargo deny check
 
 `tests/e2e` 会为每个测试启动一个私有的无头 sway、一个私有会话总线以及 omimed，并通过虚拟键盘向 `omime-ti-client` 输入。`omime-ti-client` 是一个小型编辑器，会打印每一个 text-input 事件。整个过程不碰你的桌面会话。
 
-X11 测试还会启动 XWayland（`TestEnv::start_with_x11`），开发环境已提供。`xim.rs` 向使用 XIM 的 X11 客户端 `omime-xim-client` 输入，`fcitx.rs` 用 `omime-fcitx-client` 驱动 Fcitx5 模块协议。`popups.rs` 检查引擎窗口开在哪里、在引擎请求之前是否保持隐藏、如何跟随 X11 文本光标，以及点击能否送达引擎；它用 `grim` 读取像素。`hosted.rs` 把一个小型的 Wayland 输入法 `omime-im-client` 作为引擎托管；`fcitx5.rs` 与 `ibus.rs` 则托管开发环境中的真实 Fcitx 5 与 IBus。
+X11 测试还会启动 XWayland（`TestEnv::start_with_x11`），开发环境已提供。`xim.rs` 向使用 XIM 的 X11 客户端 `omime-xim-client` 输入，`fcitx.rs` 用 `omime-fcitx-client` 驱动 Fcitx5 模块协议。`popups.rs` 检查引擎窗口开在哪里、在引擎请求之前是否保持隐藏、如何跟随 X11 文本光标，以及点击能否送达引擎；它用 `grim` 读取像素。`hosted.rs` 把一个小型的 Wayland 输入法 `omime-im-client` 作为引擎托管；`fcitx5.rs` 与 `ibus.rs` 则托管开发环境中的真实 Fcitx 5 与 IBus。`tray.rs` 用 `omime-tray-host` 检查 omimed 的托盘项，后者扮演状态栏的托盘：打印托盘项显示的内容，并单击托盘项及其菜单。
 
 ```sh
 cargo build --workspace

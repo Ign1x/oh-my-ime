@@ -97,6 +97,15 @@ remember = true
 
 之后，在某个应用获得焦点时切换引擎，只会影响这个应用；每次回到它时，它都会换回自己的引擎，重启之后也一样。还没有切换过的应用沿用当前引擎。启动器等 layer-shell 界面不是窗口：在其中切换，算作下方窗口的选择。
 
+### 托盘
+
+omimed 在状态栏的托盘中显示当前引擎（StatusNotifierItem）：waybar 的 `tray` 模块、KDE 的系统托盘等等。悬停提示写出引擎，Fcitx 5 与 IBus 还写出它们所用的输入法，例如“Fcitx 5 · 双拼”；图标也来自它们。单击在直接输入与上一个引擎之间切换，中键单击切到下一个引擎，菜单列出已启用的引擎与直接输入。要隐藏它，在 `~/.config/oh-my-ime/config.toml` 中这样设置，然后重启 omimed：
+
+```toml
+[tray]
+enabled = false
+```
+
 ### Waybar
 
 `omime status --watch --json` 先输出一次状态，之后每次变化输出一行，格式与 waybar 一致（`text`、`tooltip` 和 `class`），waybar 因此无需轮询：

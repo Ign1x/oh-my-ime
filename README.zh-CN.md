@@ -129,6 +129,7 @@ flowchart LR
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
+| 托盘项：当前引擎，Fcitx 5 与 IBus 还显示它们所用的输入法；菜单用于切换 | ✅ |
 | 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
 | 附带 systemd 用户单元的 Nix 包 | ✅ |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
@@ -185,7 +186,7 @@ end)
 | 下一个引擎 | `Ctrl+Shift+Space` 或 `omime next` |
 | 指定引擎 | `omime switch sparkle`、`omime switch direct` |
 | 管理引擎 | `omime list`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
-| 状态栏 | `omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
+| 状态栏 | 托盘项（StatusNotifierItem）；`omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 
 omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置 `remember = true` 后，则会记住每个应用各自的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
 
@@ -204,7 +205,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
-7. **阶段 5**：原生 Rime 引擎、设置界面、托盘、更多合成器、C ABI SDK
+7. **阶段 5**：原生 Rime 引擎、设置界面、更多合成器、C ABI SDK（托盘项已完成）
 
 ## 常见问题
 
