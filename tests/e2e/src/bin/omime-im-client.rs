@@ -5,6 +5,8 @@
 //! speaks the engine protocol: letters are collected in a preedit and shown in a
 //! popup of one color; any other key commits the word in UPPERCASE and goes on to the
 //! application through the virtual keyboard, its release too unless `--keep-releases`.
+//! `--slow-ms MS` makes it think that long before it forwards a key, as a busy input
+//! method would: the release of the key reaches omimed before the press comes back.
 //! Backspace edits the preedit and Escape cancels it. Like Fcitx5, it grabs the keyboard and creates a virtual keyboard
 //! whenever it is activated, and destroys its popup surface whenever the preedit is
 //! empty.
@@ -47,7 +49,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 use xkbcommon::xkb;
 
 const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] \
-     [--keep-releases] [--tray ICON|TITLE|LABEL]";
+     [--keep-releases] [--slow-ms MS] [--tray ICON|TITLE|LABEL]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -103,6 +105,8 @@ struct App {
     /// Never forward releases (`--keep-releases`), as input methods do for keys of a
     /// hotkey.
     keep_releases: bool,
+    /// How long to think before forwarding a key (`--slow-ms`).
+    slow: std::time::Duration,
 }
 
 impl App {
@@ -234,6 +238,7 @@ impl App {
                     im.commit(seat.serial);
                 }
                 seat.forwarded.push(key);
+                std::thread::sleep(self.slow);
                 Self::forward(seat, time, key, PRESSED);
             }
         }
@@ -433,6 +438,7 @@ fn main() -> anyhow::Result<()> {
     let mut color = 0xffff_00ff;
     let mut size = (120, 40);
     let mut keep_releases = false;
+    let mut slow = std::time::Duration::ZERO;
     let mut tray = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -445,6 +451,7 @@ fn main() -> anyhow::Result<()> {
                 size = (w.parse()?, h.parse()?);
             }
             "--keep-releases" => keep_releases = true,
+            "--slow-ms" => slow = std::time::Duration::from_millis(value()?.parse()?),
             "--tray" => tray = Some(omime_e2e::tray_item::TrayItem::parse(&value()?)?),
             "--log" => {
                 let dir =
@@ -471,6 +478,7 @@ fn main() -> anyhow::Result<()> {
         color,
         size,
         keep_releases,
+        slow,
         ..App::default()
     };
     queue.roundtrip(&mut app)?;

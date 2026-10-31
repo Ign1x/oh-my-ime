@@ -138,6 +138,28 @@ fn keys_the_input_method_forwarded_are_released_with_the_real_key() -> anyhow::R
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn keys_a_slow_input_method_forwarded_late_are_not_held() -> anyhow::Result<()> {
+    // The key is up before the input method sends its press back; with or without a
+    // release of its own, the application must not hold the key.
+    for args in [
+        &["--slow-ms", "300"][..],
+        &["--slow-ms", "300", "--keep-releases"],
+    ] {
+        let env = TestEnv::start(&[hosted_engine(args)], Some("hosted"))?;
+        let editor = env.editor(&[])?;
+        env.wait_for_hosted("the input method to be activated", |l| l == "activate")?;
+        env.type_text("1")?;
+        editor.wait_for("the key", |l| l == "key \"1\"")?;
+        editor.wait_for("its release", |l| l == "release \"1\"")?;
+        std::thread::sleep(Duration::from_millis(300));
+        let presses = editor.lines().iter().filter(|l| *l == "key \"1\"").count();
+        assert_eq!(presses, 1, "{args:?}: {:?}", editor.lines());
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn a_crashing_hosted_input_method_is_restarted() -> anyhow::Result<()> {
     let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
     let editor = env.editor(&[])?;

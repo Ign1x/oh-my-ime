@@ -600,6 +600,14 @@ impl SeatSession {
                 Action::ForwardKey { keycode, pressed } => {
                     // Text before the key must reach the application first.
                     self.flush_batch(std::mem::take(&mut batch));
+                    if *pressed && !self.held.contains(keycode) {
+                        // The key went up before the press came back, which a busy
+                        // input method does: nothing would release it any more, so the
+                        // application gets a whole key stroke.
+                        self.send_key(now_ms(), *keycode, KEY_STATE_PRESSED);
+                        self.send_key(now_ms(), *keycode, KEY_STATE_RELEASED);
+                        continue;
+                    }
                     let state = if *pressed {
                         self.keys.press_forwarded(*keycode);
                         KEY_STATE_PRESSED

@@ -52,6 +52,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A key that a hosted input method sends back only after it was released no longer
+  stays held in the application: a busy Fcitx 5 or IBus could leave a key repeating
+  there until the next key.
 - In X11 applications, keys an input method sends back keep their modifiers: with
   Fcitx 5 or IBus as the engine, Ctrl+C in xterm no longer types a c, through XIM and
   through the Fcitx5 modules alike.
