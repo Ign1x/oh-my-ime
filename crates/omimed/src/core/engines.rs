@@ -756,6 +756,10 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
                     continue;
                 }
             };
+            if !runtime_dir::peer_is_same_user(&stream) {
+                warn!(engine, "refusing an engine connection of another user");
+                continue;
+            }
             let stream = match stream.into_std() {
                 Ok(stream) => stream,
                 Err(e) => {
@@ -972,6 +976,9 @@ pub fn listen_ui(
     tokio::task::spawn_local(async move {
         loop {
             match listener.accept().await {
+                Ok((stream, _)) if !runtime_dir::peer_is_same_user(&stream) => {
+                    warn!(engine, "refusing a UI connection of another user");
+                }
                 Ok((stream, _)) => match stream.into_std() {
                     Ok(stream) => {
                         let connection = UiConnection {

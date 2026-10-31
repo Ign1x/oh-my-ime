@@ -61,6 +61,16 @@ fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Whether the process at the other end of `stream` runs as the same user as omimed.
+/// The socket directories are private already; this keeps a socket that ends up
+/// elsewhere, or root's processes, from talking to the daemon.
+pub fn peer_is_same_user(stream: &tokio::net::UnixStream) -> bool {
+    match rustix::net::sockopt::socket_peercred(stream) {
+        Ok(peer) => peer.uid == rustix::process::getuid(),
+        Err(_) => false,
+    }
+}
+
 /// Binds a Unix listening socket, replacing a stale socket file left by a crash.
 pub fn bind_socket(path: &Path) -> anyhow::Result<tokio::net::UnixListener> {
     match std::fs::remove_file(path) {
@@ -75,6 +85,13 @@ pub fn bind_socket(path: &Path) -> anyhow::Result<tokio::net::UnixListener> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn peers_of_the_same_user_are_accepted() {
+        let (ours, theirs) = tokio::net::UnixStream::pair().expect("a socket pair");
+        assert!(peer_is_same_user(&ours));
+        assert!(peer_is_same_user(&theirs));
+    }
 
     #[test]
     fn engine_ids_are_safe_path_components() {

@@ -53,6 +53,8 @@ All notable changes to this project are documented here. The format follows
 - In X11 applications, keys an input method sends back keep their modifiers: with
   Fcitx 5 or IBus as the engine, Ctrl+C in xterm no longer types a c, through XIM and
   through the Fcitx5 modules alike.
+- Engine sockets accept only processes of the same user, as the architecture guide
+  said they did: they are checked with `SO_PEERCRED`.
 - An engine that keeps running while omimed reconnects to the compositor shows its
   windows again afterwards, and engines are told that the text fields of the lost
   connection are gone.
