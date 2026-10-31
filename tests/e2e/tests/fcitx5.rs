@@ -137,6 +137,30 @@ fn no_key_stays_held_after_shortcuts() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn the_tray_shows_fcitx5s_input_method() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    let tray = env.tray_host()?;
+    start_pinyin(&env)?;
+    let _editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // In a text field, omimed's item shows what Fcitx 5's own item shows on its
+    // private bus: the input method and its icon, from Fcitx 5's icons.
+    let tooltip = tray.wait_for_latest("Pinyin in the tooltip", "tooltip ", |t| {
+        t.starts_with("fcitx5 · ") && (t.contains("Pinyin") || t.contains("拼音"))
+    })?;
+    let icon = tray.latest("icon ").unwrap_or_default();
+    assert!(icon.contains("pinyin"), "icon {icon:?} for {tooltip:?}");
+    let theme = tray.latest("theme ").unwrap_or_default();
+    assert!(theme.ends_with("share/icons"), "icons from {theme:?}");
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn pinyin_types_into_xim_applications() -> anyhow::Result<()> {
     let Some(engine) = fcitx5() else {
         eprintln!("fcitx5 is not installed; nothing to test");

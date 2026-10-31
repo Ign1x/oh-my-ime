@@ -555,6 +555,33 @@ impl TestEnv {
         Ok(client)
     }
 
+    /// Starts `omime-tray-host`, the tray of a status bar, and waits until it serves.
+    /// It talks like a [`FcitxClient`]: lines out, commands in.
+    pub fn tray_host(&self) -> anyhow::Result<FcitxClient> {
+        let mut child = self
+            .command(target_dir().join("omime-tray-host"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("cannot start omime-tray-host")?;
+        let stdin = child.stdin.take().context("no stdin")?;
+        let stdout = child.stdout.take().context("no stdout")?;
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                sink.lock().unwrap_or_else(|p| p.into_inner()).push(line);
+            }
+        });
+        let host = FcitxClient {
+            child,
+            stdin: Mutex::new(Some(stdin)),
+            lines,
+        };
+        host.wait_for("the tray to serve", |l| l == "ready")?;
+        Ok(host)
+    }
+
     /// Clicks with the cursor of `seat` at (`x`, `y`) of the output, which gives that
     /// seat's keyboard focus to the window there.
     pub fn click_on_seat(&self, seat: &str, x: u32, y: u32) -> anyhow::Result<()> {
@@ -772,6 +799,26 @@ impl FcitxClient {
     /// Waits for a line matching `pred` and returns it.
     pub fn wait_for(&self, what: &str, pred: impl Fn(&str) -> bool) -> anyhow::Result<String> {
         wait_until(what, || self.lines().into_iter().find(|l| pred(l)))
+    }
+
+    /// The latest line starting with `prefix`, without the prefix.
+    pub fn latest(&self, prefix: &str) -> Option<String> {
+        self.lines()
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix(prefix).map(str::to_owned))
+    }
+
+    /// Waits until the latest line starting with `prefix` satisfies `pred`, and returns
+    /// it without the prefix.
+    pub fn wait_for_latest(
+        &self,
+        what: &str,
+        prefix: &str,
+        pred: impl Fn(&str) -> bool,
+    ) -> anyhow::Result<String> {
+        wait_until(what, || self.latest(prefix).filter(|l| pred(l)))
+            .with_context(|| format!("the client printed {:?}", self.lines()))
     }
 
     /// Kills the client, as when an application crashes.

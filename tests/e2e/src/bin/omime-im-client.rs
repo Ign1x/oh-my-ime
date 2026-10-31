@@ -9,6 +9,9 @@
 //! whenever it is activated, and destroys its popup surface whenever the preedit is
 //! empty.
 //!
+//! With `--tray ICON|TITLE|LABEL` it publishes a tray item on its session bus, as
+//! Fcitx 5 and IBus do.
+//!
 //! It prints what happens to stdout, one event per line, and with `--log FILE` also to
 //! FILE (relative to `$XDG_RUNTIME_DIR`), since omimed does not capture its output:
 //!
@@ -43,8 +46,8 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 use xkbcommon::xkb;
 
-const USAGE: &str =
-    "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] [--keep-releases]";
+const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] \
+     [--keep-releases] [--tray ICON|TITLE|LABEL]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -430,6 +433,7 @@ fn main() -> anyhow::Result<()> {
     let mut color = 0xffff_00ff;
     let mut size = (120, 40);
     let mut keep_releases = false;
+    let mut tray = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -441,6 +445,7 @@ fn main() -> anyhow::Result<()> {
                 size = (w.parse()?, h.parse()?);
             }
             "--keep-releases" => keep_releases = true,
+            "--tray" => tray = Some(omime_e2e::tray_item::TrayItem::parse(&value()?)?),
             "--log" => {
                 let dir =
                     std::env::var_os("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR is unset")?;
@@ -455,6 +460,8 @@ fn main() -> anyhow::Result<()> {
             _ => bail!("{USAGE}"),
         }
     }
+
+    let _tray = tray.map(omime_e2e::tray_item::publish).transpose()?;
 
     let conn = Connection::connect_to_env().context("cannot connect to the Wayland display")?;
     let mut queue = conn.new_event_queue();

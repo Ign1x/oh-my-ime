@@ -112,3 +112,21 @@ fn the_shipped_manifest_installs_ibus() -> anyhow::Result<()> {
     editor.wait_for_text("ok")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_tray_shows_ibus_engines() -> anyhow::Result<()> {
+    let Some(engine) = ibus() else {
+        eprintln!("IBus is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    let tray = env.tray_host()?;
+    switch_to_ibus(&env)?;
+    let _editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    select_libpinyin(&env)?;
+    // IBus's panel shows the engine's icon in its item; omimed's item shows it too.
+    tray.wait_for_latest("libpinyin's icon", "icon ", |i| i.contains("pinyin"))?;
+    Ok(())
+}

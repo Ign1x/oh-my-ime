@@ -22,6 +22,7 @@ wayland-protocols-wlr.workspace = true
 x11rb = "0.14"
 xim = { version = "0.6", default-features = false, features = ["std", "x11rb-client"] }
 zbus = { workspace = true, features = ["tokio"] }
+futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 rustix = { workspace = true, features = ["process"] }

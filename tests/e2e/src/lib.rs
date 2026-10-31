@@ -1,6 +1,7 @@
 //! Shared helpers for oh-my-ime's test clients and end-to-end tests.
 
 pub mod harness;
+pub mod tray_item;
 
 use std::os::fd::OwnedFd;
 
