@@ -252,10 +252,10 @@ impl Framework {
                     .call::<_, _, String>("CurrentInputMethod", &())
                     .await?
             }
-            Self::Ibus(ibus) => {
-                let desc: OwnedVariant = ibus.get_property("GlobalEngine").await?;
-                engine_desc(&desc).map(|e| e.id).unwrap_or_default()
-            }
+            Self::Ibus(ibus) => ibus_global_engine(ibus)
+                .await?
+                .map(|e| e.id)
+                .unwrap_or_default(),
         };
         Ok((!current.is_empty() && !is_layout(&current)).then_some(current))
     }
@@ -339,8 +339,7 @@ async fn ibus_methods(
     let mut names = preload_engines().unwrap_or_default();
     if names.is_empty() {
         names = known.iter().map(|m| m.id.clone()).collect();
-        let current: OwnedVariant = ibus.get_property("GlobalEngine").await?;
-        if let Some(current) = engine_desc(&current)
+        if let Some(current) = ibus_global_engine(ibus).await?
             && !names.contains(&current.id)
         {
             names.push(current.id);
@@ -352,6 +351,16 @@ async fn ibus_methods(
     }
     let descs: Vec<OwnedVariant> = ibus.call("GetEnginesByNames", &(names,)).await?;
     Ok(descs.iter().filter_map(engine_desc).collect())
+}
+
+/// The engine IBus uses. Until one is chosen, which may take a moment after IBus
+/// started, reading it fails ("No global engine"): that is no engine, not an error.
+async fn ibus_global_engine(ibus: &zbus::Proxy<'_>) -> zbus::Result<Option<InnerMethod>> {
+    match ibus.get_property::<OwnedVariant>("GlobalEngine").await {
+        Ok(desc) => Ok(engine_desc(&desc)),
+        Err(zbus::Error::FDO(e)) if matches!(*e, zbus::fdo::Error::Failed(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// IBus's `preload-engines` in the user's dconf database. The hosted IBus cannot reach
