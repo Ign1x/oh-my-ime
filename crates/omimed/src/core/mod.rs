@@ -17,7 +17,7 @@ pub mod engines;
 pub mod frameworks;
 pub mod sni_watcher;
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
@@ -238,6 +238,8 @@ pub struct Core {
     timeouts: BTreeMap<String, u32>,
     /// Hosted engines that may not have read the keys they were given yet.
     hosted_watch: BTreeMap<String, HostedWatch>,
+    /// Engines that want their windows shown, for a new compositor connection.
+    visible_engines: BTreeSet<String>,
     /// Called whenever `current` changes.
     on_state: Option<StateListener>,
     on_status: Option<StatusListener>,
@@ -280,6 +282,7 @@ impl Core {
             stale_tokens: HashSet::new(),
             timeouts: BTreeMap::new(),
             hosted_watch: BTreeMap::new(),
+            visible_engines: BTreeSet::new(),
             on_state: None,
             on_status: None,
             remember_apps: config.apps.remember,
@@ -692,7 +695,7 @@ impl Core {
                 }
                 self.timeouts.remove(&*engine);
                 // A hosted input method shows its popups when it likes.
-                out.set_engine_visible(engine.clone(), true);
+                self.set_engine_visible(&engine, true, out);
                 // Fields that waited for the engine, or for its input method on their seat.
                 let waiting: Vec<ContextId> = self
                     .contexts
@@ -797,7 +800,7 @@ impl Core {
                         .is_some_and(|s| !matches!(s.state, EngineState::Stopped));
                 self.engines.exited(&engine, generation, status, needed);
                 // A new process has to ask for its window again.
-                out.set_engine_visible(engine.as_str().into(), false);
+                self.set_engine_visible(&engine, false, out);
                 self.engine_unavailable(&engine, out);
                 if self.current.as_deref() == Some(&engine) {
                     self.status_changed();
@@ -841,7 +844,7 @@ impl Core {
                 }
             }
             HostCall::SetPopupVisible(visible) => {
-                out.set_engine_visible(engine.into(), visible);
+                self.set_engine_visible(engine, visible, out);
             }
             HostCall::SetStatus(status) => {
                 if let Some(slot) = self.engines.get_mut(engine)
@@ -1309,11 +1312,41 @@ impl Core {
             .into_iter()
             .partition(|(_, context)| matches!(context.origin, Origin::Wayland(_)));
         self.contexts = others;
-        for (_, context) in wayland {
+        for (ctx, context) in wayland {
             if let Some(flight) = context.in_flight {
                 self.stale_tokens.insert(flight.token);
             }
+            // Engines forget the field too. Hosted ones lose their input method with
+            // the connection.
+            if context.activated
+                && let Some(slot) = context
+                    .engine
+                    .as_deref()
+                    .and_then(|id| self.engines.get(id))
+                && !slot.installed.manifest.is_hosted()
+                && let Some(proxy) = slot.proxy.clone()
+            {
+                tokio::task::spawn_local(async move {
+                    let _ = proxy.deactivate(ctx).await;
+                });
+            }
         }
+    }
+
+    /// Records whether `engine` wants its windows shown, and tells the bridge.
+    fn set_engine_visible(&mut self, engine: &str, visible: bool, out: &mut dyn Frontends) {
+        if visible {
+            self.visible_engines.insert(engine.to_owned());
+        } else {
+            self.visible_engines.remove(engine);
+        }
+        out.set_engine_visible(engine.into(), visible);
+    }
+
+    /// The engines that want their windows shown, which a new compositor connection
+    /// has to learn.
+    pub fn visible_engines(&self) -> impl Iterator<Item = &str> {
+        self.visible_engines.iter().map(String::as_str)
     }
 
     pub fn shutdown(&mut self) {

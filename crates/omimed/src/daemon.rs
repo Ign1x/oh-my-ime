@@ -259,6 +259,11 @@ impl Daemon {
             } else {
                 let current = self.core.current().map(Into::into);
                 frontend.set_active_engine(current);
+                // Engines that keep running asked for their windows on the old
+                // connection.
+                for engine in self.core.visible_engines() {
+                    frontend.set_engine_visible(engine.into(), true);
+                }
                 None
             };
             let end = self.session(&mut frontend, startup_engine).await?;
