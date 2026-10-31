@@ -87,6 +87,8 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 
 然后用热键切换（`Ctrl+Space` 在直接输入与上一个引擎之间切换，`Ctrl+Shift+Space` 循环切换引擎），或使用 `omime switch <id>`。
 
+引擎输出到 stdout 和 stderr 的内容会逐行写进 omimed 的日志，target 为 `engine`，并带上引擎的 id（`INFO engine: … engine="echo"`）。
+
 ## 显示窗口
 
 用任意 Wayland 工具包创建一个无边框窗口，尺寸与你内容相适应。omimed 启动引擎时会把 `WAYLAND_DISPLAY` 指向其 UI Bridge 的私有 socket，因此工具包无需任何特殊代码。只要你的引擎是当前激活的引擎，你的 toplevel 就会成为文本光标旁的输入法弹窗。

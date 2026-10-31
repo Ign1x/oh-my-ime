@@ -105,6 +105,10 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 Then switch with the hotkeys (`Ctrl+Space` toggles direct input, `Ctrl+Shift+Space`
 cycles engines) or with `omime switch <id>`.
 
+What your engine prints to stdout and stderr ends up in omimed's log, one line at a
+time, under the target `engine` and with your engine's id
+(`INFO engine: … engine="echo"`).
+
 ## Showing a window
 
 Create a window with any Wayland toolkit, frameless, sized to your content. omimed

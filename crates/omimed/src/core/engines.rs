@@ -25,6 +25,7 @@ use omime_proto::names::{
     ENV_HOST_WAYLAND_DISPLAY,
 };
 use omime_proto::{ApiVersion, engine::Status};
+use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 use zbus::{OwnedVariant, Variant};
@@ -473,6 +474,9 @@ impl EngineManager {
             .env_remove("QT_IM_MODULE")
             .env_remove("XMODIFIERS")
             .stdin(Stdio::null())
+            // Into omimed's log, under the engine's id.
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         exit_with_omimed(&mut command);
         if !hosted {
@@ -534,6 +538,7 @@ impl EngineManager {
             pid = child.id().unwrap_or(0),
             "engine launched"
         );
+        log_output(id, &mut child);
         let alive = Alive::new(&self.alive);
         tokio::task::spawn_local(async move {
             let _alive = alive;
@@ -899,6 +904,7 @@ async fn supervise_hosted(
         }
     };
     info!(engine, pid = child.id().unwrap_or(0), "engine launched");
+    log_output(&engine, &mut child);
     let status = tokio::select! {
         status = child.wait() => status,
         how = kill => match how {
@@ -920,6 +926,47 @@ enum Stop {
     Politely,
     /// SIGKILL: the process does not respond anyway.
     Now,
+}
+
+/// Writes what an engine process, and whatever it starts, prints to omimed's log, one
+/// line at a time under the engine's id (target `engine`: `OMIME_LOG=info,engine=warn`
+/// keeps it quiet).
+fn log_output(engine: &str, child: &mut tokio::process::Child) {
+    let stdout = child
+        .stdout
+        .take()
+        .map(|o| Box::new(o) as Box<dyn AsyncRead + Unpin>);
+    let stderr = child
+        .stderr
+        .take()
+        .map(|o| Box::new(o) as Box<dyn AsyncRead + Unpin>);
+    for output in [stdout, stderr].into_iter().flatten() {
+        tokio::task::spawn_local(log_lines(engine.to_owned(), output));
+    }
+}
+
+async fn log_lines(engine: String, output: Box<dyn AsyncRead + Unpin>) {
+    /// Longer lines are logged in pieces; the engine never waits for omimed.
+    const MAX_LINE: u64 = 4096;
+    let mut reader = tokio::io::BufReader::new(output);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match (&mut reader)
+            .take(MAX_LINE)
+            .read_until(b'\n', &mut line)
+            .await
+        {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let text = String::from_utf8_lossy(&line);
+                let text = text.trim_end();
+                if !text.is_empty() {
+                    info!(target: "engine", engine, "{text}");
+                }
+            }
+        }
+    }
 }
 
 /// Stops a process politely: SIGTERM, and SIGKILL if it does not exit in time. Input

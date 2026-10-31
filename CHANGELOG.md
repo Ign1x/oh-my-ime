@@ -36,6 +36,8 @@ All notable changes to this project are documented here. The format follows
   hides it.
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
+- What engines print goes into omimed's log line by line, under the target `engine`
+  and with the engine's id, instead of mixing into it unattributed.
 - A hosted input method that hangs no longer swallows every key for good: when it
   reads nothing it is sent for three seconds, omimed kills and restarts it.
 

@@ -70,7 +70,7 @@ Useful environment variables:
 
 | Variable | Effect |
 |---|---|
-| `OMIME_LOG` | Log filter, e.g. `debug`, `omimed::core=trace` |
+| `OMIME_LOG` | Log filter, e.g. `debug`, `omimed::core=trace`; engines' own output is the target `engine` (`info,engine=warn` quiets it) |
 | `OMIME_WL_DEBUG` | Log every Wayland message (includes what you type!) |
 | `OMIME_ENGINE_PATH` | Extra engine directories, searched first |
 

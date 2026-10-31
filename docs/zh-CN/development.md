@@ -55,7 +55,7 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines \
 
 | 变量 | 作用 |
 |---|---|
-| `OMIME_LOG` | 日志过滤，例如 `debug`、`omimed::core=trace` |
+| `OMIME_LOG` | 日志过滤，例如 `debug`、`omimed::core=trace`；引擎自己的输出属于 target `engine`（`info,engine=warn` 可让它安静下来） |
 | `OMIME_WL_DEBUG` | 记录每一条 Wayland 消息（包括你输入的内容！） |
 | `OMIME_ENGINE_PATH` | 额外的引擎目录，会优先搜索 |
 

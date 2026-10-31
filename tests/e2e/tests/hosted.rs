@@ -194,6 +194,21 @@ fn a_hung_hosted_input_method_is_restarted() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn what_engines_print_goes_to_the_log_under_their_id() -> anyhow::Result<()> {
+    // The input method prints its events to stdout too.
+    let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
+    env.wait_for_hosted("the input method to start", |l| l == "ready")?;
+    omime_e2e::harness::wait_until("the input method's line in omimed's log", || {
+        env.daemon_log()
+            .lines()
+            .any(|l| l.contains(" engine: ready") && l.contains("engine=\"hosted\""))
+            .then_some(())
+    })?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn hosted_input_methods_run_on_a_private_bus() -> anyhow::Result<()> {
     let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
     env.wait_for_hosted("the input method to start", |l| l == "ready")?;
