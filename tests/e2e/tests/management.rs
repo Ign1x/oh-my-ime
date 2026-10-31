@@ -231,3 +231,39 @@ fn sighup_reloads_the_configuration() -> anyhow::Result<()> {
     assert_eq!(enabled(&env.omime(&["engines"])?, "echo"), Some(true));
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn frameworks_are_offered_where_installed_and_enabled_when_asked() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], None)?;
+    // Manifests like the ones shipped for Fcitx 5 and IBus: for a program that is
+    // installed, and for one that is not.
+    let program = program_dir().join("omime-echo").display().to_string();
+    for (id, requires) in [
+        ("offered", program.as_str()),
+        ("absent", "omime-no-such-program"),
+    ] {
+        let dir = env.dir().join("engines").join(id);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("engine.toml"),
+            format!(
+                "[engine]\nid = \"{id}\"\nname = \"{id}\"\nexec = [{program:?}]\napi = \"1.0\"\n\
+                 requires = [{requires:?}]\nenabled_by_default = false\n"
+            ),
+        )?;
+    }
+    env.omime(&["reload"])?;
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "offered"), Some(false), "{list}");
+    assert!(!list.contains("absent"), "{list}");
+    assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
+    // Switching to it works without enabling it; enabling puts it in the cycle.
+    env.omime(&["switch", "offered"])?;
+    env.wait_for_status_starting("offered")?;
+    env.omime(&["enable", "offered"])?;
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "offered"), Some(true), "{list}");
+    assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
+    Ok(())
+}

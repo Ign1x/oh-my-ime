@@ -15,8 +15,13 @@ All notable changes to this project are documented here. The format follows
   engine: Fcitx 5 runs inside oh-my-ime with all its input methods and addons. Its popups
   are engine windows, so they follow the text cursor of Wayland and X11 applications, and
   it serves XIM and Fcitx5-module applications too. `data/engines/fcitx5/engine.toml` is
-  the manifest for Fcitx 5, for `omime install`; the Nix package ships it under
-  `share/oh-my-ime/extra-engines`.
+  the manifest for Fcitx 5.
+- Fcitx 5 and IBus are offered as engines wherever they are installed, without
+  `omime install`: their manifests ship on the engine search path (Nix package and
+  `scripts/install.sh`) and name the program they need in the new manifest key
+  `requires`. With the new `enabled_by_default = false` they are offered, not
+  enabled: `omime enable fcitx5` puts Fcitx 5 in the cycle, and `omime switch` works
+  either way.
 - IBus (1.5.32 or later) runs as an engine the same way, through the new `omime-ibus`:
   it starts `ibus-daemon` without a panel and IBus's GTK panel as the Wayland input
   method (`ibus-ui-gtk3 --enable-wayland-im`), so IBus's candidate window is a popup at
@@ -52,8 +57,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs, and the
-  manifests of Fcitx 5 and IBus under `share/oh-my-ime/extra-engines`.
+- `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs.
 - A key that a hosted input method sends back only after it was released no longer
   stays held in the application: a busy Fcitx 5 or IBus could leave a key repeating
   there until the next key.

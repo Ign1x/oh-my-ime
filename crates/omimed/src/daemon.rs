@@ -97,10 +97,14 @@ fn load_config() -> Config {
 }
 
 fn discover_engines() -> Vec<omime_proto::manifest::InstalledEngine> {
-    let (installed, problems) = manifest::discover(&omime_proto::paths::engine_dirs());
-    for (path, problem) in problems {
+    let found = manifest::discover(&omime_proto::paths::engine_dirs());
+    for (path, problem) in &found.broken {
         warn!("ignoring {}: {problem}", path.display());
     }
+    for (engine, program) in &found.unavailable {
+        debug!(engine, "not offered: `{program}` is not installed");
+    }
+    let installed = found.engines;
     for engine in &installed {
         if !engine.unknown_keys.is_empty() {
             warn!(

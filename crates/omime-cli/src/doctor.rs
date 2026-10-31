@@ -341,7 +341,8 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
 /// Runs every check, prints one line per finding and returns whether nothing is wrong.
 pub async fn run() -> anyhow::Result<bool> {
     let others = other_input_methods(&processes()?);
-    let (engines, broken) = discover(&paths::engine_dirs());
+    let found = discover(&paths::engine_dirs());
+    let engines = &found.engines;
     let installed: Vec<String> = engines.iter().map(|e| e.id().to_owned()).collect();
     let warnings: Vec<(String, String)> = engines
         .iter()
@@ -362,7 +363,12 @@ pub async fn run() -> anyhow::Result<bool> {
 
     let mut findings = daemon_check(&others).await;
     findings.extend(config_check(&installed));
-    findings.extend(engine_findings(&broken, &warnings, &unknown));
+    findings.extend(engine_findings(&found.broken, &warnings, &unknown));
+    findings.extend(found.unavailable.iter().map(|(id, program)| {
+        Finding::ok(format!(
+            "engine {id} is offered once `{program}` is installed"
+        ))
+    }));
     findings.extend(environment_findings(&environment()));
 
     for finding in &findings {

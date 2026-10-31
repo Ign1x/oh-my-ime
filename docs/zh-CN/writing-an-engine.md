@@ -70,6 +70,8 @@ name = "回声"
 
 omimed 不认识的键会被略过并给出警告，因此用到新版本键的清单在旧版本里也能加载。
 
+如果清单随别的软件一起分发，而它所依赖的程序未必已安装，就在 `requires = ["fcitx5"]` 中写出这个程序（`$PATH` 中的名字，或者绝对路径）：只有装了它，omimed 才会提供这个引擎。`enabled_by_default = false` 表示在 `config.toml` 没有列出引擎时，它只被列为可用而不被启用；用户用 `omime enable <id>` 启用它。
+
 要为当前用户安装这个目录，运行 `omime install <dir>`：它会检查清单，把目录复制到 `~/.local/share/oh-my-ime/engines/<id>`，并让正在运行的 omimed 重新加载。`--force` 会替换之前安装的副本，`omime uninstall <id>` 则将其移除。
 
 omimed 按以下顺序查找引擎目录：

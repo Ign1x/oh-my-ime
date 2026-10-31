@@ -1361,6 +1361,8 @@ impl Core {
 
 /// The enabled engines in switching order: the configured list (minus what is not
 /// installed) or every installed engine.
+/// The engines `config` enables, in switching order. Without a list, every installed
+/// engine that is enabled by default: engines of other frameworks are only offered.
 fn enabled_engines(config: &Config, installed: &[InstalledEngine]) -> Vec<String> {
     let ids: Vec<String> = installed.iter().map(|e| e.id().to_owned()).collect();
     match &config.engines {
@@ -1375,7 +1377,11 @@ fn enabled_engines(config: &Config, installed: &[InstalledEngine]) -> Vec<String
             })
             .cloned()
             .collect(),
-        None => ids,
+        None => installed
+            .iter()
+            .filter(|e| e.manifest.engine.enabled_by_default)
+            .map(|e| e.id().to_owned())
+            .collect(),
     }
 }
 

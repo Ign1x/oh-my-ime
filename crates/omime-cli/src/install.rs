@@ -80,7 +80,7 @@ pub fn uninstall(engines_dir: &Path, id: &str, search: &[PathBuf]) -> anyhow::Re
     let target = engines_dir.join(id);
     // The id becomes a path component, so only valid ids may even be looked up.
     if !is_valid_engine_id(id) || !target.join(MANIFEST_FILE).exists() {
-        if let Some(engine) = discover(search).0.iter().find(|e| e.id() == id) {
+        if let Some(engine) = discover(search).engines.iter().find(|e| e.id() == id) {
             bail!(
                 "engine `{id}` is installed in {}, outside your user directory; \
                  remove it with whatever installed it",

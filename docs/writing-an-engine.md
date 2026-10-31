@@ -83,6 +83,12 @@ name = "回声"
 Keys omimed does not know are left out with a warning, so a manifest that uses keys of
 a newer version still loads in an older one.
 
+A manifest that ships with something else, for a program that may not be installed,
+names the program in `requires = ["fcitx5"]` (names in `$PATH`, or absolute paths):
+omimed offers the engine only where it is installed. `enabled_by_default = false`
+makes it offered rather than enabled while `config.toml` lists no engines; users
+enable it with `omime enable <id>`.
+
 To install the directory for the current user, run `omime install <dir>`: it checks the
 manifest, copies the directory to `~/.local/share/oh-my-ime/engines/<id>` and asks a
 running omimed to reload. `--force` replaces an earlier copy, and `omime uninstall <id>`

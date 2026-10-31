@@ -82,6 +82,14 @@ rustPlatform.buildRustPackage {
       substituteInPlace $manifest \
         --replace-fail "exec = [\"omime-$engine\"]" "exec = [\"$out/bin/omime-$engine\"]"
     done
+    # Manifests for programs this package does not provide: omimed offers them where
+    # the program is installed (`requires`), and enables them only when asked.
+    for engine in fcitx5 ibus; do
+      install -Dm644 data/engines/$engine/engine.toml \
+        $out/share/oh-my-ime/engines/$engine/engine.toml
+    done
+    substituteInPlace $out/share/oh-my-ime/engines/ibus/engine.toml \
+      --replace-fail 'exec = ["omime-ibus"]' "exec = [\"$out/bin/omime-ibus\"]"
 
     install -Dm644 data/omimed.service $out/lib/systemd/user/omimed.service
     substituteInPlace $out/lib/systemd/user/omimed.service \
@@ -89,14 +97,6 @@ rustPlatform.buildRustPackage {
       --replace-fail "ExecReload=%h/.local/bin/omime reload" "ExecReload=$out/bin/omime reload"
     install -Dm644 data/config.toml $out/share/oh-my-ime/config.toml
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
-    # Manifests for programs this package does not provide, for `omime install`: not
-    # on the engine search path, or omimed would list them where they are not installed.
-    for engine in fcitx5 ibus; do
-      install -Dm644 data/engines/$engine/engine.toml \
-        $out/share/oh-my-ime/extra-engines/$engine/engine.toml
-    done
-    substituteInPlace $out/share/oh-my-ime/extra-engines/ibus/engine.toml \
-      --replace-fail 'exec = ["omime-ibus"]' "exec = [\"$out/bin/omime-ibus\"]"
 
     # NixOS links only some of share/ into profiles; find the bundled engines anyway.
     # Hosted input methods run on a private bus, which omimed starts with dbus-daemon.

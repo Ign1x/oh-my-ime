@@ -20,7 +20,9 @@
 //! a bare name is looked up in `$PATH`.
 //!
 //! An unmodified Wayland input method, such as Fcitx5, runs as an engine too. It speaks
-//! `zwp_input_method_v2` instead of the engine protocol, so its manifest has no `api`:
+//! `zwp_input_method_v2` instead of the engine protocol, so its manifest has no `api`.
+//! A manifest shipped for a program that may not be installed names it in `requires`,
+//! and is offered rather than enabled:
 //!
 //! ```toml
 //! [engine]
@@ -28,6 +30,8 @@
 //! name = "Fcitx 5"
 //! exec = ["fcitx5"]
 //! protocol = "input-method-v2"
+//! requires = ["fcitx5"]
+//! enabled_by_default = false
 //! ```
 
 use std::collections::BTreeMap;
@@ -76,6 +80,14 @@ pub struct EngineInfo {
     /// Engine protocol version, `"MAJOR.MINOR"`; required with [`Protocol::Omime`].
     #[serde(default)]
     pub api: Option<String>,
+    /// Programs that must be installed for the engine to be offered at all: names
+    /// looked up in `$PATH`, or absolute paths.
+    #[serde(default)]
+    pub requires: Vec<String>,
+    /// Whether the engine is enabled while `config.toml` lists no engines. Engines for
+    /// other frameworks are offered, not imposed, so their manifests say `false`.
+    #[serde(default = "enabled_by_default")]
+    pub enabled_by_default: bool,
     /// Translations, keyed by locale (`zh-CN`, `ja`, ...).
     #[serde(default)]
     pub i18n: BTreeMap<String, Translation>,
@@ -87,6 +99,10 @@ pub struct Translation {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 /// Errors in a manifest.
@@ -207,6 +223,16 @@ impl InstalledEngine {
         &self.manifest.engine.id
     }
 
+    /// The first program of `requires` that is not installed, if any.
+    pub fn missing_requirement(&self) -> Option<&str> {
+        self.manifest
+            .engine
+            .requires
+            .iter()
+            .find(|program| !is_installed(program))
+            .map(String::as_str)
+    }
+
     /// The command line with `exec[0]` resolved as documented in the module docs.
     pub fn command(&self) -> Vec<String> {
         let mut argv = self.manifest.engine.exec.clone();
@@ -220,11 +246,36 @@ impl InstalledEngine {
     }
 }
 
+/// Whether `program`, a name looked up in `$PATH` or a path, is an executable file.
+fn is_installed(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    let executable = |path: &Path| {
+        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        return executable(Path::new(program));
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| executable(&dir.join(program))))
+}
+
+/// What [`discover`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discovery {
+    pub engines: Vec<InstalledEngine>,
+    /// Manifests that could not be loaded, and why.
+    pub broken: Vec<(PathBuf, String)>,
+    /// Engines left out because a program in their `requires` is not installed:
+    /// (id, program).
+    pub unavailable: Vec<(String, String)>,
+}
+
 /// Loads every engine found in `dirs`, in order. An id found in an earlier directory
 /// shadows the same id in later ones, so user installs override system ones.
 ///
-/// Broken manifests are reported in the second list instead of aborting.
-pub fn discover(dirs: &[PathBuf]) -> (Vec<InstalledEngine>, Vec<(PathBuf, String)>) {
+/// Broken manifests are reported instead of aborting, and engines whose `requires` are
+/// not installed are left out.
+pub fn discover(dirs: &[PathBuf]) -> Discovery {
     let mut engines: BTreeMap<String, InstalledEngine> = BTreeMap::new();
     let mut problems = Vec::new();
     for dir in dirs {
@@ -265,7 +316,19 @@ pub fn discover(dirs: &[PathBuf]) -> (Vec<InstalledEngine>, Vec<(PathBuf, String
             }
         }
     }
-    (engines.into_values().collect(), problems)
+    let mut found = Discovery {
+        broken: problems,
+        ..Discovery::default()
+    };
+    for engine in engines.into_values() {
+        match engine.missing_requirement() {
+            Some(program) => found
+                .unavailable
+                .push((engine.id().to_owned(), program.to_owned())),
+            None => found.engines.push(engine),
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -373,10 +436,49 @@ protocol = "input-method-v2"
         std::fs::create_dir_all(system.join("wrong-dir")).unwrap();
         std::fs::write(system.join("wrong-dir").join(MANIFEST_FILE), ECHO).unwrap();
 
-        let (engines, problems) = discover(&[user.clone(), system.clone()]);
-        assert_eq!(engines.len(), 1);
-        assert_eq!(engines[0].manifest.engine.name, "User Echo");
-        assert_eq!(problems.len(), 1);
+        let found = discover(&[user.clone(), system.clone()]);
+        assert_eq!(found.engines.len(), 1);
+        assert_eq!(found.engines[0].manifest.engine.name, "User Echo");
+        assert_eq!(found.broken.len(), 1);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn engines_need_what_they_require() {
+        let root = std::env::temp_dir().join(format!("omime-requires-{}", std::process::id()));
+        // `sh` is everywhere; the other program is nowhere.
+        for (id, requires) in [("there", "sh"), ("missing", "omime-no-such-program")] {
+            std::fs::create_dir_all(root.join(id)).unwrap();
+            std::fs::write(
+                root.join(id).join(MANIFEST_FILE),
+                ECHO.replace("id = \"echo\"", &format!("id = \"{id}\""))
+                    .replace(
+                        "api = \"1.0\"",
+                        &format!("api = \"1.0\"\nrequires = [\"{requires}\"]"),
+                    ),
+            )
+            .unwrap();
+        }
+        let found = discover(std::slice::from_ref(&root));
+        let ids: Vec<&str> = found.engines.iter().map(InstalledEngine::id).collect();
+        assert_eq!(ids, ["there"]);
+        assert_eq!(
+            found.unavailable,
+            [("missing".to_owned(), "omime-no-such-program".to_owned())]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn engines_are_enabled_by_default_unless_they_say_otherwise() {
+        assert!(Manifest::parse(ECHO).unwrap().0.engine.enabled_by_default);
+        let offered = ECHO.replace("api = \"1.0\"", "api = \"1.0\"\nenabled_by_default = false");
+        assert!(
+            !Manifest::parse(&offered)
+                .unwrap()
+                .0
+                .engine
+                .enabled_by_default
+        );
     }
 }
