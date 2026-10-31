@@ -122,7 +122,7 @@ enabled = false
 
 ### Fcitx 5 作为引擎
 
-Fcitx 5 无需修改即可作为 oh-my-ime 内部的一个引擎运行，连同它的全部输入法和插件：omimed 启动它，为它提供一个私有会话总线和属于它自己的输入法，并像对待任何引擎一样，把它的候选窗口显示在文本光标处。必须安装 `fcitx5`，并且它不能单独运行（见第 2 步）。安装仓库自带的清单（Nix 包把它放在 `share/oh-my-ime/extra-engines/fcitx5`）：
+Fcitx 5 无需修改即可作为 oh-my-ime 内部的一个引擎运行，连同它的全部输入法和插件：omimed 启动它，为它提供一个私有会话总线和属于它自己的输入法，并像对待任何引擎一样，把它的候选窗口显示在文本光标处。必须安装 `fcitx5`，并且它不能单独运行（见第 2 步）。安装仓库自带的清单（Nix 包和 `scripts/install.sh` 把它放在 `share/oh-my-ime/extra-engines/fcitx5`）：
 
 ```sh
 omime install /path/to/oh-my-ime/data/engines/fcitx5
@@ -151,7 +151,7 @@ DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-
 
 ### IBus 作为引擎
 
-IBus（1.5.32 或更高版本）以同样的方式在 oh-my-ime 内部运行，连同它的全部输入法（ibus-libpinyin、ibus-rime、ibus-hangul 等）。oh-my-ime 提供的 `omime-ibus` 启动 `ibus-daemon`，并把 IBus 的 GTK 面板作为 Wayland 输入法启动（`ibus-ui-gtk3 --enable-wayland-im`），因此候选窗口由 IBus 自己绘制，再由 omimed 放到文本光标处。必须安装 IBus，并且它不能单独运行。安装仓库自带的清单（Nix 包把它放在 `share/oh-my-ime/extra-engines/ibus`）：
+IBus（1.5.32 或更高版本）以同样的方式在 oh-my-ime 内部运行，连同它的全部输入法（ibus-libpinyin、ibus-rime、ibus-hangul 等）。oh-my-ime 提供的 `omime-ibus` 启动 `ibus-daemon`，并把 IBus 的 GTK 面板作为 Wayland 输入法启动（`ibus-ui-gtk3 --enable-wayland-im`），因此候选窗口由 IBus 自己绘制，再由 omimed 放到文本光标处。必须安装 IBus，并且它不能单独运行。安装仓库自带的清单（Nix 包和 `scripts/install.sh` 把它放在 `share/oh-my-ime/extra-engines/ibus`）：
 
 ```sh
 omime install /path/to/oh-my-ime/data/engines/ibus

@@ -52,6 +52,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs, and the
+  manifests of Fcitx 5 and IBus under `share/oh-my-ime/extra-engines`.
 - A key that a hosted input method sends back only after it was released no longer
   stays held in the application: a busy Fcitx 5 or IBus could leave a key repeating
   there until the next key.
