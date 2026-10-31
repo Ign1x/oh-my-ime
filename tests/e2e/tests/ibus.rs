@@ -165,7 +165,9 @@ fn ibus_engines_are_chosen_directly() -> anyhow::Result<()> {
     // Choosing libpinyin through omimed selects it in IBus.
     env.omime(&["switch", "ibus/libpinyin"])?;
     env.wait_for_status_starting("ibus/libpinyin")?;
-    assert_eq!(current_engine(&env).as_deref(), Some("libpinyin"));
+    wait_until("IBus to use libpinyin", || {
+        (current_engine(&env).as_deref() == Some("libpinyin")).then_some(())
+    })?;
     env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("你好")?;
     Ok(())

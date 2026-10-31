@@ -350,10 +350,12 @@ fn the_input_methods_inside_fcitx5_are_chosen_directly() -> anyhow::Result<()> {
     assert!(list.contains("fcitx5/pinyin"), "{list}");
     assert!(!list.contains("keyboard-us"), "{list}");
 
-    let editor = env.editor(&[])?;
-    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // Chosen while no field is focused, when Fcitx 5 may take no notice yet: omimed
+    // selects it again once Fcitx 5 uses an input method.
     env.omime(&["switch", "fcitx5/shuangpin"])?;
     env.wait_for_status_starting("fcitx5/shuangpin")?;
+    let editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
     // Xiaohe: ni hao is n i h c.
     env.type_on_seat("seat0", "nihc ")?;
     editor.wait_for_text("你好")?;

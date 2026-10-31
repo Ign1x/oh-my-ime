@@ -397,8 +397,9 @@ impl Core {
             .and_then(|id| self.engines.get(id))?;
         let mut status = slot.status.clone();
         if let Some(method) = slot
-            .inner
+            .wanted_inner
             .as_deref()
+            .or(slot.inner.as_deref())
             .and_then(|inner| slot.methods.iter().find(|m| m.id == inner))
         {
             let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
@@ -448,12 +449,13 @@ impl Core {
         methods
     }
 
-    /// The input method in use: the current engine, or the input method inside it. `None`
-    /// is direct input.
+    /// The input method in use: the current engine, or the input method inside it (the
+    /// one chosen, while the framework has not taken it yet). `None` is direct input.
     pub fn current_method(&self) -> Option<String> {
         let engine = self.current.as_deref()?;
         let slot = self.engines.get(engine)?;
-        Some(match &slot.inner {
+        let inner = slot.wanted_inner.as_ref().or(slot.inner.as_ref());
+        Some(match inner {
             Some(inner) if slot.methods.iter().any(|m| &m.id == inner) => {
                 format!("{engine}/{inner}")
             }
@@ -1146,10 +1148,11 @@ impl Core {
             }
             // An explicit switch also retries an engine that gave up after crashing.
             self.engines.ensure_started(id, true)?;
-            if let Some(inner) = inner
-                && self.engines.get(id).and_then(|s| s.inner.as_deref()) != Some(inner.as_str())
-            {
+            if let Some(inner) = inner {
                 self.engines.select_inner(id, inner);
+                if target.as_deref() == self.current.as_deref() {
+                    self.status_changed();
+                }
             }
         }
         if target == self.current {

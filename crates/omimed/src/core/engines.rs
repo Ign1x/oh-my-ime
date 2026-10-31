@@ -242,8 +242,13 @@ pub struct EngineSlot {
     pub methods: Vec<InnerMethod>,
     /// The input method the framework uses, as it last reported it.
     pub inner: Option<String>,
-    /// The input method to select once the framework can be asked.
+    /// The input method chosen through omimed that the framework does not use yet. It is
+    /// selected when the adapter runs, and again once the framework reports an input
+    /// method in use: Fcitx 5 ignores a selection while no field is focused.
     pub wanted_inner: Option<String>,
+    /// Whether `wanted_inner` was selected again after the framework reported another
+    /// input method, so that a selection that does not take is not repeated forever.
+    wanted_retried: bool,
     /// Commands for the framework's adapter, while it runs.
     framework: Option<mpsc::UnboundedSender<FrameworkCommand>>,
     /// Increases with every launch; events of older processes are ignored.
@@ -311,6 +316,7 @@ impl EngineManager {
             methods: Vec::new(),
             inner: None,
             wanted_inner: None,
+            wanted_retried: false,
             framework: None,
             generation: 0,
             kill: None,
@@ -613,8 +619,8 @@ impl EngineManager {
         }
         match update {
             FrameworkUpdate::Connected(commands) => {
-                if let Some(wanted) = slot.wanted_inner.take() {
-                    let _ = commands.send(FrameworkCommand::Select(wanted));
+                if let Some(wanted) = &slot.wanted_inner {
+                    let _ = commands.send(FrameworkCommand::Select(wanted.clone()));
                 }
                 slot.framework = Some(commands);
                 false
@@ -625,6 +631,16 @@ impl EngineManager {
                 changed
             }
             FrameworkUpdate::Current(inner) => {
+                if let (Some(wanted), Some(now)) = (&slot.wanted_inner, &inner) {
+                    if wanted == now || slot.wanted_retried {
+                        slot.wanted_inner = None;
+                    } else if let Some(commands) = &slot.framework {
+                        // The framework took no notice before; it uses an input method
+                        // now, so it can be asked.
+                        let _ = commands.send(FrameworkCommand::Select(wanted.clone()));
+                        slot.wanted_retried = true;
+                    }
+                }
                 let changed = slot.inner != inner;
                 slot.inner = inner;
                 changed
@@ -632,18 +648,17 @@ impl EngineManager {
         }
     }
 
-    /// Selects the input method `inner` inside the framework of `id`: now, or once its
-    /// adapter runs.
+    /// Selects the input method `inner` inside the framework of `id`: now if its adapter
+    /// runs, and until the framework reports it in use.
     pub fn select_inner(&mut self, id: &str, inner: String) {
         let Some(slot) = self.slots.get_mut(id) else {
             return;
         };
-        match &slot.framework {
-            Some(commands) => {
-                let _ = commands.send(FrameworkCommand::Select(inner));
-            }
-            None => slot.wanted_inner = Some(inner),
+        if let Some(commands) = &slot.framework {
+            let _ = commands.send(FrameworkCommand::Select(inner.clone()));
         }
+        slot.wanted_inner = Some(inner);
+        slot.wanted_retried = false;
     }
 
     /// Asks the framework adapter of `id` to look at the current input method again.
