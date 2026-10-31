@@ -245,6 +245,24 @@ both answered by the bridge.
   (`OMIME_HOST_WAYLAND_DISPLAY`), so `ibus engine` and `ibus-setup` reach the hosted
   daemon. dconf's service is not on the private bus: the hosted IBus reads the settings
   dconf holds, but cannot save any.
+- **Tray items.** Fcitx 5 and IBus publish a tray item (`org.kde.StatusNotifierItem`)
+  with their current input method. On the private bus no status bar takes it, so omimed
+  plays `org.kde.StatusNotifierWatcher` there, follows the item the input method
+  registers, and makes the engine's status from it: the tooltip's title, the
+  `XAyatanaLabel` and the icon. omimed's own tray item shows the icon, with the input
+  method's `share/icons` as the theme path when the item names none.
+
+## Tray item
+
+omimed publishes one tray item on the session bus (`org.kde.StatusNotifierItem`, with a
+`com.canonical.dbusmenu` menu) and registers it with the status bar's
+`org.kde.StatusNotifierWatcher`, again whenever a watcher appears. The item keeps no
+state: every property is read from the daemon loop, and the loop tells the item when the
+current engine, its status or the engines change, which sends `NewIcon`, `NewToolTip` and
+`LayoutUpdated`. The icon is the hosted input method's, else the engine's status or
+manifest icon, else `input-keyboard`; the tooltip is "engine · status". A click toggles
+direct input, a middle click switches to the next engine, and the menu holds the enabled
+engines and direct input as radio items. `[tray] enabled = false` turns it off.
 
 ## Compatibility layers (planned)
 

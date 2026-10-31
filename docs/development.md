@@ -33,7 +33,9 @@ provide. `xim.rs` types into `omime-xim-client`, an X11 client that uses XIM, an
 checks where engine windows open, that they stay hidden until the engine asks, how they
 follow X11 text cursors, and that clicks on them reach the engine; it reads pixels with
 `grim`. `hosted.rs` hosts `omime-im-client`, a small Wayland input method, as an engine;
-`fcitx5.rs` and `ibus.rs` host the real Fcitx 5 and IBus from the shell.
+`fcitx5.rs` and `ibus.rs` host the real Fcitx 5 and IBus from the shell. `tray.rs` checks
+omimed's tray item with `omime-tray-host`, which plays a status bar's tray: it prints what
+the item shows and clicks it and its menu.
 
 ```sh
 cargo build --workspace

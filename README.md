@@ -126,6 +126,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
+| Tray item: the current engine and, for Fcitx 5 and IBus, their input method; a menu to switch | ✅ |
 | Several seats, each with its own input method session | ✅ tested on sway |
 | Nix package with the systemd user unit | ✅ |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
@@ -184,7 +185,7 @@ Wayland application and pick from Sparkle's deck.
 | Next engine | `Ctrl+Shift+Space` or `omime next` |
 | Pick an engine | `omime switch sparkle`, `omime switch direct` |
 | Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
-| Status bars | `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
+| Status bars | the tray item (StatusNotifierItem); `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 
 omimed remembers the engine you used last, or with `remember = true` under `[apps]` in
 `config.toml`, the engine of every application. The full setup, a waybar snippet and
@@ -208,7 +209,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
    (not released yet)
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
-7. **Phase 5** — native Rime engine, settings GUI, tray, more compositors, C ABI SDK
+7. **Phase 5** — native Rime engine, settings GUI, more compositors, C ABI SDK (the
+   tray item is done)
 
 ## FAQ
 

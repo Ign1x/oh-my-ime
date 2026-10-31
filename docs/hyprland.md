@@ -112,6 +112,20 @@ gets its engine back whenever you return to it, also after a restart. Applicatio
 have not switched in yet keep the current engine. Launchers and other layer-shell
 surfaces are not windows: switching in them counts for the window below.
 
+### Tray
+
+omimed shows the current engine in the tray of status bars (StatusNotifierItem):
+waybar's `tray` module, KDE's system tray and others. The tooltip names the engine and,
+for Fcitx 5 and IBus, the input method they use, such as "Fcitx 5 · 双拼"; the icon is
+theirs too. A click switches between direct input and the last engine, a middle click to
+the next engine, and the menu lists the enabled engines and direct input. To hide it, set
+this in `~/.config/oh-my-ime/config.toml` and restart omimed:
+
+```toml
+[tray]
+enabled = false
+```
+
 ### Waybar
 
 `omime status --watch --json` prints the status and then one line per change, in the
