@@ -84,9 +84,10 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | What | How |
 |---|---|
 | Toggle between direct input and the last engine | `Ctrl+Space` (while a text field is focused) |
-| Next engine | `Ctrl+Shift+Space`, or `omime next` |
-| Pick an engine | `omime switch sparkle`, `omime switch direct` |
-| See what is installed | `omime list` (`*` marks enabled engines) |
+| Next input method | `Ctrl+Shift+Space`, or `omime next` |
+| Pick an input method | `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`, or the tray menu |
+| See what to choose from | `omime list` (`*` marks the input method in use) |
+| See what is installed | `omime engines` (`*` marks enabled engines) |
 | Find out what is wrong | `omime doctor` (exit status 1 when it finds a problem) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
@@ -118,7 +119,7 @@ omimed shows the current engine in the tray of status bars (StatusNotifierItem):
 waybar's `tray` module, KDE's system tray and others. The tooltip names the engine and,
 for Fcitx 5 and IBus, the input method they use, such as "Fcitx 5 · 双拼"; the icon is
 theirs too. A click switches between direct input and the last engine, a middle click to
-the next engine, and the menu lists the enabled engines and direct input. To hide it, set
+the next input method, and the menu lists the input methods and direct input. To hide it, set
 this in `~/.config/oh-my-ime/config.toml` and restart omimed:
 
 ```toml
@@ -171,10 +172,17 @@ talks to it over D-Bus, so point it at the private bus:
 DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
 ```
 
-Switch with omimed's hotkeys and `omime switch`, not with Fcitx 5's trigger key: omimed
-takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles itself, such as
-`Ctrl+Shift` between its input methods, keep working. Only the popups of Fcitx 5 are
-shown; its other windows cannot be.
+The input methods you set up in Fcitx 5 are what you choose from, each on its own:
+`omime list` shows `fcitx5/shuangpin`, `fcitx5/pinyin` and so on (its keyboard layouts are
+not among them; direct input is omimed's), and `omime switch fcitx5/shuangpin`,
+`Ctrl+Shift+Space` and the tray menu select them. omimed asks Fcitx 5 which input methods
+it has and remembers them, so they are listed even before Fcitx 5 starts, and gives
+Fcitx 5 the input method in use back when it starts again.
+
+Switch with omimed's hotkeys, `omime switch` and the tray, not with Fcitx 5's trigger
+key: omimed takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles
+itself, such as `Ctrl+Shift` between its input methods, keep working, and omimed follows
+them. Only the popups of Fcitx 5 are shown; its other windows cannot be.
 
 ### IBus as an engine
 
@@ -191,9 +199,14 @@ omime install /path/to/oh-my-ime/data/engines/ibus
 omime switch ibus
 ```
 
+The engines you chose in IBus (`ibus-setup`, or `preload-engines` in dconf) are what you
+choose from, each on its own, like Fcitx 5's: `omime switch ibus/libpinyin`,
+`Ctrl+Shift+Space` and the tray menu select them. Without a choice, omimed lists the
+engine IBus uses, and each one you switch to with IBus's own tools.
+
 The hosted daemon writes its address where IBus tools look for it, so they work as
-usual: pick an engine with `ibus engine libpinyin` or `ibus-setup`, and configure
-engines from `ibus-setup`, which starts each engine's own setup tool. These tools save
+usual: `ibus engine libpinyin` switches too, and `ibus-setup` configures engines,
+starting each engine's own setup tool. These tools save
 to dconf from your session. The hosted IBus itself runs on omimed's private session bus, where
 dconf's service is not reachable: it reads the settings dconf holds when it starts,
 but cannot save changes of its own, and sees what the tools changed the next time it

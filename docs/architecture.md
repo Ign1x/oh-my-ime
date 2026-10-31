@@ -245,6 +245,19 @@ both answered by the bridge.
   (`OMIME_HOST_WAYLAND_DISPLAY`), so `ibus engine` and `ibus-setup` reach the hosted
   daemon. dconf's service is not on the private bus: the hosted IBus reads the settings
   dconf holds, but cannot save any.
+- **Input methods inside.** Users choose input methods, not frameworks: Fcitx 5's 双拼
+  and 拼音 and IBus's libpinyin are choices of their own, with ids `fcitx5/shuangpin`
+  and `ibus/libpinyin` wherever an engine id goes (`Switch`, per-application engines,
+  `Ctrl+Shift+Space`, the tray menu). An adapter task runs beside each launch of a
+  hosted engine: it finds Fcitx 5 by its name on the private bus, or IBus by the address
+  file `omime-ibus` names in `$OMIME_ENGINE_RUNTIME_DIR`, and reports the input methods
+  (Fcitx 5's current group; IBus's `preload-engines` from the user's dconf database,
+  read as a file) and the one in use (`CurrentInputMethod`, `GlobalEngine`), following
+  `InputMethodGroupChanged`, `GlobalEngineChanged` and the framework's tray item.
+  Selecting is `SetCurrentIM` or `SetGlobalEngine`, which work without a focused field.
+  Keyboard layouts are left out: direct input is omimed's. The lists and the input
+  method in use are kept across restarts, so they can be chosen before the framework
+  starts, and the framework gets the input method in use back when it starts.
 - **Tray items.** Fcitx 5 and IBus publish a tray item (`org.kde.StatusNotifierItem`)
   with their current input method. On the private bus no status bar takes it, so omimed
   plays `org.kde.StatusNotifierWatcher` there, follows the item the input method
@@ -261,8 +274,9 @@ state: every property is read from the daemon loop, and the loop tells the item 
 current engine, its status or the engines change, which sends `NewIcon`, `NewToolTip` and
 `LayoutUpdated`. The icon is the hosted input method's, else the engine's status or
 manifest icon, else `input-keyboard`; the tooltip is "engine · status". A click toggles
-direct input, a middle click switches to the next engine, and the menu holds the enabled
-engines and direct input as radio items. `[tray] enabled = false` turns it off.
+direct input, a middle click switches to the next input method, and the menu holds the
+input methods and direct input as radio items; for an input method inside a framework
+the tooltip is "input method (framework)". `[tray] enabled = false` turns it off.
 
 ## Compatibility layers (planned)
 

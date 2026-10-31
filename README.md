@@ -126,7 +126,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
-| Tray item: the current engine and, for Fcitx 5 and IBus, their input method; a menu to switch | ✅ |
+| Tray item: the input method in use and a menu to switch | ✅ |
+| The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Several seats, each with its own input method session | ✅ tested on sway |
 | Nix package with the systemd user unit | ✅ |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
@@ -182,9 +183,9 @@ Wayland application and pick from Sparkle's deck.
 | What | How |
 |---|---|
 | Toggle direct input ↔ last engine | `Ctrl+Space` |
-| Next engine | `Ctrl+Shift+Space` or `omime next` |
-| Pick an engine | `omime switch sparkle`, `omime switch direct` |
-| Manage engines | `omime list`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
+| Next input method | `Ctrl+Shift+Space` or `omime next` |
+| Pick an input method | `omime list`, then `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`; or the tray menu |
+| Manage engines | `omime engines`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Status bars | the tray item (StatusNotifierItem); `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 
 omimed remembers the engine you used last, or with `remember = true` under `[apps]` in
