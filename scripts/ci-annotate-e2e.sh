@@ -10,7 +10,9 @@ function flush() {
     if (name != "") {
         if (text == "") text = "failed"
         # What omimed and the engines said that went wrong, from the log the test printed.
-        notes = n1 (n2 != "" ? " / " n2 : "") (n3 != "" ? " / " n3 : "")
+        notes = n1
+        if (n2 != "") notes = notes (notes != "" ? " / " : "") n2
+        if (n3 != "") notes = notes (notes != "" ? " / " : "") n3
         if (notes != "") text = text " | log: " notes
         gsub(/%/, "%25", text)
         printf "::error title=%s::%s\n", name, substr(text, 1, 900)
