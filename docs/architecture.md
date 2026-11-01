@@ -284,6 +284,18 @@ both answered by the bridge.
   registers, and makes the engine's status from it: the tooltip's title, the
   `XAyatanaLabel` and the icon. omimed's own tray item shows the icon, with the input
   method's `share/icons` as the theme path when the item names none.
+- **Their menus.** The menu of that tray item (`com.canonical.dbusmenu`) becomes the
+  engine's menu, which the control API and omimed's tray offer as they offer a native
+  engine's: what the input method has to switch, without its input methods and its own
+  entries. Of Fcitx 5's menu these are the status actions (ids from 300 on: Chinese
+  punctuation, full width, simplified or traditional Chinese); of IBus's, the engine's
+  properties before the first separator. omimed reads the menu after `AboutToShow`
+  whenever the item changes and again after `LayoutUpdated`, and passes clicks on as
+  `Event(id, "clicked")`; the menu's ids are the entries' ids. IBus exports its menu
+  anew only when an engine registers its properties, not when one of them changes, so
+  omimed follows the engines' `UpdateProperty` on IBus's bus and has the panel build
+  the menu again shortly after: a middle click (`SecondaryActivate`) flips it to the
+  panel's own menu and a second one back, each building it afresh.
 
 ## Control API
 

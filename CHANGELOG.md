@@ -53,6 +53,11 @@ All notable changes to this project are documented here. The format follows
   and `PropertiesChanged` offer the menu of the engine in use to status bars and
   settings programs; `omime properties` shows it and `omime activate <id>` activates
   an entry. The tray menu shows it below the input methods, with its submenus.
+- Fcitx 5's and IBus's switches are the menu of their engine: Chinese punctuation, full
+  width, simplified or traditional Chinese and the like, taken from the menu of their
+  tray item on the private bus (without their input methods and their own entries) and
+  clicked there. IBus does not update that menu when a property changes, so omimed has
+  its panel build it again after IBus's engines change their properties.
 - The control API grows what a settings program needs, described in
   `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
   every engine and every input method with descriptions, languages and state, enabled

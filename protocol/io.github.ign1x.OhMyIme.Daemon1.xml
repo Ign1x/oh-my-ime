@@ -134,10 +134,13 @@
 
     <!--
       The menu of the engine in use (empty for direct input), as the engine announced
-      it with SetProperties: actions, switches and choices, such as Chinese or English
-      punctuation. Each entry: "id", "parent" (the id of the "menu" entry it is in,
-      empty at the top), "kind" ("action", "toggle", "radio", "menu" or "separator"),
-      "label", "icon", "tooltip" (s), "checked", "enabled" (b), in menu order.
+      it with SetProperties, or for a hosted input method such as Fcitx 5 what its tray
+      item's menu has to switch: actions, switches and choices, such as Chinese or
+      English punctuation. Each entry: "id", "parent" (the id of the "menu" entry it is
+      in, empty at the top), "kind" ("action", "toggle", "radio", "menu" or
+      "separator"), "label", "icon", "tooltip" (s), "checked", "enabled" (b), in menu
+      order. Ids may change whenever the menu does (IBus numbers its entries anew), so
+      read them again after PropertiesChanged.
     -->
     <method name="Properties">
       <arg name="properties" type="aa{sv}" direction="out"/>

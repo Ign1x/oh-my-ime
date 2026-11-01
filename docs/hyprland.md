@@ -179,6 +179,9 @@ protocol = "input-method-v2"
 Fcitx 5 keeps its configuration in `~/.config/fcitx5` as usual. To change it, open its
 configuration tool with `omime settings fcitx5`, or "Configure Fcitx 5…" in the tray menu
 while Fcitx 5 is in use: omimed starts it on Fcitx 5's private bus, where Fcitx 5 is.
+What Fcitx 5 offers to switch for the input method in use, such as Chinese punctuation,
+full width and simplified or traditional Chinese, is in the tray menu too, and in
+`omime properties` (`omime activate <id>` switches it).
 
 The input methods you set up in Fcitx 5 are what you choose from, each on its own:
 `omime list` shows `fcitx5/shuangpin`, `fcitx5/pinyin` and so on (its keyboard layouts are
@@ -227,7 +230,9 @@ not reachable: it reads the settings dconf holds when it starts, but cannot save
 changes of its own. Open `ibus-setup` with `omime settings ibus` or "Configure IBus…"
 in the tray menu, and omimed restarts IBus when you close it, so IBus reads what you
 changed. Switch with omimed's hotkeys and `omime switch`; omimed takes `Ctrl+Space`
-before IBus sees it.
+before IBus sees it. The switches of the IBus engine in use, such as libpinyin's
+Chinese or English mode and full or half width, are in the tray menu and in
+`omime properties`.
 
 ## Which applications work
 

@@ -5,7 +5,8 @@
 //! pass without testing anything when IBus is not installed. See `typing.rs` for how to
 //! run them.
 
-use omime_e2e::harness::{TestEngine, TestEnv, program_dir, wait_until};
+use anyhow::Context as _;
+use omime_e2e::harness::{TestEngine, TestEnv, menu_entry_id, program_dir, wait_until};
 
 /// IBus as a hosted engine, if it is installed.
 fn ibus() -> Option<TestEngine> {
@@ -184,5 +185,37 @@ fn ibus_engines_are_chosen_directly() -> anyhow::Result<()> {
     env.wait_until_composing(&editor)?;
     env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("你好")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_engines_properties_are_ibuss_menu() -> anyhow::Result<()> {
+    let Some(engine) = ibus() else {
+        eprintln!("IBus is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    switch_to_ibus(&env)?;
+    let editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    select_libpinyin(&env)?;
+    env.wait_until_composing(&editor)?;
+    // libpinyin's properties, without IBus's engines and its own entries.
+    let menu = wait_until("libpinyin's properties", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu_entry_id(&menu, "Chinese").map(|_| menu)
+    })?;
+    assert!(!menu.contains("Emoji"), "{menu}");
+
+    // English mode: letters go in as they are.
+    let mode = menu_entry_id(&menu, "Chinese").context("no input mode")?;
+    env.omime(&["activate", &mode])?;
+    wait_until("libpinyin to switch to English", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu_entry_id(&menu, "English")
+    })?;
+    env.type_on_seat("seat0", "abc")?;
+    editor.wait_for_text("abc")?;
     Ok(())
 }

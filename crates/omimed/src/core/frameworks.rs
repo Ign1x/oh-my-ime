@@ -171,7 +171,7 @@ async fn proxy(
 }
 
 /// IBus's address: `omime-ibus` names the file where IBus wrote it.
-fn ibus_address(dir: &Path) -> Option<String> {
+pub(super) fn ibus_address(dir: &Path) -> Option<String> {
     let file = std::fs::read_to_string(dir.join(IBUS_ADDRESS_FILE)).ok()?;
     let text = std::fs::read_to_string(file.trim()).ok()?;
     text.lines()

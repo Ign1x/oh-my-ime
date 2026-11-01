@@ -47,6 +47,18 @@ pub fn wait_until_within<T>(
     }
 }
 
+/// The id of the entry `label` in what `omime properties` prints (`[x] Label  (id)`).
+pub fn menu_entry_id(menu: &str, label: &str) -> Option<String> {
+    menu.lines().find_map(|line| {
+        let (text, id) = line.trim_start().rsplit_once("  (")?;
+        let text = text
+            .strip_prefix("[x] ")
+            .or_else(|| text.strip_prefix("[ ] "))
+            .unwrap_or(text);
+        (text == label).then(|| id.trim_end_matches(')').to_owned())
+    })
+}
+
 /// The directory with the workspace's binaries (`target/debug`).
 pub fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().expect("tests know their executable");

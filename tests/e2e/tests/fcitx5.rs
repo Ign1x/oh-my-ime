@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use std::time::{Duration, Instant};
 
-use omime_e2e::harness::{TIMEOUT, TestEngine, TestEnv};
+use omime_e2e::harness::{TIMEOUT, TestEngine, TestEnv, menu_entry_id, wait_until};
 
 /// Fcitx5 as a hosted engine, if it is installed.
 fn fcitx5() -> Option<TestEngine> {
@@ -469,5 +469,39 @@ fn input_methods_outside_fcitx5s_group_are_added_when_chosen() -> anyhow::Result
             .then_some(())
     })
     .with_context(|| format!("omime list says {:?}", env.omime(&["list"])))?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn fcitx5s_switches_are_the_engines_menu() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    start_pinyin(&env)?;
+    let editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    env.wait_until_composing(&editor)?;
+    // Fcitx 5's status actions, without its input methods and its own entries.
+    let menu = wait_until("Fcitx 5's switches", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu.contains("Full width punctuation").then_some(menu)
+    })?;
+    assert!(!menu.contains("Pinyin") && !menu.contains("Exit"), "{menu}");
+    // Chinese punctuation: a full width comma.
+    env.type_text(",")?;
+    editor.wait_for_text("，")?;
+
+    let punctuation = menu_entry_id(&menu, "Full width punctuation")
+        .with_context(|| format!("no punctuation switch in {menu:?}"))?;
+    env.omime(&["activate", &punctuation])?;
+    wait_until("Fcitx 5 to switch the punctuation", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu.contains("Half width punctuation").then_some(())
+    })?;
+    env.type_text(",")?;
+    editor.wait_for_text("，,")?;
     Ok(())
 }

@@ -32,7 +32,7 @@ use zbus::{OwnedVariant, Variant};
 
 use super::CoreEvent;
 use super::frameworks::{self, FrameworkCommand, FrameworkUpdate, InnerMethod};
-use super::sni_watcher::{self, HostedTray};
+use super::sni_watcher::{self, HostedMenu, HostedTray};
 use crate::runtime_dir;
 
 /// How long an engine may take to start and register.
@@ -275,6 +275,8 @@ pub struct EngineSlot {
     pub available: Vec<InnerMethod>,
     /// The engine's menu, as it last announced it.
     pub properties: Vec<Property>,
+    /// Where clicks on the menu of a hosted engine's tray item go.
+    menu_clicks: Option<mpsc::UnboundedSender<i32>>,
     /// The input method the framework uses, as it last reported it.
     pub inner: Option<String>,
     /// The input method chosen through omimed that the framework does not use yet. It is
@@ -357,6 +359,7 @@ impl EngineManager {
             methods: Vec::new(),
             available: Vec::new(),
             properties: Vec::new(),
+            menu_clicks: None,
             inner: None,
             wanted_inner: None,
             wanted_retried: false,
@@ -666,6 +669,11 @@ impl EngineManager {
             slot.properties.iter().any(|p| p.id == property),
             "engine `{id}` has no property `{property}`"
         );
+        if let Some(clicks) = &slot.menu_clicks {
+            let entry = property.parse().context("not an entry of the menu")?;
+            clicks.send(entry).ok().context("the engine has no menu")?;
+            return Ok(());
+        }
         let proxy = slot.proxy.clone().context("the engine does not run")?;
         let property = property.to_owned();
         tokio::task::spawn_local(async move {
@@ -683,7 +691,27 @@ impl EngineManager {
         self.framework_update(id, generation, update)
     }
 
-    /// The engine process exited. If it is `needed`, it is restarted after a backoff.
+    /// Takes the menu of the hosted engine `id`'s tray item (launch `generation`) as the
+    /// engine's menu. Returns whether it changed.
+    pub fn set_hosted_menu(&mut self, id: &str, generation: u64, menu: Option<HostedMenu>) -> bool {
+        let Some(slot) = self.slots.get_mut(id) else {
+            return false;
+        };
+        if generation != slot.generation {
+            return false;
+        }
+        let (properties, clicks) = match menu {
+            Some(menu) => (menu.properties, Some(menu.clicks)),
+            None => (Vec::new(), None),
+        };
+        slot.menu_clicks = clicks;
+        if slot.properties == properties {
+            return false;
+        }
+        slot.properties = properties;
+        true
+    }
+
     /// Takes what the tray item of the hosted engine `id` (launch `generation`) shows,
     /// and makes the engine's status from it. Returns whether anything changed.
     pub fn set_tray(&mut self, id: &str, generation: u64, tray: Option<HostedTray>) -> bool {
@@ -792,6 +820,7 @@ impl EngineManager {
         slot.kill = None;
         slot.framework = None;
         slot.properties.clear();
+        slot.menu_clicks = None;
         // The status of a hosted engine came from its tray item, which is gone.
         if slot.tray.take().is_some() {
             slot.status = Status::default();
@@ -1063,6 +1092,7 @@ async fn supervise_hosted(
                 engine.clone(),
                 generation,
                 &address,
+                dir.clone(),
                 icon_dir,
                 events.clone(),
             )

@@ -84,6 +84,12 @@ pub enum CoreEvent {
         generation: u64,
         tray: Option<sni_watcher::HostedTray>,
     },
+    /// The menu of a hosted engine's tray item changed, or went away.
+    HostedMenu {
+        engine: String,
+        generation: u64,
+        menu: Option<sni_watcher::HostedMenu>,
+    },
     /// The adapter of a hosted framework (launch `generation`) learnt something.
     Framework {
         engine: String,
@@ -1003,6 +1009,17 @@ impl Core {
                 if self.current.as_deref() == Some(&engine) {
                     self.status_changed();
                     // Its menu went with it.
+                    self.properties_changed();
+                }
+            }
+            CoreEvent::HostedMenu {
+                engine,
+                generation,
+                menu,
+            } => {
+                if self.engines.set_hosted_menu(&engine, generation, menu)
+                    && self.current.as_deref() == Some(&engine)
+                {
                     self.properties_changed();
                 }
             }
