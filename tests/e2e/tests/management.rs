@@ -335,3 +335,30 @@ fn engines_with_input_methods_of_their_own_list_and_switch_them() -> anyhow::Res
     env.wait_for_status_starting("dummy/beta")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn engines_have_menus_whose_entries_can_be_activated() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[dummy_engine(&["--hidden", "--properties"])],
+        Some("dummy"),
+    )?;
+    let menu = omime_e2e::harness::wait_until("the engine's menu", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu.contains("punct").then_some(menu)
+    })?;
+    assert!(menu.contains("[x] Chinese punctuation  (punct)"), "{menu}");
+    assert!(menu.contains("Say hello  (hello)"), "{menu}");
+
+    env.omime(&["activate", "punct"])?;
+    env.wait_for_log("engine: activated punct")?;
+    omime_e2e::harness::wait_until("the switch to flip", || {
+        let menu = env.omime(&["properties"]).ok()?;
+        menu.contains("[ ] Chinese punctuation").then_some(())
+    })?;
+    assert!(env.omime(&["activate", "nothing"]).is_err());
+    // Direct input has no menu.
+    env.omime(&["switch", "direct"])?;
+    assert_eq!(env.omime(&["properties"])?, "");
+    Ok(())
+}

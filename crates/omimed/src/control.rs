@@ -39,6 +39,9 @@ pub enum ControlRequest {
     ForgetApp(String, oneshot::Sender<Result<(), String>>),
     /// The configuration in effect.
     Config(oneshot::Sender<omime_proto::config::Config>),
+    /// The menu of the current engine.
+    Properties(oneshot::Sender<Vec<omime_proto::engine::Property>>),
+    ActivateProperty(String, oneshot::Sender<Result<(), String>>),
     /// Sets options of config.toml, by dotted name, and reloads.
     Configure(
         Vec<(String, omime_proto::config::Value)>,
@@ -211,6 +214,30 @@ impl ControlObject {
         failed(self.ask(|tx| ControlRequest::ForgetApp(app, tx)).await?)
     }
 
+    /// The menu of the input method in use: actions, switches and choices, such as
+    /// Chinese or English punctuation, each a dictionary: "id", "parent" (the "menu"
+    /// entry it belongs to, empty at the top), "kind" ("action", "toggle", "radio",
+    /// "menu" or "separator"), "label", "icon", "tooltip" (s), "checked", "enabled" (b).
+    async fn properties(&self) -> zbus::fdo::Result<Vec<Dict>> {
+        let properties = self.ask(ControlRequest::Properties).await?;
+        Ok(properties
+            .iter()
+            .map(omime_proto::engine::Property::to_dict)
+            .collect())
+    }
+
+    /// Activates a property of the input method in use.
+    async fn activate_property(&self, id: String) -> zbus::fdo::Result<()> {
+        failed(
+            self.ask(|tx| ControlRequest::ActivateProperty(id, tx))
+                .await?,
+        )
+    }
+
+    /// Emitted when what `Properties` returns may have changed.
+    #[zbus(signal)]
+    async fn properties_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
     /// Emitted when the configuration in effect changed.
     #[zbus(signal)]
     async fn config_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
@@ -262,6 +289,7 @@ enum Signal {
     Status(Dict),
     InputMethods,
     Config,
+    Properties,
 }
 
 /// The running control service.
@@ -292,6 +320,11 @@ impl ControlService {
     /// Announces that the configuration in effect changed.
     pub fn config_changed(&self) {
         let _ = self.signals.send(Signal::Config);
+    }
+
+    /// Announces that the menu of the current engine may have changed.
+    pub fn properties_changed(&self) {
+        let _ = self.signals.send(Signal::Properties);
     }
 }
 
@@ -331,6 +364,7 @@ pub async fn start(
                 Signal::Status(status) => ControlObject::status_changed(&emitter, &status).await,
                 Signal::InputMethods => ControlObject::input_methods_changed(&emitter).await,
                 Signal::Config => ControlObject::config_changed(&emitter).await,
+                Signal::Properties => ControlObject::properties_changed(&emitter).await,
             };
         }
     });

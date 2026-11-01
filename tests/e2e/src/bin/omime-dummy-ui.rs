@@ -33,7 +33,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 const USAGE: &str = "\
 Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]
                       [--misbehave-once FILE] [--slow-ms N] [--hidden]
-                      [--input-methods ID,ID...]";
+                      [--input-methods ID,ID...] [--properties]";
 
 /// An engine that consumes nothing, optionally slowly.
 struct PassThrough {
@@ -44,6 +44,8 @@ struct PassThrough {
     input_methods: Vec<omime_sdk::InputMethodInfo>,
     /// The one in use.
     current: String,
+    /// A menu (`--properties`): a switch, which clicks flip, and an action.
+    properties: Vec<omime_sdk::Property>,
 }
 
 impl omime_sdk::Engine for PassThrough {
@@ -51,6 +53,19 @@ impl omime_sdk::Engine for PassThrough {
         if !self.input_methods.is_empty() {
             host.set_input_methods(&self.input_methods, self.current.as_str());
         }
+        if !self.properties.is_empty() {
+            host.set_properties(&self.properties);
+        }
+    }
+
+    fn activate_property(&mut self, host: &omime_sdk::Host, id: &str) {
+        println!("activated {id}");
+        for property in &mut self.properties {
+            if property.id == id && property.kind == omime_sdk::PropertyKind::Toggle {
+                property.checked = !property.checked;
+            }
+        }
+        host.set_properties(&self.properties);
     }
 
     fn select_input_method(&mut self, host: &omime_sdk::Host, id: &str) {
@@ -303,6 +318,7 @@ fn main() -> anyhow::Result<()> {
     let mut show = true;
     // Input methods of its own, as a Rime engine has schemas; the first is in use.
     let mut input_methods: Vec<omime_sdk::InputMethodInfo> = Vec::new();
+    let mut properties = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -323,6 +339,22 @@ fn main() -> anyhow::Result<()> {
             "--misbehave-once" => once = Some(value()?.into()),
             "--slow-ms" => slow = Duration::from_millis(value()?.parse()?),
             "--hidden" => show = false,
+            "--properties" => {
+                properties = vec![
+                    omime_sdk::Property {
+                        id: "punct".into(),
+                        kind: omime_sdk::PropertyKind::Toggle,
+                        label: "Chinese punctuation".into(),
+                        checked: true,
+                        ..omime_sdk::Property::default()
+                    },
+                    omime_sdk::Property {
+                        id: "hello".into(),
+                        label: "Say hello".into(),
+                        ..omime_sdk::Property::default()
+                    },
+                ];
+            }
             "--input-methods" => {
                 input_methods = value()?
                     .split(',')
@@ -354,6 +386,7 @@ fn main() -> anyhow::Result<()> {
             show,
             input_methods,
             current,
+            properties,
         })?)
     } else {
         None

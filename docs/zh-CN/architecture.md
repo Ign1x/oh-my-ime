@@ -80,6 +80,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - 按键事件默认 200 ms 超时。超时后按键被转发给应用，迟到的回复被丢弃，随后发送 `Reset`。
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
 - 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。
+- 1.1 版还让引擎拥有菜单：`SetProperties` 以扁平列表公布动作、开关和选择（中文或英文标点、全角或半角），每一项写明自己所在的子菜单；某一项被点击时，守护进程调用 `ActivateProperty`。控制 API 提供的就是正在使用的引擎的菜单。
 - 协议按接口名区分版本（主版本号），并在 `Register` 时协商（次版本号）。可扩展参数使用 `a{sv}`，未知键被忽略。`protocol/` 中的 XML 是权威来源。
 
 ## 被托管的输入法
@@ -103,6 +104,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - **列表。** `Engines` 和 `InputMethods` 返回面向设置程序的字典：每个已安装的引擎及其描述、语言、类型和状态，以及所有可供选择的输入法，不论是否已启用。框架在已配置的输入法之外还拥有的那些（Fcitx 5 的 `AvailableInputMethods`、IBus 的 `Engines`，均不含键盘布局）保存在 `$XDG_CACHE_HOME/oh-my-ime/catalog.toml` 中，因此框架再次运行之前也能列出它们。`InputMethodsChanged` 表示需要重新读取。
 - **配置。** `config.toml` 由 omimed 来写：`Configure` 按点分名称（`apps.remember`、`engines`）设置选项，检查文件仍然有效，保留注释和其它所有内容，经临时文件写入后重新加载。`omime enable`、`disable` 和 `config` 都用它；只有不需要 omimed 也能运行的 `omime install` 和 `uninstall` 会自己写文件。每次重新加载之后都会发出 `ConfigChanged`。
 - **应用。** `Apps`、`SetAppInputMethod` 和 `ForgetApp` 读取和修改 `[apps] remember` 为每个应用记住的内容。
+- **菜单。** `Properties` 返回正在使用的引擎的菜单，`ActivateProperty` 激活其中一项，`PropertiesChanged` 表示菜单有了变化；`omime properties` 和 `omime activate` 用的就是它们。
 
 ## 托盘项
 

@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, WireAction};
+use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, Property, WireAction};
 use omime_proto::manifest::{InstalledEngine, SettingsBus};
 use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
@@ -76,6 +76,10 @@ pub trait Engine {
     /// Since 1.1.
     #[zbus(no_reply)]
     fn select_input_method(&self, id: &str) -> zbus::Result<()>;
+
+    /// Since 1.1.
+    #[zbus(no_reply)]
+    fn activate_property(&self, id: &str) -> zbus::Result<()>;
 }
 
 /// What the engine host object reports to the core.
@@ -91,6 +95,7 @@ pub enum HostCall {
     /// The engine's own input methods, and the one in use (protocol 1.1).
     SetInputMethods(Vec<InputMethodInfo>, String),
     SetCurrentInputMethod(String),
+    SetProperties(Vec<Property>),
 }
 
 /// `io.github.ign1x.OhMyIme.EngineHost1`, served to one engine.
@@ -213,6 +218,11 @@ impl HostObject {
     fn set_current_input_method(&self, id: String) {
         self.send(HostCall::SetCurrentInputMethod(id));
     }
+
+    fn set_properties(&self, properties: Vec<Dict>) {
+        let properties = properties.iter().filter_map(Property::from_dict).collect();
+        self.send(HostCall::SetProperties(properties));
+    }
 }
 
 /// Lifecycle of an engine process.
@@ -263,6 +273,8 @@ pub struct EngineSlot {
     pub methods: Vec<InnerMethod>,
     /// Every input method the framework has, set up or not.
     pub available: Vec<InnerMethod>,
+    /// The engine's menu, as it last announced it.
+    pub properties: Vec<Property>,
     /// The input method the framework uses, as it last reported it.
     pub inner: Option<String>,
     /// The input method chosen through omimed that the framework does not use yet. It is
@@ -344,6 +356,7 @@ impl EngineManager {
             tray: None,
             methods: Vec::new(),
             available: Vec::new(),
+            properties: Vec::new(),
             inner: None,
             wanted_inner: None,
             wanted_retried: false,
@@ -643,6 +656,24 @@ impl EngineManager {
         }
     }
 
+    /// Asks the engine `id` to activate its property `property`.
+    pub fn activate_property(&self, id: &str, property: &str) -> anyhow::Result<()> {
+        let slot = self
+            .slots
+            .get(id)
+            .with_context(|| format!("no engine `{id}`"))?;
+        anyhow::ensure!(
+            slot.properties.iter().any(|p| p.id == property),
+            "engine `{id}` has no property `{property}`"
+        );
+        let proxy = slot.proxy.clone().context("the engine does not run")?;
+        let property = property.to_owned();
+        tokio::task::spawn_local(async move {
+            let _ = proxy.activate_property(&property).await;
+        });
+        Ok(())
+    }
+
     /// Takes what an engine of omimed's says about its own input methods, as framework
     /// adapters report them. Returns whether anything changed.
     pub fn native_update(&mut self, id: &str, update: FrameworkUpdate) -> bool {
@@ -760,6 +791,7 @@ impl EngineManager {
         slot.proxy = None;
         slot.kill = None;
         slot.framework = None;
+        slot.properties.clear();
         // The status of a hosted engine came from its tray item, which is gone.
         if slot.tray.take().is_some() {
             slot.status = Status::default();

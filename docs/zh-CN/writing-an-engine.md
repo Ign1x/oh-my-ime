@@ -136,13 +136,58 @@ impl omime_sdk::Engine for MyEngine {
 
 引擎自己切换时，也要调用 `set_current_input_method`。omimed 会跨重启保留用户的选择，并在引擎启动时交还给它。
 
+## 菜单
+
+开关与动作（例如中文 / 英文标点）放在引擎的菜单里；你的引擎正在使用时，平台会显示它（比如在托盘菜单中）。公布菜单，其中任何内容变化时再公布一次，并在某一项被激活时执行相应操作：
+
+```rust
+use omime_sdk::{Host, Property, PropertyKind};
+
+impl MyEngine {
+    fn menu(&self) -> Vec<Property> {
+        vec![
+            Property {
+                id: "punct".into(),
+                kind: PropertyKind::Toggle,
+                label: "中文标点".into(),
+                checked: self.chinese_punctuation,
+                ..Default::default()
+            },
+            Property {
+                id: "deploy".into(),
+                label: "重新部署".into(),
+                ..Default::default()
+            },
+        ]
+    }
+}
+
+impl omime_sdk::Engine for MyEngine {
+    fn registered(&mut self, host: &Host) {
+        host.set_properties(&self.menu());
+    }
+
+    fn activate_property(&mut self, host: &Host, id: &str) {
+        match id {
+            "punct" => self.chinese_punctuation = !self.chinese_punctuation,
+            "deploy" => self.deploy(),
+            _ => return,
+        }
+        host.set_properties(&self.menu());
+    }
+    // ...
+}
+```
+
+菜单是一个按菜单顺序排列的扁平列表。每一项可以是动作（默认）、开关（`checked` 表示是否打开）、单选项（与 `parent` 相同的各项构成一组选择）、子菜单（其中各项的 `parent`）或分隔线。开发时，`omime properties` 显示正在使用的引擎的菜单，`omime activate <id>` 激活其中一项。
+
 ## 其他语言
 
 引擎协议是点对点 D-Bus，规范见 [`protocol/io.github.ign1x.OhMyIme.Engine1.xml`](../../protocol/io.github.ign1x.OhMyIme.Engine1.xml)。一个引擎需要：
 
 1. 以点对点连接的方式连到 `$OMIME_ENGINE_ADDRESS` 中的地址，
 2. 在 `/io/github/ign1x/OhMyIme/Engine` 导出 `io.github.ign1x.OhMyIme.Engine1`，
-3. 在 `/io/github/ign1x/OhMyIme`（`io.github.ign1x.OhMyIme.EngineHost1`）上调用 `Register($OMIME_ENGINE_ID, 1, 1, {})`；没有自己多个输入法的引擎用次版本号 0 也可以，
+3. 在 `/io/github/ign1x/OhMyIme`（`io.github.ign1x.OhMyIme.EngineHost1`）上调用 `Register($OMIME_ENGINE_ID, 1, 1, {})`；既没有自己的多个输入法、也没有菜单的引擎用次版本号 0 也可以，
 4. 应答调用，直到连接关闭或收到 `Shutdown`。
 
 GLib（`g_dbus_connection_new_for_address`）、Qt（`QDBusConnection::connectToPeer`）、sd-bus 和 zbus 都支持点对点连接。

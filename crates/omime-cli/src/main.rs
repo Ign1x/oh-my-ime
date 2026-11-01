@@ -29,6 +29,9 @@ Commands:
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
   settings <ENGINE>
                    Open the settings of an engine, such as `fcitx5`
+  properties       Show the menu of the input method in use (switches such as
+                   Chinese or English punctuation)
+  activate <ID>    Activate an entry of that menu
   apps [forget <APP>]
                    Show the input method each application gets back with
                    `[apps] remember`, or forget one
@@ -62,6 +65,8 @@ trait Daemon {
     fn input_methods(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
     fn config(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     fn apps(&self) -> zbus::Result<Vec<(String, String)>>;
+    fn properties(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
+    fn activate_property(&self, id: &str) -> zbus::Result<()>;
     fn forget_app(&self, app: &str) -> zbus::Result<()>;
     fn configure(&self, changes: HashMap<&str, zbus::Variant<'_>>) -> zbus::Result<()>;
 
@@ -107,6 +112,8 @@ enum DaemonCommand {
     Config(Option<(String, String)>),
     Apps,
     ForgetApp(String),
+    Properties,
+    Activate(String),
 }
 
 fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
@@ -140,6 +147,8 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             ["disable", engine] => DaemonCommand::Disable((*engine).to_owned()),
             ["reload"] => DaemonCommand::Reload,
             ["settings", engine] => DaemonCommand::Settings((*engine).to_owned()),
+            ["properties"] => DaemonCommand::Properties,
+            ["activate", id] => DaemonCommand::Activate((*id).to_owned()),
             ["apps"] => DaemonCommand::Apps,
             ["apps", "forget", app] => DaemonCommand::ForgetApp((*app).to_owned()),
             ["config"] => DaemonCommand::Config(None),
@@ -425,6 +434,13 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
             }
         }
         DaemonCommand::ForgetApp(app) => daemon.forget_app(&app).await?,
+        DaemonCommand::Properties => {
+            let properties = daemon.properties().await?;
+            for property in &properties {
+                print!("{}", property_line(property, &properties));
+            }
+        }
+        DaemonCommand::Activate(id) => daemon.activate_property(&id).await?,
         DaemonCommand::Config(None) => {
             let config = daemon.config().await?;
             let mut keys: Vec<&String> = config.keys().collect();
@@ -485,6 +501,41 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, entry: &str, enable: bool) -> any
         .configure(HashMap::from([("engines", value)]))
         .await?;
     Ok(())
+}
+
+/// A line of `omime properties`: indented under its menu, with the state of switches.
+fn property_line(
+    property: &HashMap<String, OwnedVariant>,
+    all: &[HashMap<String, OwnedVariant>],
+) -> String {
+    let text = |p: &HashMap<String, OwnedVariant>, key: &str| string(p, key).unwrap_or_default();
+    let mut depth = 0;
+    let mut parent = text(property, "parent");
+    while !parent.is_empty() && depth < 8 {
+        depth += 1;
+        parent = all
+            .iter()
+            .find(|p| text(p, "id") == parent)
+            .map(|p| text(p, "parent"))
+            .unwrap_or_default();
+    }
+    let checked = property
+        .get("checked")
+        .and_then(|v| v.try_clone().ok())
+        .and_then(|v| bool::try_from(v).ok())
+        .unwrap_or(false);
+    let mark = match (text(property, "kind").as_str(), checked) {
+        ("separator", _) => return format!("{}-\n", "  ".repeat(depth)),
+        ("toggle" | "radio", true) => "[x] ",
+        ("toggle" | "radio", false) => "[ ] ",
+        _ => "",
+    };
+    format!(
+        "{}{mark}{}  ({})\n",
+        "  ".repeat(depth),
+        text(property, "label"),
+        text(property, "id")
+    )
 }
 
 /// An option's value as config.toml writes it.
@@ -692,6 +743,44 @@ mod tests {
             Ok(Some(Command::Daemon(DaemonCommand::Config(Some(_)))))
         ));
         assert!(parse(&args("config apps.remember")).is_err());
+        assert!(matches!(
+            parse(&args("properties")),
+            Ok(Some(Command::Daemon(DaemonCommand::Properties)))
+        ));
+        assert!(
+            matches!(parse(&args("activate punct")), Ok(Some(Command::Daemon(DaemonCommand::Activate(id)))) if id == "punct")
+        );
+        assert!(parse(&args("activate")).is_err());
+    }
+
+    #[test]
+    fn menus_are_indented_with_the_state_of_switches() {
+        use omime_proto::engine::{Property, PropertyKind};
+        let property = |id: &str, parent: &str, kind, checked| Property {
+            id: id.into(),
+            parent: parent.into(),
+            kind,
+            label: id.to_uppercase(),
+            checked,
+            ..Property::default()
+        };
+        let menu: Vec<_> = [
+            property("punct", "", PropertyKind::Toggle, true),
+            property("width", "", PropertyKind::Menu, false),
+            property("full", "width", PropertyKind::Radio, false),
+            property("half", "width", PropertyKind::Radio, true),
+            property("sep", "", PropertyKind::Separator, false),
+            property("deploy", "", PropertyKind::Action, false),
+        ]
+        .iter()
+        .map(Property::to_dict)
+        .collect();
+        let lines: String = menu.iter().map(|p| property_line(p, &menu)).collect();
+        assert_eq!(
+            lines,
+            "[x] PUNCT  (punct)\nWIDTH  (width)\n  [ ] FULL  (full)\n  [x] HALF  (half)\n-\n\
+             DEPLOY  (deploy)\n"
+        );
     }
 
     #[test]

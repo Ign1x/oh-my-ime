@@ -133,6 +133,28 @@
     </method>
 
     <!--
+      The menu of the engine in use (empty for direct input), as the engine announced
+      it with SetProperties: actions, switches and choices, such as Chinese or English
+      punctuation. Each entry: "id", "parent" (the id of the "menu" entry it is in,
+      empty at the top), "kind" ("action", "toggle", "radio", "menu" or "separator"),
+      "label", "icon", "tooltip" (s), "checked", "enabled" (b), in menu order.
+    -->
+    <method name="Properties">
+      <arg name="properties" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Activates an entry of that menu, as a click on it would. Fails if the engine in use
+      has no such entry.
+    -->
+    <method name="ActivateProperty">
+      <arg name="id" type="s" direction="in"/>
+    </method>
+
+    <!-- Emitted when what Properties returns may have changed. -->
+    <signal name="PropertiesChanged"/>
+
+    <!--
       Opens the settings program of an engine as an ordinary window, with the engine
       running. Fails if the engine has none, or it is not installed.
     -->

@@ -95,6 +95,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Reload the configuration | `omime reload`, `systemctl --user reload omimed` or SIGHUP |
 | See or set options | `omime config`, `omime config apps.remember true` |
 | What each application gets back | `omime apps`, `omime apps forget <app>` |
+| The engine's menu (punctuation and the like) | `omime properties`, `omime activate <id>` |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in

@@ -3,7 +3,8 @@
   oh-my-ime engine protocol, version 1.1.
 
   Version 1.1 adds input methods of an engine's own (SetInputMethods,
-  SetCurrentInputMethod, SelectInputMethod). The daemon calls SelectInputMethod only on
+  SetCurrentInputMethod, SelectInputMethod) and its menu (SetProperties,
+  ActivateProperty). The daemon calls SelectInputMethod and ActivateProperty only on
   engines that registered with minor version 1 or later.
 
   Each engine process talks to the daemon over its own peer-to-peer D-Bus connection.
@@ -105,6 +106,15 @@
     <method name="SelectInputMethod">
       <arg name="id" type="s" direction="in"/>
     </method>
+
+    <!--
+      Since 1.1. The user activated an entry of the menu the engine announced with
+      SetProperties: an action, a toggle or a radio entry. Act on it, and announce the
+      menu again if that changed it (a toggle flipped, another radio entry chosen).
+    -->
+    <method name="ActivateProperty">
+      <arg name="id" type="s" direction="in"/>
+    </method>
   </interface>
 
   <interface name="io.github.ign1x.OhMyIme.EngineHost1">
@@ -180,6 +190,21 @@
     <!-- Since 1.1. The input method in use changed, also when the engine switched on its own. -->
     <method name="SetCurrentInputMethod">
       <arg name="id" type="s" direction="in"/>
+    </method>
+
+    <!--
+      Since 1.1. The engine's menu, which the platform shows in its tray menu and
+      settings while the engine is in use: actions and switches such as Chinese or
+      English punctuation, full or half width. Each entry: "id" (s, unique), "parent"
+      (s, the id of the "menu" entry it is in, empty at the top), "kind" (s: "action",
+      "toggle", "radio", "menu" or "separator"; unknown kinds are actions), "label",
+      "icon" (an icon name), "tooltip" (s), "checked" (b: a toggle is on, a radio entry
+      chosen), "enabled" (b, true when missing). Entries come in menu order; radio
+      entries with the same parent are one choice. Call it again with the whole menu
+      whenever anything in it changes. The menu is forgotten when the engine exits.
+    -->
+    <method name="SetProperties">
+      <arg name="properties" type="aa{sv}" direction="in"/>
     </method>
   </interface>
 </node>

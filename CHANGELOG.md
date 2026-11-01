@@ -46,6 +46,13 @@ All notable changes to this project are documented here. The format follows
   has `Host::set_input_methods`, `Host::set_current_input_method`,
   `Engine::select_input_method` and `Engine::registered`, which runs on the engine's
   thread right after it registered, before any other call.
+- Engines can have a menu (engine protocol 1.1): actions, switches and choices such as
+  Chinese or English punctuation, announced with `SetProperties`
+  (`Host::set_properties` in the SDK) and activated with `ActivateProperty`
+  (`Engine::activate_property`). The control API's `Properties`, `ActivateProperty`
+  and `PropertiesChanged` offer the menu of the engine in use to status bars and
+  settings programs; `omime properties` shows it and `omime activate <id>` activates
+  an entry.
 - The control API grows what a settings program needs, described in
   `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
   every engine and every input method with descriptions, languages and state, enabled

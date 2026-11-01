@@ -47,7 +47,8 @@ use tracing::warn;
 use zbus::OwnedVariant;
 
 pub use omime_proto::engine::{
-    ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Status, modifiers,
+    ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Property, PropertyKind, Status,
+    modifiers,
 };
 pub use omime_proto::{ContentHints, ContentPurpose, ContentType};
 
@@ -103,6 +104,12 @@ pub trait Engine: Send + 'static {
     /// [`Host::set_input_methods`]). Switch to it, and confirm with
     /// [`Host::set_current_input_method`].
     fn select_input_method(&mut self, host: &Host, id: &str) {
+        let _ = (host, id);
+    }
+
+    /// The user activated the property `id` (see [`Host::set_properties`]): run the
+    /// action, or flip the switch, and announce the properties again if they changed.
+    fn activate_property(&mut self, host: &Host, id: &str) {
         let _ = (host, id);
     }
 }
@@ -197,6 +204,9 @@ trait EngineHost {
 
     #[zbus(no_reply)]
     fn set_current_input_method(&self, id: &str) -> zbus::Result<()>;
+
+    #[zbus(no_reply)]
+    fn set_properties(&self, properties: &[Dict]) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
     fn set_status(&self, status: &Dict) -> zbus::Result<()>;
@@ -307,6 +317,16 @@ impl Host {
         });
     }
 
+    /// Announces the engine's menu: actions, switches and choices such as Chinese or
+    /// English punctuation, which the platform shows in its tray menu. Announce all of
+    /// them again whenever one changes; [`Engine::activate_property`] hears about clicks.
+    pub fn set_properties(&self, properties: &[Property]) {
+        let properties: Vec<Dict> = properties.iter().map(Property::to_dict).collect();
+        self.call("set_properties", move |p| async move {
+            p.set_properties(&properties).await
+        });
+    }
+
     /// Asks the platform to switch to engine `id` (`""` selects direct input).
     pub fn request_switch(&self, id: impl Into<String>) {
         let id = id.into();
@@ -388,6 +408,11 @@ impl EngineObject {
     fn select_input_method(&self, id: String) {
         let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
         guard.engine.select_input_method(&self.host, &id);
+    }
+
+    fn activate_property(&self, id: String) {
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard.engine.activate_property(&self.host, &id);
     }
 
     fn shutdown(&self) {

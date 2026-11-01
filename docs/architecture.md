@@ -203,6 +203,10 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
   inside hosted frameworks, and the daemon asks for one with `SelectInputMethod`. The
   core treats them like a framework's: the choice is kept across restarts and given
   back to the engine when it registers.
+- Version 1.1 also gives engines a menu: `SetProperties` announces actions, switches and
+  choices (Chinese or English punctuation, full or half width) as a flat list of
+  entries, each naming the submenu it is in, and the daemon calls `ActivateProperty`
+  when one is clicked. The menu of the engine in use is what the control API offers.
 - The protocol is versioned by interface name (major) and negotiated at `Register` (minor).
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.
@@ -302,6 +306,9 @@ omimed: the `omime` command line tool, status bars, and settings programs. The X
   `ConfigChanged` follows every reload.
 - **Applications.** `Apps`, `SetAppInputMethod` and `ForgetApp` read and edit what
   `[apps] remember` keeps for each application.
+- **Menus.** `Properties` returns the menu of the engine in use, `ActivateProperty`
+  activates one of its entries and `PropertiesChanged` says when it changed;
+  `omime properties` and `omime activate` use them.
 
 ## Tray item
 

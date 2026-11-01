@@ -240,6 +240,16 @@ impl Daemon {
                 tray.changed();
             }
         });
+        let service = control.clone();
+        let tray_item = tray.clone();
+        core.set_properties_listener(move || {
+            if let Some(service) = &service {
+                service.properties_changed();
+            }
+            if let Some(tray) = &*tray_item.borrow() {
+                tray.changed();
+            }
+        });
         // Without --engine, start where the user left off.
         let mut options = options;
         if options.engine.is_none() {
@@ -554,6 +564,12 @@ impl Daemon {
             }
             ControlRequest::ForgetApp(app, reply) => {
                 let _ = reply.send(result(self.core.forget_app(&app)));
+            }
+            ControlRequest::Properties(reply) => {
+                let _ = reply.send(self.core.properties());
+            }
+            ControlRequest::ActivateProperty(id, reply) => {
+                let _ = reply.send(result(self.core.activate_property(&id)));
             }
             ControlRequest::Config(reply) => {
                 let _ = reply.send(self.config.clone());

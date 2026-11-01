@@ -177,6 +177,58 @@ impl omime_sdk::Engine for MyEngine {
 Call `set_current_input_method` too when the engine switches on its own. omimed keeps
 the choice across restarts and gives it back to the engine when it starts.
 
+## A menu
+
+Switches and actions, such as Chinese or English punctuation, go in the engine's menu,
+which the platform shows (in its tray menu, for one) while your engine is in use.
+Announce it, again whenever something in it changes, and act when an entry is
+activated:
+
+```rust
+use omime_sdk::{Host, Property, PropertyKind};
+
+impl MyEngine {
+    fn menu(&self) -> Vec<Property> {
+        vec![
+            Property {
+                id: "punct".into(),
+                kind: PropertyKind::Toggle,
+                label: "Chinese punctuation".into(),
+                checked: self.chinese_punctuation,
+                ..Default::default()
+            },
+            Property {
+                id: "deploy".into(),
+                label: "Deploy".into(),
+                ..Default::default()
+            },
+        ]
+    }
+}
+
+impl omime_sdk::Engine for MyEngine {
+    fn registered(&mut self, host: &Host) {
+        host.set_properties(&self.menu());
+    }
+
+    fn activate_property(&mut self, host: &Host, id: &str) {
+        match id {
+            "punct" => self.chinese_punctuation = !self.chinese_punctuation,
+            "deploy" => self.deploy(),
+            _ => return,
+        }
+        host.set_properties(&self.menu());
+    }
+    // ...
+}
+```
+
+The menu is a flat list in menu order. An entry is an action (the default), a toggle
+(`checked` says whether it is on), a radio entry (one choice among the entries with the
+same `parent`), a menu (the `parent` of the entries in it) or a separator. While
+developing, `omime properties` shows the menu of the engine in use and
+`omime activate <id>` activates an entry.
+
 ## Other languages
 
 The engine protocol is peer-to-peer D-Bus and is specified in
@@ -187,7 +239,7 @@ An engine:
 2. exports `io.github.ign1x.OhMyIme.Engine1` at `/io/github/ign1x/OhMyIme/Engine`,
 3. calls `Register($OMIME_ENGINE_ID, 1, 1, {})` on `/io/github/ign1x/OhMyIme`
    (`io.github.ign1x.OhMyIme.EngineHost1`); minor version 0 is fine for engines
-   without input methods of their own,
+   without input methods of their own and without a menu,
 4. answers calls until the connection closes or `Shutdown` is called.
 
 GLib (`g_dbus_connection_new_for_address`), Qt (`QDBusConnection::connectToPeer`),

@@ -389,6 +389,122 @@ impl InputMethodInfo {
     }
 }
 
+/// What a [`Property`] is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PropertyKind {
+    /// Does something when activated.
+    #[default]
+    Action,
+    /// On or off ([`Property::checked`]).
+    Toggle,
+    /// One of the radio entries with the same parent.
+    Radio,
+    /// Holds the entries whose parent it is.
+    Menu,
+    Separator,
+}
+
+impl PropertyKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Action => "action",
+            Self::Toggle => "toggle",
+            Self::Radio => "radio",
+            Self::Menu => "menu",
+            Self::Separator => "separator",
+        }
+    }
+
+    /// Unknown kinds are actions.
+    pub fn parse(text: &str) -> Self {
+        match text {
+            "toggle" => Self::Toggle,
+            "radio" => Self::Radio,
+            "menu" => Self::Menu,
+            "separator" => Self::Separator,
+            _ => Self::Action,
+        }
+    }
+}
+
+/// An entry of an engine's menu (`SetProperties`, protocol 1.1): an action, a switch or
+/// a choice among several, such as Chinese or English punctuation. The platform shows
+/// them in its tray menu and settings, and asks the engine to act with
+/// `ActivateProperty`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Property {
+    pub id: String,
+    /// The `Menu` entry it belongs to; empty at the top.
+    pub parent: String,
+    pub kind: PropertyKind,
+    pub label: String,
+    pub icon: Option<String>,
+    pub tooltip: Option<String>,
+    /// Whether a toggle is on, or a radio entry chosen.
+    pub checked: bool,
+    pub enabled: bool,
+}
+
+impl Default for Property {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            parent: String::new(),
+            kind: PropertyKind::default(),
+            label: String::new(),
+            icon: None,
+            tooltip: None,
+            checked: false,
+            enabled: true,
+        }
+    }
+}
+
+impl Property {
+    pub fn to_dict(&self) -> Dict {
+        let mut dict = Dict::new();
+        let text = |value: &str| owned(Variant::from(value));
+        dict.insert("id".into(), text(&self.id));
+        dict.insert("parent".into(), text(&self.parent));
+        dict.insert("kind".into(), text(self.kind.as_str()));
+        dict.insert("label".into(), text(&self.label));
+        if let Some(icon) = &self.icon {
+            dict.insert("icon".into(), text(icon));
+        }
+        if let Some(tooltip) = &self.tooltip {
+            dict.insert("tooltip".into(), text(tooltip));
+        }
+        dict.insert("checked".into(), owned(Variant::from(self.checked)));
+        dict.insert("enabled".into(), owned(Variant::from(self.enabled)));
+        dict
+    }
+
+    /// Decodes an entry of `SetProperties`; `None` without an id.
+    pub fn from_dict(dict: &Dict) -> Option<Self> {
+        let text = |key: &str| -> Option<String> {
+            dict.get(key)
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| String::try_from(v).ok())
+                .filter(|s| !s.is_empty())
+        };
+        let flag = |key: &str| -> Option<bool> {
+            dict.get(key)
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| bool::try_from(v).ok())
+        };
+        Some(Self {
+            id: text("id")?,
+            parent: text("parent").unwrap_or_default(),
+            kind: PropertyKind::parse(&text("kind").unwrap_or_default()),
+            label: text("label").unwrap_or_default(),
+            icon: text("icon"),
+            tooltip: text("tooltip"),
+            checked: flag("checked").unwrap_or(false),
+            enabled: flag("enabled").unwrap_or(true),
+        })
+    }
+}
+
 /// Status an engine shows in panels and the CLI (`SetStatus`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Status {
@@ -497,6 +613,23 @@ mod tests {
         };
         assert_eq!(InputMethodInfo::from_dict(&info.to_dict()), Some(info));
         assert_eq!(InputMethodInfo::from_dict(&Dict::new()), None);
+    }
+
+    #[test]
+    fn properties_round_trip() {
+        let property = Property {
+            id: "punctuation".into(),
+            parent: "options".into(),
+            kind: PropertyKind::Toggle,
+            label: "中文标点".into(),
+            icon: Some("punct".into()),
+            tooltip: None,
+            checked: true,
+            enabled: false,
+        };
+        assert_eq!(Property::from_dict(&property.to_dict()), Some(property));
+        assert_eq!(Property::from_dict(&Dict::new()), None);
+        assert_eq!(PropertyKind::parse("something new"), PropertyKind::Action);
     }
 
     #[test]

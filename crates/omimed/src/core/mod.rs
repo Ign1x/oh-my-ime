@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
+use anyhow::Context as _;
 use omime_proto::config::{Config, HotkeySpec};
 use omime_proto::engine::{Action, ContextId, ContextInfo, Dict, KeyEvent, Status, WireAction};
 use omime_proto::manifest::InstalledEngine;
@@ -220,6 +221,8 @@ type StateListener = Box<dyn Fn(&State)>;
 type CatalogListener = Box<dyn Fn(&Catalog)>;
 /// Callback for changes of the engines and input methods to choose from.
 type ListsListener = Box<dyn Fn()>;
+/// Callback for changes of the current engine's menu.
+type PropertiesListener = Box<dyn Fn()>;
 /// Callback for changes of the current engine or of the status it published.
 type StatusListener = Box<dyn Fn(Option<&str>, Option<&str>, Option<&Status>)>;
 
@@ -267,6 +270,7 @@ pub struct Core {
     on_status: Option<StatusListener>,
     on_catalog: Option<CatalogListener>,
     on_lists: Option<ListsListener>,
+    on_properties: Option<PropertiesListener>,
     /// Whether applications keep their own engine (`[apps] remember`).
     remember_apps: bool,
     /// The app id of the focused window, when the compositor reports it.
@@ -311,6 +315,7 @@ impl Core {
             on_status: None,
             on_catalog: None,
             on_lists: None,
+            on_properties: None,
             remember_apps: config.apps.remember,
             focused_app: None,
             app_engines: BTreeMap::new(),
@@ -336,6 +341,32 @@ impl Core {
         if let Some(listener) = &self.on_lists {
             listener();
         }
+    }
+
+    /// Called when the menu of the current engine may have changed.
+    pub fn set_properties_listener(&mut self, listener: impl Fn() + 'static) {
+        self.on_properties = Some(Box::new(listener));
+    }
+
+    fn properties_changed(&self) {
+        if let Some(listener) = &self.on_properties {
+            listener();
+        }
+    }
+
+    /// The menu of the current engine: actions, switches and choices it offers.
+    pub fn properties(&self) -> Vec<omime_proto::engine::Property> {
+        self.current
+            .as_deref()
+            .and_then(|id| self.engines.get(id))
+            .map(|slot| slot.properties.clone())
+            .unwrap_or_default()
+    }
+
+    /// Activates the property `id` of the current engine.
+    pub fn activate_property(&self, id: &str) -> anyhow::Result<()> {
+        let engine = self.current.as_deref().context("no engine is in use")?;
+        self.engines.activate_property(engine, id)
     }
 
     /// What the frameworks had when omimed last saw them.
@@ -971,6 +1002,8 @@ impl Core {
                 self.engine_unavailable(&engine, out);
                 if self.current.as_deref() == Some(&engine) {
                     self.status_changed();
+                    // Its menu went with it.
+                    self.properties_changed();
                 }
             }
             CoreEvent::HostedTray {
@@ -1065,6 +1098,16 @@ impl Core {
                 }
                 if listed {
                     self.lists_changed();
+                }
+            }
+            HostCall::SetProperties(properties) => {
+                if let Some(slot) = self.engines.get_mut(engine)
+                    && slot.properties != properties
+                {
+                    slot.properties = properties;
+                    if self.current.as_deref() == Some(engine) {
+                        self.properties_changed();
+                    }
                 }
             }
             HostCall::SetCurrentInputMethod(id) => {
@@ -1494,6 +1537,8 @@ impl Core {
         }
         self.state_changed();
         self.status_changed();
+        // Another engine, another menu.
+        self.properties_changed();
         Ok(())
     }
 
