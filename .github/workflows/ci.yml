@@ -39,7 +39,11 @@ jobs:
       - name: Build and run the end-to-end tests
         run: |
           nix develop .#e2e --command bash -c \
-            'cargo build --workspace --locked && cargo test -p omime-e2e --locked -- --ignored'
+            'cargo build --workspace --locked && cargo test -p omime-e2e --locked --no-fail-fast -- --ignored' \
+            2>&1 | tee e2e.log
+      - name: Annotate failed end-to-end tests
+        if: failure()
+        run: scripts/ci-annotate-e2e.sh e2e.log
 
   nix:
     name: Nix package
@@ -55,7 +59,11 @@ jobs:
       - name: Run the end-to-end tests against the package
         run: |
           nix develop .#e2e --command bash -c \
-            'cargo build -p omime-e2e --locked && OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e --locked -- --ignored'
+            'cargo build -p omime-e2e --locked && OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e --locked --no-fail-fast -- --ignored' \
+            2>&1 | tee e2e.log
+      - name: Annotate failed end-to-end tests
+        if: failure()
+        run: scripts/ci-annotate-e2e.sh e2e.log
 
   deny:
     name: cargo-deny
