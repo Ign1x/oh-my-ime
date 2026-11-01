@@ -171,15 +171,10 @@ know which frontend a key came from.
   bypass the engines, as everywhere else.
 - **Engine windows.** Compositors show input popups only for Wayland text fields. While an
   X11 application has focus and no Wayland text field does, the bridge shows the active
-  engine's window on a surface of its own, a *mirror*: a subsurface of the *stage*, a
-  transparent layer surface over the output that takes no input (layer `overlay`,
-  namespace `omime-popup`, a single pixel scaled with `wp_viewporter`), which stays while
-  such an application has focus. Compositors animate layer surfaces that appear, move or
-  change size, as Hyprland does, and candidate windows do all of that with every key;
-  subsurfaces do it on the spot. This needs `zwlr_layer_shell_v1`, `wp_viewporter` and
-  `wp_single_pixel_buffer_v1` (Hyprland, sway and other wlroots compositors have them).
-  The mirror shows the engine's buffers with the scale, transform and viewport of the
-  engine's surface; the engine's own surface stays unmapped meanwhile. It
+  engine's window on a layer surface of its own, a *mirror*: layer `overlay`, namespace
+  `omime-popup`, which needs `zwlr_layer_shell_v1` (Hyprland, sway and other wlroots
+  compositors have it). The mirror shows the engine's buffers with the scale, transform and
+  viewport of the engine's surface; the engine's own surface stays unmapped meanwhile. It
   opens below the text cursor, above it when there is no room below, and moves left when it
   would leave the output on the right. The cursor comes from `SetCursorRect` for the Fcitx5
   modules, or from the XIM spot location, where the application draws text; omimed assumes

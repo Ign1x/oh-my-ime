@@ -131,11 +131,6 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- Candidate windows in X11 applications and in Wayland applications using the Fcitx5
-  module no longer animate as they appear, move and change size on Hyprland: they are
-  subsurfaces of one transparent layer surface over the output, which stays while such an
-  application has focus, instead of layer surfaces of their own. The `no_anim` layer rule
-  the guide suggested is no longer needed.
 - `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs.
 - Names with an underscore show it in the tray menu, instead of underlining the
   character after it.

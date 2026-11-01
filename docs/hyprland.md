@@ -323,10 +323,21 @@ does not draw text itself, so in these applications what you are composing only 
 where the engine draws it in its own window (Sparkle does; Echo has no window), until it
 is committed.
 
-Engine windows for X11 applications (and for Wayland applications that use the Fcitx5
-module) are shown on a transparent layer surface over the output, in the namespace
-`omime-popup`, which stays while such an application has focus: the windows on it
-appear, move and change size without Hyprland's layer animations.
+Engine windows for X11 applications are layer surfaces in the namespace `omime-popup`.
+Hyprland animates layer surfaces. To turn that off for them, in the Lua configuration:
+
+```lua
+hl.layer_rule({
+    match = { namespace = "omime-popup" },
+    no_anim = true,
+})
+```
+
+In legacy `hyprland.conf`:
+
+```ini
+layerrule = no_anim on, match:namespace omime-popup
+```
 
 ## Troubleshooting
 

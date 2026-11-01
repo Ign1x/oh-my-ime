@@ -108,7 +108,7 @@ use crate::placement::Rect;
 pub use hosted::HostedKey;
 use hosted::{HostedPopup, SeatKeyboard, VirtualImManager, VirtualKeyboardManager};
 pub use mirror::X11Target;
-use mirror::{Mirror, OwnGlobals, Stage, SurfaceState};
+use mirror::{Mirror, OwnGlobals, SurfaceState};
 
 /// Identifies an engine.
 pub type EngineId = Rc<str>;
@@ -162,10 +162,6 @@ pub(super) struct BridgeShared {
     x11: Option<X11Target>,
     /// The daemon's own globals, for mirrors.
     own: OwnGlobals,
-    /// The surface mirrors are on while there is an X11 target.
-    stage: Option<Stage>,
-    /// What the compositor closed a stage for; no new stage until the target changes.
-    stage_closed_for: Option<X11Target>,
     /// Surfaces that have been given an `xdg_toplevel` or, by a hosted input method, a
     /// popup role: engine windows.
     windows: Vec<Weak<WlSurface>>,
@@ -241,8 +237,6 @@ impl Bridge {
             shown_engines: std::collections::HashSet::new(),
             x11: None,
             own: OwnGlobals::default(),
-            stage: None,
-            stage_closed_for: None,
             windows: Vec::new(),
             configure_serial: 0,
             last_scale: None,
@@ -278,13 +272,6 @@ impl Bridge {
         let own = &mut self.shared.borrow_mut().own;
         if let Some(compositor) = object.clone().try_downcast::<WlCompositor>() {
             own.compositor = Some(compositor);
-        } else if let Some(subcompositor) = object.clone().try_downcast::<WlSubcompositor>() {
-            own.subcompositor = Some(subcompositor);
-        } else if let Some(manager) = object
-            .clone()
-            .try_downcast::<WpSinglePixelBufferManagerV1>()
-        {
-            own.single_pixel = Some(manager);
         } else if let Some(layer_shell) = object.clone().try_downcast::<ZwlrLayerShellV1>() {
             own.layer_shell = Some(layer_shell);
         } else if let Some(viewporter) = object.clone().try_downcast::<WpViewporter>() {
@@ -360,7 +347,7 @@ impl Bridge {
         active_engine: Option<EngineId>,
         x11: Option<X11Target>,
     ) {
-        let (host_changed, windows, retired) = {
+        let (host_changed, windows) = {
             let mut shared = self.shared.borrow_mut();
             let host_changed = match (&shared.popup_host, &popup_host) {
                 (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
@@ -370,13 +357,9 @@ impl Bridge {
             shared.popup_host = popup_host;
             shared.im_active = im_active;
             shared.active_engine = active_engine;
-            if shared.stage_closed_for != x11 {
-                shared.stage_closed_for = None;
-            }
             shared.x11 = x11;
-            let retired = update_stage(&mut shared, &self.shared);
             shared.windows.retain(|w| w.strong_count() > 0);
-            (host_changed, shared.windows.clone(), retired)
+            (host_changed, shared.windows.clone())
         };
         for surface in windows.iter().filter_map(Weak::upgrade) {
             let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() else {
@@ -388,55 +371,7 @@ impl Bridge {
             }
             handler.refresh(&surface);
         }
-        // After the windows left it.
-        if let Some(stage) = retired {
-            stage.destroy();
-        }
     }
-}
-
-/// Creates the stage for the X11 target, or retires the one that is no longer wanted:
-/// a stage is over the output of the target, and only while there is one. Returns the
-/// stage to destroy once the windows have left it.
-fn update_stage(shared: &mut BridgeShared, handle: &Shared) -> Option<Stage> {
-    let wanted = shared
-        .x11
-        .as_ref()
-        .filter(|target| shared.stage_closed_for.as_ref() != Some(*target))
-        .filter(|_| shared.own.can_mirror())
-        .map(|target| target.output.clone());
-    let keep = match (&wanted, &shared.stage) {
-        (Some(output), Some(stage)) => Rc::ptr_eq(output, &stage.output),
-        _ => false,
-    };
-    if keep {
-        return None;
-    }
-    let retired = shared.stage.take();
-    if let Some(output) = wanted {
-        shared.stage = Stage::create(&shared.own, handle, &output);
-        debug!("mirror stage created");
-    }
-    retired
-}
-
-/// Brings every engine window up to date with the bridge policy.
-fn refresh_windows(shared: &Shared) {
-    let windows = shared.borrow().windows.clone();
-    for surface in windows.iter().filter_map(Weak::upgrade) {
-        if let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() {
-            handler.refresh(&surface);
-        }
-    }
-}
-
-/// Destroys the stage, after taking its mirrors off it.
-fn retire_stage(shared: &Shared) {
-    let Some(stage) = shared.borrow_mut().stage.take() else {
-        return;
-    };
-    refresh_windows(shared);
-    stage.destroy();
 }
 
 /// Per-connection handler; cleans up when the engine goes away.
@@ -1093,6 +1028,8 @@ struct BridgeSurface {
     mirror_scale: bool,
     /// The mirror showing the window while an X11 application has focus.
     mirror: Option<Mirror>,
+    /// What the compositor closed a mirror for; no new mirror until the target changes.
+    closed_for: Option<X11Target>,
 }
 
 /// Changes to a surface's [`SurfaceState`] since its last commit.
@@ -1130,6 +1067,7 @@ impl BridgeSurface {
             fractional_scale: None,
             mirror_scale: false,
             mirror: None,
+            closed_for: None,
         }
     }
 
@@ -1347,43 +1285,40 @@ impl BridgeSurface {
     /// Shows the window on a mirror at the X11 application's text cursor: creates the
     /// mirror there, then shows the engine's newest buffer on it.
     fn update_mirror(&mut self, window: &Rc<WlSurface>) {
-        let (target, own, stage) = {
+        let (target, own) = {
             let shared = self.shared.borrow();
-            let stage = shared
-                .stage
-                .as_ref()
-                .map(|stage| (stage.surface.clone(), stage.configured, stage.scale));
-            (shared.x11.clone(), shared.own.clone(), stage)
+            (shared.x11.clone(), shared.own.clone())
         };
-        let (Some(target), Some((stage, configured, scale))) = (target, stage) else {
+        let Some(target) = target else {
             return self.drop_mirror(true);
         };
         if self
             .mirror
             .as_ref()
-            .is_some_and(|mirror| !Rc::ptr_eq(&mirror.stage, &stage))
+            .is_some_and(|mirror| !Rc::ptr_eq(&mirror.target.output, &target.output))
         {
-            // The stage moved to another output.
+            // A layer surface stays on its output.
             self.drop_mirror(true);
         }
-        if !configured {
-            // Shown once the stage is.
-            return;
-        }
-        if self.mirror.is_none() {
-            if self.held.is_none() {
-                // Nothing to show: ask the engine for a frame.
-                return self.send_configure();
-            }
-            self.mirror = Mirror::create(&own, window, &stage, target.clone());
-            if let Some(scale) = scale {
-                self.send_mirror_scale(scale);
-            }
-        }
         let Some(mirror) = &mut self.mirror else {
+            if self.closed_for.as_ref() == Some(&target) {
+                return;
+            }
+            self.closed_for = None;
+            match &self.held {
+                Some(buffer) => {
+                    let size = window_size(&self.state, buffer);
+                    self.mirror = Mirror::create(&own, &self.shared, window, target, size);
+                }
+                // Nothing to show: ask the engine for a frame.
+                None => self.send_configure(),
+            }
             return;
         };
         mirror.target = target;
+        if !mirror.configured {
+            return;
+        }
         let buffer = self
             .held
             .take()
@@ -1391,35 +1326,17 @@ impl BridgeSurface {
         let Some(shown) = buffer.clone().or_else(|| mirror.current.clone()) else {
             return self.send_configure();
         };
-        let (changed, moved) =
-            mirror.present(buffer, &self.state, window_size(&self.state, &shown));
+        let changed = mirror.present(buffer, &self.state, window_size(&self.state, &shown));
         let surface = mirror.surface.clone();
         let cursor = mirror.cursor();
-        let reported = mirror.reported_cursor.replace(cursor) != Some(cursor);
+        let moved = mirror.reported_cursor.replace(cursor) != Some(cursor);
         let frames = !self.frames.is_empty();
         self.arm_frames(&surface);
-        if moved {
-            // The move takes effect with the stage's commit, before the new frame.
-            stage.send_commit();
-        }
         if changed || frames {
             surface.send_commit();
         }
-        if reported {
+        if moved {
             self.report_cursor(cursor);
-        }
-    }
-
-    /// Whether the window is on a mirror.
-    fn has_mirror(&self) -> bool {
-        self.mirror.is_some()
-    }
-
-    /// Tells the engine the scale the compositor prefers for the mirror's output.
-    fn send_mirror_scale(&mut self, scale: u32) {
-        if let Some(engine_scale) = self.fractional_scale.as_ref().and_then(Weak::upgrade) {
-            engine_scale.send_preferred_scale(scale);
-            self.mirror_scale = true;
         }
     }
 
@@ -1440,6 +1357,28 @@ impl BridgeSurface {
             }
             self.held = Some(buffer);
         }
+    }
+
+    /// The compositor configured the mirror: it may get a buffer now.
+    fn mirror_configured(&mut self, window: &Rc<WlSurface>) {
+        let Some(mirror) = &mut self.mirror else {
+            return;
+        };
+        if mirror.configured {
+            // Later configures only answer changes of the size.
+            return;
+        }
+        mirror.configured = true;
+        if self.presentation() == Presentation::Mirror {
+            self.update_mirror(window);
+        }
+    }
+
+    /// The compositor will not show the mirror any more, for example because its output
+    /// went away.
+    fn mirror_closed(&mut self) {
+        self.closed_for = self.mirror.as_ref().map(|mirror| mirror.target.clone());
+        self.drop_mirror(true);
     }
 
     fn apply_pending_state(&mut self) {
