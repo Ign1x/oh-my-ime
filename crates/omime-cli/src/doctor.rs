@@ -308,32 +308,52 @@ pub fn engine_findings(
     findings
 }
 
-/// The findings of check 4, for the environment variables `vars` as `(name, value)`.
+/// The findings of check 4, for the environment variables `vars` as `(name, value)`;
+/// variables that are not set are missing.
 ///
-/// An input method module in the environment sends every toolkit window to fcitx5 or
-/// IBus directly, past the compositor, so omimed never sees those keys.
+/// Applications reach an input method the way these variables say. omimed serves the
+/// compositor's text-input, the Fcitx5 module and XIM (also by the names `fcitx` and
+/// `ibus`), not yet IBus's module.
 pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
+    let value = |name: &str| {
+        vars.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+    };
     let mut findings = Vec::new();
-    for (name, value) in vars {
-        let toolkit = if name.eq_ignore_ascii_case("GTK_IM_MODULE") {
-            "GTK applications"
-        } else if name.eq_ignore_ascii_case("QT_IM_MODULE") {
-            "Qt applications"
-        } else {
-            continue;
-        };
-        let lower = value.to_ascii_lowercase();
-        let target = if lower.contains("fcitx") {
-            "fcitx5"
-        } else if lower.contains("ibus") {
-            "IBus"
-        } else {
-            continue;
-        };
-        findings.push(Finding::warning(format!(
-            "{name}={value}: {toolkit} started from this environment talk to {target}, \
-             not to the compositor; unset {name}"
-        )));
+    for (name, toolkit) in [
+        ("GTK_IM_MODULE", "GTK applications"),
+        ("QT_IM_MODULE", "Qt applications"),
+    ] {
+        if value(name).is_some_and(|v| v.contains("ibus")) {
+            findings.push(Finding::warning(format!(
+                "{name}=ibus: {toolkit} started from this environment look for IBus, \
+                 which omimed does not stand in for yet; set {name}=fcitx or unset it"
+            )));
+        }
+    }
+    if !value("QT_IM_MODULE").is_some_and(|v| v.contains("fcitx")) {
+        findings.push(Finding::warning(
+            "QT_IM_MODULE is not fcitx: Qt 5 applications and Qt applications on X11 \
+             (WeChat, WPS) get no input method; with QT_IM_MODULE=fcitx they reach omimed \
+             through its Fcitx5 interface (it needs the fcitx5-qt plugins, which such \
+             applications often bring along)"
+                .to_owned(),
+        ));
+    }
+    match value("XMODIFIERS") {
+        Some(v) if ["@im=fcitx", "@im=ibus", "@im=omime"].contains(&v.as_str()) => {}
+        Some(_) => findings.push(Finding::warning(
+            "XMODIFIERS names an input method omimed does not answer by: X11 applications \
+             using XIM find none; set XMODIFIERS=@im=fcitx"
+                .to_owned(),
+        )),
+        None => findings.push(Finding::warning(
+            "XMODIFIERS is not set: X11 applications using XIM (xterm, Java, Wine) find no \
+             input method; set XMODIFIERS=@im=fcitx"
+                .to_owned(),
+        )),
     }
     findings
 }
@@ -486,9 +506,9 @@ fn short_path(path: &Path, home: Option<&Path>) -> String {
         )
 }
 
-/// The input method module variables of this process's environment.
+/// The input method variables of this process's environment.
 fn environment() -> Vec<(String, String)> {
-    ["GTK_IM_MODULE", "QT_IM_MODULE"]
+    ["GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS"]
         .into_iter()
         .filter_map(|name| {
             std::env::var(name)
@@ -790,24 +810,42 @@ mod tests {
     }
 
     #[test]
-    fn input_method_modules_in_the_environment_are_warnings() {
-        let vars = [
-            ("GTK_IM_MODULE".to_owned(), "fcitx".to_owned()),
-            ("QT_IM_MODULE".to_owned(), "IBUS".to_owned()),
-            ("GTK_IM_MODULE".to_owned(), "wayland".to_owned()),
-            ("QT_IM_MODULE".to_owned(), String::new()),
-            ("XMODIFIERS".to_owned(), "@im=fcitx".to_owned()),
-        ];
-        let findings = environment_findings(&vars);
-        assert_eq!(levels(&findings), [Level::Warning; 2]);
-        assert_eq!(
-            findings[0].text,
-            "GTK_IM_MODULE=fcitx: GTK applications started from this environment talk to \
-             fcitx5, not to the compositor; unset GTK_IM_MODULE"
+    fn the_environment_should_lead_applications_to_omimed() {
+        let vars = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        // What reaches omimed: Fcitx5 modules, XIM by the name of Fcitx.
+        let good = vars(&[("QT_IM_MODULE", "fcitx"), ("XMODIFIERS", "@im=fcitx")]);
+        assert!(environment_findings(&good).is_empty());
+        let good = vars(&[
+            ("GTK_IM_MODULE", "fcitx"),
+            ("QT_IM_MODULE", "fcitx"),
+            ("XMODIFIERS", "@im=omime"),
+        ]);
+        assert!(environment_findings(&good).is_empty());
+
+        // IBus modules and Qt without a module find nothing; nor does XIM without a name.
+        let findings = environment_findings(&vars(&[
+            ("GTK_IM_MODULE", "IBUS"),
+            ("QT_IM_MODULE", "wayland"),
+        ]));
+        assert_eq!(levels(&findings), [Level::Warning; 3]);
+        assert!(
+            findings[0]
+                .text
+                .starts_with("GTK_IM_MODULE=ibus: GTK applications")
         );
-        assert!(findings[1].text.contains("Qt applications"));
-        assert!(findings[1].text.contains("IBus"));
-        assert!(findings[1].text.contains("unset QT_IM_MODULE"));
+        assert!(findings[1].text.starts_with("QT_IM_MODULE is not fcitx"));
+        assert!(findings[2].text.starts_with("XMODIFIERS is not set"));
+        let findings = environment_findings(&vars(&[
+            ("QT_IM_MODULE", "fcitx"),
+            ("XMODIFIERS", "@im=sogou"),
+        ]));
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].text.starts_with("XMODIFIERS names"));
     }
 
     #[test]

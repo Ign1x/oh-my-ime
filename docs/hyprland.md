@@ -57,9 +57,11 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("omimed")
 end)
 
--- Let applications use text-input-v3 instead of an IM module.
+-- How applications find omimed (see below).
 hl.env("GTK_IM_MODULE", "")
-hl.env("QT_IM_MODULE", "")
+hl.env("QT_IM_MODULE", "fcitx")
+hl.env("QT_IM_MODULES", "wayland;fcitx")
+hl.env("XMODIFIERS", "@im=fcitx")
 
 -- Optional: cycle engines from anywhere.
 hl.bind("SUPER + space", hl.dsp.exec_cmd("omime next"))
@@ -70,9 +72,20 @@ Legacy `hyprland.conf`:
 ```ini
 exec-once = omimed
 env = GTK_IM_MODULE,
-env = QT_IM_MODULE,
+env = QT_IM_MODULE,fcitx
+env = QT_IM_MODULES,wayland;fcitx
+env = XMODIFIERS,@im=fcitx
 bind = SUPER, space, exec, omime next
 ```
+
+The variables lead every kind of application to omimed. GTK, and Qt 6.8 and later
+(`QT_IM_MODULES`), use the compositor's text-input; Qt 5 and Qt applications on X11,
+such as WeChat and WPS, use the Fcitx5 module (`QT_IM_MODULE=fcitx`), which omimed
+serves; other X11 applications use XIM (`XMODIFIERS`). System Qt applications need the
+fcitx5-qt plugins for the module (on NixOS, `qt6Packages.fcitx5-qt` and
+`libsForQt5.fcitx5-qt`); applications that bundle Qt, as WeChat and WPS do, bring their
+own. `omime doctor` checks these variables. The `bind` switches input methods anywhere,
+also in applications that are not typing, where omimed's own hotkeys cannot reach.
 
 Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses systemd
 (for example through UWSM), you can instead install
@@ -289,14 +302,16 @@ exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
 If omimed already runs, run `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`
 and restart it once.
 
-Wayland applications type through the compositor's text-input without these variables,
-which is best. Some cannot: WeChat, for one, reaches an input method only through its
+The session environment of [step 3](#3-start-omimed-with-hyprland) covers most
+applications. Wayland applications that use the compositor's text-input need none of
+these variables; some cannot: WeChat, for one, reaches an input method only through its
 built-in Fcitx5 module. A Wayland application with `QT_IM_MODULE=fcitx` or
 `GTK_IM_MODULE=fcitx` reaches omimed through the Fcitx5 module, and on Hyprland and sway
 omimed asks the compositor where its window is, so engine windows open at its text cursor
 too (elsewhere they cannot be placed, Wayland does not tell clients where their windows
-are). With `ibus` it reaches nothing yet. Prefer setting these variables only for the
-applications that need them, in a wrapper script or a `.desktop` file:
+are). With `ibus` it reaches nothing yet. `GTK_IM_MODULE` is best left unset for the
+session and set only for X11 GTK applications that need it, in a wrapper script or a
+`.desktop` file:
 
 ```sh
 #!/bin/sh

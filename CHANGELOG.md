@@ -115,6 +115,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The recommended session environment leads every kind of application to omimed:
+  `QT_IM_MODULE=fcitx` with `QT_IM_MODULES=wayland;fcitx`, and `XMODIFIERS=@im=fcitx`
+  (Hyprland snippets, guide). It used to clear the module variables, which left Qt 5
+  applications and Qt applications on X11, such as WeChat and WPS, without an input
+  method. `omime doctor` checks for these variables, and no longer warns about Fcitx5
+  modules, which reach omimed.
+
 - `[tray] enabled` takes effect with `omime reload`. omimed also reloads its
   configuration on SIGHUP, and the systemd unit can reload it
   (`systemctl --user reload omimed`).

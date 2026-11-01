@@ -51,9 +51,11 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("omimed")
 end)
 
--- 让应用使用 text-input-v3，而不是 IM 模块。
+-- 让各类应用找到 omimed（见下文）。
 hl.env("GTK_IM_MODULE", "")
-hl.env("QT_IM_MODULE", "")
+hl.env("QT_IM_MODULE", "fcitx")
+hl.env("QT_IM_MODULES", "wayland;fcitx")
+hl.env("XMODIFIERS", "@im=fcitx")
 
 -- 可选：在任意位置循环切换引擎。
 hl.bind("SUPER + space", hl.dsp.exec_cmd("omime next"))
@@ -64,9 +66,13 @@ hl.bind("SUPER + space", hl.dsp.exec_cmd("omime next"))
 ```ini
 exec-once = omimed
 env = GTK_IM_MODULE,
-env = QT_IM_MODULE,
+env = QT_IM_MODULE,fcitx
+env = QT_IM_MODULES,wayland;fcitx
+env = XMODIFIERS,@im=fcitx
 bind = SUPER, space, exec, omime next
 ```
+
+这些变量把各类应用都引向 omimed。GTK 和 Qt 6.8 及更高版本（`QT_IM_MODULES`）使用合成器的 text-input；Qt 5 以及 X11 上的 Qt 应用（例如微信、WPS）使用 Fcitx5 模块（`QT_IM_MODULE=fcitx`），由 omimed 提供服务；其他 X11 应用使用 XIM（`XMODIFIERS`）。系统中的 Qt 应用需要 fcitx5-qt 插件才能使用该模块（在 NixOS 上为 `qt6Packages.fcitx5-qt` 和 `libsForQt5.fcitx5-qt`）；自带 Qt 的应用（如微信、WPS）会带上自己的插件。`omime doctor` 会检查这些变量。`bind` 让你在任何地方都能切换输入法，包括那些没有在输入、omimed 自己的热键够不到的应用。
 
 这两段配置都在 [`data/hyprland`](../../data/hyprland) 中。如果你的会话使用 systemd（例如通过 UWSM），也可以把 [`data/omimed.service`](../../data/omimed.service) 安装到 `~/.config/systemd/user/`，然后运行 `systemctl --user enable --now omimed`。Nix 包已包含该单元。
 
@@ -200,7 +206,7 @@ exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
 
 如果 omimed 已经在运行，请执行 `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`，然后重启它一次。
 
-Wayland 应用不设这些变量也能经由合成器的 text-input 输入，这是最好的方式。但有些应用做不到：比如微信，它只会通过自带的 Fcitx5 模块连接输入法。设置了 `QT_IM_MODULE=fcitx` 或 `GTK_IM_MODULE=fcitx` 的 Wayland 应用会通过 Fcitx5 模块连到 omimed；在 Hyprland 和 sway 上，omimed 会向合成器询问它的窗口位置，因此引擎窗口同样会出现在它的文本光标处（在其他合成器上则无法放置，因为 Wayland 不会告诉客户端自己的窗口在哪里）。设为 `ibus` 目前还连不到。最好只为需要的应用设置这些变量，例如在包装脚本或 `.desktop` 文件中：
+[第 3 步](#3-让-omimed-随-hyprland-启动)中的会话环境已经能覆盖大多数应用。使用合成器 text-input 的 Wayland 应用不需要这些变量；但有些应用做不到：比如微信，它只会通过自带的 Fcitx5 模块连接输入法。设置了 `QT_IM_MODULE=fcitx` 或 `GTK_IM_MODULE=fcitx` 的 Wayland 应用会通过 Fcitx5 模块连到 omimed；在 Hyprland 和 sway 上，omimed 会向合成器询问它的窗口位置，因此引擎窗口同样会出现在它的文本光标处（在其他合成器上则无法放置，因为 Wayland 不会告诉客户端自己的窗口在哪里）。设为 `ibus` 目前还连不到。`GTK_IM_MODULE` 最好不要为整个会话设置，只为需要它的 X11 GTK 应用设置，例如在包装脚本或 `.desktop` 文件中：
 
 ```sh
 #!/bin/sh
