@@ -222,10 +222,15 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
 ## Hosted input methods
 
 An unmodified Wayland input method, such as Fcitx 5, runs as an engine when its manifest
-says `protocol = "input-method-v2"`. It has no engine-protocol socket: it connects to its
-bridge socket like the UI of any engine, and its registry shows two globals more, a
-virtual `zwp_input_method_manager_v2` and a virtual `zwp_virtual_keyboard_manager_v1`,
-both answered by the bridge.
+says `protocol = "input-method-v2"`. It has no engine-protocol socket: it gets its bridge
+connection ready-made, as `WAYLAND_SOCKET` (one end of a socket pair whose other end the
+bridge takes), and its registry shows two globals more, a virtual
+`zwp_input_method_manager_v2` and a virtual `zwp_virtual_keyboard_manager_v1`, both
+answered by the bridge. `WAYLAND_DISPLAY` names the real compositor: Wayland libraries
+take `WAYLAND_SOCKET` and remove it from the environment, so the programs the input
+method starts itself (Fcitx 5's configuration tool, IBus's emoji picker, Qingjian's
+settings) reach the desktop as ordinary windows. `omime-ibus` hands the socket on to
+IBus's panel only, so that ibus-daemon and its engines do not hold it.
 
 - **Activation.** The core activates the virtual input method for a text field as a
   compositor would: `activate`, the field's surrounding text and content type, `done`.
@@ -252,7 +257,8 @@ both answered by the bridge.
   a tap.
 - **Windows.** The input method's popup surfaces are engine windows, shown as input
   popups or on a mirror, and the text cursor rectangle reaches it through its popup
-  role. Other windows of the input method (toplevels) cannot be shown.
+  role. Toplevels on its bridge connection cannot be shown; the programs it starts are
+  on the desktop instead (see above).
 - **Process.** omimed starts the input method on a private session bus, a `dbus-daemon`
   without service activation in the engine's runtime directory, so that it cannot take
   `org.fcitx.Fcitx5` on the user's bus from omimed's Fcitx5 frontend. It gets the

@@ -214,7 +214,8 @@ switching order.
 Switch with omimed's hotkeys, `omime switch` and the tray, not with Fcitx 5's trigger
 key: omimed takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles
 itself, such as `Ctrl+Shift` between its input methods, keep working, and omimed follows
-them. Only the popups of Fcitx 5 are shown; its other windows cannot be.
+them. The windows Fcitx 5 opens itself, such as its configuration tool, open on the
+desktop as ordinary windows.
 
 ### IBus as an engine
 

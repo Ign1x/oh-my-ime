@@ -12,7 +12,8 @@
 //! empty.
 //!
 //! With `--tray ICON|TITLE|LABEL` it publishes a tray item on its session bus, as
-//! Fcitx 5 and IBus do.
+//! Fcitx 5 and IBus do. With `--spawn "PROGRAM ARGS"` it starts PROGRAM once it is
+//! ready, as input methods start their settings: a window that belongs on the desktop.
 //!
 //! It prints what happens to stdout, one event per line, and with `--log FILE` also to
 //! FILE (relative to `$XDG_RUNTIME_DIR`), since omimed does not capture its output:
@@ -49,7 +50,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 use xkbcommon::xkb;
 
 const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] \
-     [--keep-releases] [--slow-ms MS] [--tray ICON|TITLE|LABEL]";
+     [--keep-releases] [--slow-ms MS] [--tray ICON|TITLE|LABEL] [--spawn PROGRAM]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -440,6 +441,7 @@ fn main() -> anyhow::Result<()> {
     let mut keep_releases = false;
     let mut slow = std::time::Duration::ZERO;
     let mut tray = None;
+    let mut spawn = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -453,6 +455,7 @@ fn main() -> anyhow::Result<()> {
             "--keep-releases" => keep_releases = true,
             "--slow-ms" => slow = std::time::Duration::from_millis(value()?.parse()?),
             "--tray" => tray = Some(omime_e2e::tray_item::TrayItem::parse(&value()?)?),
+            "--spawn" => spawn = Some(value()?),
             "--log" => {
                 let dir =
                     std::env::var_os("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR is unset")?;
@@ -495,6 +498,16 @@ fn main() -> anyhow::Result<()> {
     }
     queue.roundtrip(&mut app)?;
     say("ready");
+    // With the environment it got, as input methods start their settings.
+    let _spawned = spawn
+        .as_deref()
+        .and_then(|line| {
+            let mut words = line.split_whitespace();
+            let program = words.next()?;
+            Some(std::process::Command::new(program).args(words).spawn())
+        })
+        .transpose()
+        .context("cannot start the program to spawn")?;
     loop {
         queue.blocking_dispatch(&mut app)?;
     }

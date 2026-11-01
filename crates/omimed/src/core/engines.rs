@@ -11,7 +11,7 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
@@ -490,6 +490,7 @@ impl EngineManager {
     fn start(&mut self, id: &str) -> anyhow::Result<()> {
         let events = self.events.clone();
         let ui = self.ui_connections.clone();
+        let bridge = self.ui_connections.clone();
         let host_display = self.host_display.clone();
         let Some(slot) = self.slots.get_mut(id) else {
             anyhow::bail!("no engine `{id}` is installed");
@@ -558,10 +559,32 @@ impl EngineManager {
                 slot.kill = None;
                 anyhow::bail!("cannot launch `{program}` for engine `{id}`: it is not installed");
             };
+            // The input method reaches the bridge through a connected socket of its own
+            // (WAYLAND_SOCKET), which its Wayland library takes and forgets: the programs
+            // it starts itself, such as its settings or an emoji picker, reach the
+            // compositor in WAYLAND_DISPLAY and show as ordinary windows.
+            let inherited = match host_display.as_deref() {
+                Some(display) => {
+                    let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
+                    let _ = bridge.send(UiConnection {
+                        engine: id.to_owned(),
+                        hosted: true,
+                        socket: OwnedFd::from(ours),
+                    });
+                    let theirs = OwnedFd::from(theirs);
+                    inherit_fd(&mut command, theirs.as_raw_fd());
+                    command
+                        .env("WAYLAND_SOCKET", theirs.as_raw_fd().to_string())
+                        .env("WAYLAND_DISPLAY", display);
+                    Some(theirs)
+                }
+                None => None,
+            };
             tokio::task::spawn_local(supervise_hosted(
                 engine,
                 generation,
                 command,
+                inherited,
                 dir,
                 icon_dir(&path),
                 kill_rx,
@@ -1038,6 +1061,21 @@ pub(crate) fn exit_with_omimed(command: &mut tokio::process::Command) {
     }
 }
 
+/// Lets the process `command` starts inherit `fd`, which is close-on-exec here.
+#[allow(unsafe_code)]
+fn inherit_fd(command: &mut tokio::process::Command, fd: RawFd) {
+    // SAFETY: the closure runs in the child between fork and exec. It makes one system
+    // call and allocates nothing. The caller keeps `fd` open until the child is
+    // started, so it is the same open file in the child.
+    unsafe {
+        command.pre_exec(move || {
+            let fd = BorrowedFd::borrow_raw(fd);
+            rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::empty())?;
+            Ok(())
+        });
+    }
+}
+
 /// Counts an engine process as running for as long as it exists.
 struct Alive(Rc<Cell<usize>>);
 
@@ -1061,6 +1099,8 @@ async fn supervise_hosted(
     engine: String,
     generation: u64,
     mut command: tokio::process::Command,
+    // The input method's end of its bridge connection, open until it is started.
+    inherited: Option<OwnedFd>,
     dir: PathBuf,
     icon_dir: Option<String>,
     kill: oneshot::Receiver<Stop>,
@@ -1117,7 +1157,9 @@ async fn supervise_hosted(
             None
         }
     };
-    let mut child = match command.spawn() {
+    let spawned = command.spawn();
+    drop(inherited);
+    let mut child = match spawned {
         Ok(child) => child,
         Err(e) => {
             warn!(engine, "cannot launch the engine: {e}");

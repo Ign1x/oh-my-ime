@@ -52,6 +52,11 @@ All notable changes to this project are documented here. The format follows
   running (`[panel] enabled = false` turns it off), drawn with Slint on a layer surface
   (namespace `omime-switcher`) by the new `omime-overlay` library. Switches from the
   tray menu and those that follow you between applications do not show it.
+- The windows hosted input methods open themselves, such as Fcitx 5's configuration tool,
+  IBus's emoji picker or Qingjian's settings, open on the desktop as ordinary windows:
+  they used to connect to omimed's bridge like the input method, which showed nothing but
+  its popups. Hosted input methods now get their bridge connection as `WAYLAND_SOCKET`,
+  and `WAYLAND_DISPLAY` names the real compositor.
 - Engine windows open at the text cursor of Wayland applications that use the Fcitx5
   module (`QT_IM_MODULE=fcitx`, `GTK_IM_MODULE=fcitx`) too, on Hyprland and sway: omimed
   asks the compositor's IPC where the focused window is. Some applications reach an input

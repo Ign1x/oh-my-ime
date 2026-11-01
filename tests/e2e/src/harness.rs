@@ -741,6 +741,19 @@ impl TestEnv {
 
     /// Gives keyboard focus to the window with `app_id` and waits until omimed holds the
     /// keyboard for its text field.
+    /// Whether the compositor shows a window of `app_id`.
+    pub fn has_window(&self, app_id: &str) -> anyhow::Result<bool> {
+        let output = self
+            .command("swaymsg")
+            .args(["-t", "get_tree", "--raw"])
+            .output()
+            .context("cannot run swaymsg")?;
+        let tree: String = String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .collect();
+        Ok(tree.contains(&format!("\"app_id\":\"{app_id}\"")))
+    }
+
     pub fn focus(&self, app_id: &str) -> anyhow::Result<()> {
         const GRABBED: &str = "keyboard grabbed";
         let before = self.count_in_log(GRABBED);

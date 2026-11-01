@@ -22,6 +22,7 @@
 //! programs when they are not `ibus-daemon` on `$PATH` and `ibus-ui-gtk3` in the
 //! matching `libexec`.
 
+use std::os::fd::{AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
 use std::time::{Duration, Instant};
@@ -61,6 +62,11 @@ async fn run() -> anyhow::Result<ExitCode> {
         }
     }
 
+    // The connection to omimed's bridge belongs to the panel, the input method: if
+    // ibus-daemon or the engines it starts held it too, omimed would not notice the
+    // panel going away.
+    let bridge = take_wayland_socket();
+
     // No panel of the daemon's own: the one started below is the panel. The emoji
     // extension is a window that needs the keyboard, which an engine window cannot get.
     let mut args: Vec<String> = ["--panel", "disable", "--emoji-extension", "disable"]
@@ -68,7 +74,7 @@ async fn run() -> anyhow::Result<ExitCode> {
         .map(str::to_owned)
         .collect();
     args.extend(std::env::args().skip(1));
-    let mut daemon = spawn(&daemon_program, &args, &address_file)?;
+    let mut daemon = spawn(&daemon_program, &args, &address_file, None)?;
     eprintln!(
         "omime-ibus: started {} (address file {})",
         daemon_program.display(),
@@ -95,7 +101,9 @@ async fn run() -> anyhow::Result<ExitCode> {
         &panel_program,
         &["--enable-wayland-im".to_owned()],
         &address_file,
+        bridge.as_ref(),
     )?;
+    drop(bridge);
     eprintln!(
         "omime-ibus: started {} as the input method",
         panel_program.display()
@@ -123,24 +131,51 @@ async fn run() -> anyhow::Result<ExitCode> {
     })
 }
 
-/// Starts `program`, which exits with this process.
+/// The connection to omimed's bridge in `$WAYLAND_SOCKET`, made close-on-exec so that
+/// only the program it is passed to gets it.
 #[allow(unsafe_code)]
-fn spawn(program: &Path, args: &[String], address_file: &Path) -> anyhow::Result<Child> {
+fn take_wayland_socket() -> Option<OwnedFd> {
+    let fd: RawFd = std::env::var("WAYLAND_SOCKET").ok()?.parse().ok()?;
+    // SAFETY: omimed passed this file descriptor for this process to use, and nothing
+    // else in it does.
+    let socket = unsafe { OwnedFd::from_raw_fd(fd) };
+    rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC).ok()?;
+    Some(socket)
+}
+
+/// Starts `program`, which exits with this process, with `wayland` as its connection to
+/// the Wayland display (`WAYLAND_SOCKET`), if given.
+#[allow(unsafe_code)]
+fn spawn(
+    program: &Path,
+    args: &[String],
+    address_file: &Path,
+    wayland: Option<&OwnedFd>,
+) -> anyhow::Result<Child> {
     let mut command = Command::new(program);
     command
         .args(args)
         .env("IBUS_ADDRESS_FILE", address_file)
         .stdin(Stdio::null())
         .kill_on_drop(true);
+    let wayland = wayland.map(|socket| socket.as_raw_fd());
+    match wayland {
+        Some(fd) => command.env("WAYLAND_SOCKET", fd.to_string()),
+        None => command.env_remove("WAYLAND_SOCKET"),
+    };
     let parent = rustix::process::getpid();
-    // SAFETY: the closure runs in the child between fork and exec. It makes three
-    // system calls and allocates nothing (errors are plain error numbers).
+    // SAFETY: the closure runs in the child between fork and exec. It makes at most
+    // four system calls and allocates nothing (errors are plain error numbers). The
+    // caller keeps `wayland` open until the child is started.
     unsafe {
         command.pre_exec(move || {
             rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))?;
             // This process may have died before the child asked to follow it.
             if rustix::process::getppid() != Some(parent) {
                 return Err(rustix::io::Errno::SRCH.into());
+            }
+            if let Some(fd) = wayland {
+                rustix::io::fcntl_setfd(BorrowedFd::borrow_raw(fd), rustix::io::FdFlags::empty())?;
             }
             Ok(())
         });

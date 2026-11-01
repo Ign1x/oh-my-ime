@@ -5,7 +5,9 @@
 
 use std::time::{Duration, Instant};
 
-use omime_e2e::harness::{FcitxClient, TIMEOUT, TestEnv, echo_engine, hosted_engine};
+use omime_e2e::harness::{
+    FcitxClient, TIMEOUT, TestEnv, echo_engine, hosted_engine, target_dir, wait_until,
+};
 
 /// The input method's popup with these arguments: green, 100 × 40.
 const ARGS: [&str; 4] = ["--color", "00ff00", "--size", "100x40"];
@@ -389,5 +391,23 @@ fn hosted_popups_follow_the_text_cursor_of_x11_applications() -> anyhow::Result<
     // a layer surface of omimed's, and learns where the cursor is relative to it.
     env.wait_for_pixel(300 + 50, 200 + 20 + 20, GREEN)?;
     env.wait_for_hosted("the text cursor", |l| l == "rect 0 -20 2 20")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn windows_hosted_input_methods_open_show_on_the_desktop() -> anyhow::Result<()> {
+    // As Fcitx 5 starts its configuration tool, or Qingjian its settings.
+    let window = format!(
+        "{} --no-text-field --app-id opened-by-the-input-method",
+        target_dir().join("omime-ti-client").display()
+    );
+    let env = TestEnv::start(&[hosted_engine(&["--spawn", &window])], Some("hosted"))?;
+    env.wait_for_log("hosted input method ready")?;
+    wait_until("the window on the desktop", || {
+        env.has_window("opened-by-the-input-method")
+            .ok()?
+            .then_some(())
+    })?;
     Ok(())
 }
