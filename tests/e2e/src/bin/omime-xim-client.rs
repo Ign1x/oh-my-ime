@@ -2,7 +2,8 @@
 //! with `GTK_IM_MODULE=xim`.
 //!
 //! It opens a window, connects to the XIM server named in `XMODIFIERS`, creates one
-//! input context for the window and prints what happens to stdout, one event per line:
+//! input context for the window and prints what happens to stdout, one event per line,
+//! starting with `ready` once it has the input context and the keyboard focus:
 //!
 //! ```text
 //! ready
@@ -26,6 +27,7 @@
 //! instead of drawing the preedit itself.
 
 use std::io::Write as _;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_e2e::json_string;
@@ -139,9 +141,37 @@ fn run() -> anyhow::Result<()> {
         keymap,
     };
 
+    // Whether the window has the keyboard, and whether `ready` was printed.
+    let mut focused = false;
+    let mut ready = false;
+    let mut mapped = Instant::now();
     loop {
-        let event = match conn.wait_for_event() {
-            Ok(event) => event,
+        // Keys typed before the compositor gives the window the keyboard are lost.
+        if !ready && focused && handler.context().is_some() {
+            ready = true;
+            emit("ready");
+        }
+        let event = if focused {
+            conn.wait_for_event().map(Some)
+        } else {
+            conn.poll_for_event()
+        };
+        let event = match event {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                // Now and then sway never shows a new XWayland window, and so never
+                // gives it the keyboard: XWayland committed its surface before sway's
+                // window manager mapped the window, and waits for a frame that never
+                // comes. A new surface for it, from mapping it again, does not wait.
+                if mapped.elapsed() > Duration::from_secs(2) {
+                    conn.unmap_window(window)?;
+                    conn.map_window(window)?;
+                    conn.flush()?;
+                    mapped = Instant::now();
+                }
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
             // The X server or our connection to it went away.
             Err(_) => return Ok(()),
         };
@@ -164,11 +194,13 @@ fn run() -> anyhow::Result<()> {
                 }
             }
             Event::FocusIn(e) if e.event == window => {
+                focused = true;
                 if let Some((im, ic)) = handler.context() {
                     client.set_focus(im, ic)?;
                 }
             }
             Event::FocusOut(e) if e.event == window => {
+                focused = false;
                 if let Some((im, ic)) = handler.context() {
                     client.unset_focus(im, ic)?;
                 }
@@ -354,7 +386,6 @@ impl<C: Client<XEvent = KeyPressEvent> + ClientCore> ClientHandler<C> for Handle
     ) -> Result<(), ClientError> {
         self.input_context_id = Some(input_context_id);
         client.set_focus(input_method_id, input_context_id)?;
-        emit("ready");
         Ok(())
     }
 
