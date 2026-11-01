@@ -10,6 +10,11 @@ protocol = "input-method-v2"
 requires = ["fcitx5"]
 enabled_by_default = false
 
+# Fcitx 5's configuration tool talks to it on its private bus.
+[engine.settings]
+exec = ["fcitx5-configtool"]
+bus = "engine"
+
 [engine.i18n.zh-CN]
 name = "Fcitx 5"
 description = "把 Fcitx 5 连同它的全部输入法和插件作为一个引擎托管。"

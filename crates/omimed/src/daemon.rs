@@ -529,6 +529,9 @@ impl Daemon {
             ControlRequest::Reload(reply) => {
                 let _ = reply.send(self.reload(frontend).await);
             }
+            ControlRequest::OpenSettings(engine, reply) => {
+                let _ = reply.send(result(self.core.open_settings(&engine)));
+            }
         }
     }
 

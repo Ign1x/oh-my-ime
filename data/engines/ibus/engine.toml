@@ -11,6 +11,12 @@ protocol = "input-method-v2"
 requires = ["ibus-daemon"]
 enabled_by_default = false
 
+# ibus-setup saves to dconf on the user's bus, which the hosted IBus reads only when it
+# starts: it is restarted when ibus-setup closes.
+[engine.settings]
+exec = ["ibus-setup"]
+restart = true
+
 [engine.i18n.zh-CN]
 name = "IBus"
 description = "把 IBus 连同它的全部输入法作为一个引擎托管。"

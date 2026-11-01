@@ -25,6 +25,8 @@ pub enum ControlRequest {
     Next(oneshot::Sender<Result<(), String>>),
     Toggle(oneshot::Sender<Result<(), String>>),
     Reload(oneshot::Sender<Result<(), String>>),
+    /// Opens the settings program of an engine.
+    OpenSettings(String, oneshot::Sender<Result<(), String>>),
     Diagnose(oneshot::Sender<Dict>),
     /// What the tray item shows.
     Tray(oneshot::Sender<crate::tray::TrayInfo>),
@@ -114,6 +116,15 @@ impl ControlObject {
     /// Reads the configuration again and looks for newly installed or removed engines.
     async fn reload(&self) -> zbus::fdo::Result<()> {
         failed(self.ask(ControlRequest::Reload).await?)
+    }
+
+    /// Opens the settings of `engine` (its settings program, with an ordinary window).
+    /// Fails if the engine has none, or it is not installed.
+    async fn open_settings(&self, engine: String) -> zbus::fdo::Result<()> {
+        failed(
+            self.ask(|tx| ControlRequest::OpenSettings(engine, tx))
+                .await?,
+        )
     }
 
     /// What `omime doctor` checks: "display" (s, the compositor), "seats" (a(sb): every

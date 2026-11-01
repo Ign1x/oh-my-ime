@@ -88,6 +88,9 @@ pub struct EngineInfo {
     /// other frameworks are offered, not imposed, so their manifests say `false`.
     #[serde(default = "enabled_by_default")]
     pub enabled_by_default: bool,
+    /// The engine's settings program, if it has one.
+    #[serde(default)]
+    pub settings: Option<Settings>,
     /// Translations, keyed by locale (`zh-CN`, `ja`, ...).
     #[serde(default)]
     pub i18n: BTreeMap<String, Translation>,
@@ -103,6 +106,38 @@ pub struct Translation {
 
 fn enabled_by_default() -> bool {
     true
+}
+
+/// How to open an engine's settings (`[engine.settings]`): a program with an ordinary
+/// window on the user's desktop.
+///
+/// ```toml
+/// [engine.settings]
+/// exec = ["fcitx5-configtool"]
+/// bus = "engine"
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    /// Command line, resolved like `exec`.
+    pub exec: Vec<String>,
+    /// The session bus the program talks on.
+    #[serde(default)]
+    pub bus: SettingsBus,
+    /// Restart the engine when the program exits, for engines that read their settings
+    /// only when they start.
+    #[serde(default)]
+    pub restart: bool,
+}
+
+/// The session bus of a settings program.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SettingsBus {
+    /// The user's.
+    #[default]
+    Session,
+    /// The private bus of a hosted input method, where the input method is.
+    Engine,
 }
 
 /// Errors in a manifest.
@@ -166,6 +201,16 @@ impl Manifest {
         }
         if e.exec.first().is_none_or(|program| program.is_empty()) {
             return Err(ManifestError::Invalid("`exec` needs a program".into()));
+        }
+        if let Some(settings) = &e.settings
+            && settings
+                .exec
+                .first()
+                .is_none_or(|program| program.is_empty())
+        {
+            return Err(ManifestError::Invalid(
+                "`settings.exec` needs a program".into(),
+            ));
         }
         match (&e.api, e.protocol) {
             (Some(api), _) if parse_api_version(api).is_none() => {
@@ -235,7 +280,20 @@ impl InstalledEngine {
 
     /// The command line with `exec[0]` resolved as documented in the module docs.
     pub fn command(&self) -> Vec<String> {
-        let mut argv = self.manifest.engine.exec.clone();
+        self.resolve(self.manifest.engine.exec.clone())
+    }
+
+    /// The command line of the settings program, resolved like [`Self::command`], if
+    /// the engine has one and it is installed.
+    pub fn settings_command(&self) -> Option<Vec<String>> {
+        let settings = self.manifest.engine.settings.as_ref()?;
+        let argv = self.resolve(settings.exec.clone());
+        argv.first()
+            .is_some_and(|p| is_installed(p))
+            .then_some(argv)
+    }
+
+    fn resolve(&self, mut argv: Vec<String>) -> Vec<String> {
         if let Some(program) = argv.first_mut()
             && program.contains('/')
             && !Path::new(program).is_absolute()
@@ -375,13 +433,10 @@ name = "回声"
 
     #[test]
     fn unknown_keys_are_left_out() {
-        let newer = ECHO.replace(
-            "api = \"1.0\"",
-            "api = \"1.0\"\nsettings = [\"echo-setup\"]",
-        );
+        let newer = ECHO.replace("api = \"1.0\"", "api = \"1.0\"\nfrom_the_future = [\"x\"]");
         let (manifest, unknown) = Manifest::parse(&format!("{newer}\n[extra]\n")).unwrap();
         assert_eq!(manifest.engine.id, "echo");
-        assert_eq!(unknown, ["engine.settings", "extra"]);
+        assert_eq!(unknown, ["engine.from_the_future", "extra"]);
     }
 
     #[test]
@@ -467,6 +522,33 @@ protocol = "input-method-v2"
             [("missing".to_owned(), "omime-no-such-program".to_owned())]
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn settings_programs_resolve_and_must_exist() {
+        let with = |exec: &str| {
+            let text = ECHO.replace(
+                "[engine.i18n.zh-CN]",
+                &format!("[engine.settings]\nexec = [\"{exec}\"]\nbus = \"engine\"\n\n[engine.i18n.zh-CN]"),
+            );
+            InstalledEngine {
+                manifest: Manifest::parse(&text).unwrap().0,
+                dir: PathBuf::from("/usr/share/oh-my-ime/engines/echo"),
+                unknown_keys: Vec::new(),
+            }
+        };
+        let engine = with("sh");
+        let settings = engine.manifest.engine.settings.as_ref().unwrap();
+        assert_eq!(settings.bus, SettingsBus::Engine);
+        assert!(!settings.restart);
+        assert_eq!(engine.settings_command().unwrap()[0], "sh");
+        assert_eq!(with("omime-no-such-program").settings_command(), None);
+        assert_eq!(with("bin/setup").settings_command(), None);
+        let empty = ECHO.replace(
+            "[engine.i18n.zh-CN]",
+            "[engine.settings]\nexec = []\n\n[engine.i18n.zh-CN]",
+        );
+        assert!(Manifest::parse(&empty).is_err());
     }
 
     #[test]

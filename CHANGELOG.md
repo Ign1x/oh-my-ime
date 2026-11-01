@@ -39,6 +39,13 @@ All notable changes to this project are documented here. The format follows
   input, a middle click switches to the next input method, and its menu switches to any
   input method. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
+- Engines can have settings: `[engine.settings]` in the manifest names a program, which
+  `omime settings <engine>`, "Configure …" in the tray menu and the control API's
+  `OpenSettings` open as an ordinary window on the desktop, with the engine running.
+  It can talk on the engine's private bus (`bus = "engine"`), and the engine can be
+  restarted when it closes (`restart = true`). Fcitx 5's manifest opens
+  `fcitx5-configtool` on Fcitx 5's bus; IBus's opens `ibus-setup` and restarts IBus
+  afterwards, so that it reads what was changed.
 - Engines learn whether an application shows the preedit itself (`client-preedit` in
   the context, `ContextInfo::client_preedit` in the SDK): xterm and other XIM
   applications that leave drawing it to the input method do not, so an engine with a

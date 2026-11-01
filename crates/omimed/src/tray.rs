@@ -117,9 +117,10 @@ impl TrayInfo {
         self.status.label.clone().unwrap_or_default()
     }
 
-    /// The menu entries: the input methods, then direct input. `None` is direct input.
-    /// Input methods of the same name in two frameworks say which one they are in.
-    fn menu(&self) -> Vec<(Option<String>, String, bool)> {
+    /// The menu: the input methods and direct input, to choose from, then the settings
+    /// of the current engine if it has any. Input methods of the same name in two
+    /// frameworks say which one they are in.
+    fn menu(&self) -> Vec<MenuEntry> {
         let mut entries: Vec<_> = self
             .methods
             .iter()
@@ -131,24 +132,104 @@ impl TrayInfo {
                     m.name.clone()
                 };
                 let current = self.method.as_deref() == Some(m.id.as_str());
-                (Some(m.id.clone()), label, current)
+                MenuEntry::radio(MenuAction::Switch(Some(m.id.clone())), label, current)
             })
             .collect();
-        entries.push((None, direct_input_label().to_owned(), self.engine.is_none()));
+        entries.push(MenuEntry::radio(
+            MenuAction::Switch(None),
+            direct_input_label().to_owned(),
+            self.engine.is_none(),
+        ));
+        if let Some(engine) = self.current().filter(|e| e.settings) {
+            entries.push(MenuEntry::separator());
+            entries.push(MenuEntry {
+                action: Some(MenuAction::Settings(engine.id.clone())),
+                label: settings_label(&engine.name),
+                checked: None,
+            });
+        }
         entries
     }
 }
 
-/// "Direct input", in Chinese for Chinese locales.
-fn direct_input_label() -> &'static str {
-    let locale = std::env::var("LC_ALL")
+/// What a menu entry does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MenuAction {
+    /// Switches to an input method; `None` is direct input.
+    Switch(Option<String>),
+    /// Opens the settings of an engine.
+    Settings(String),
+}
+
+/// An entry of the tray menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MenuEntry {
+    /// `None` is a separator.
+    action: Option<MenuAction>,
+    label: String,
+    /// Whether a radio entry is checked; `None` for other entries.
+    checked: Option<bool>,
+}
+
+impl MenuEntry {
+    fn radio(action: MenuAction, label: String, checked: bool) -> Self {
+        Self {
+            action: Some(action),
+            label,
+            checked: Some(checked),
+        }
+    }
+
+    fn separator() -> Self {
+        Self {
+            action: None,
+            label: String::new(),
+            checked: None,
+        }
+    }
+
+    fn properties(&self) -> Properties {
+        if self.action.is_none() {
+            return Properties::from([("type".to_owned(), owned(Variant::from("separator")))]);
+        }
+        let mut properties = Properties::from([(
+            "label".to_owned(),
+            owned(Variant::from(self.label.as_str())),
+        )]);
+        if let Some(checked) = self.checked {
+            properties.insert("toggle-type".to_owned(), owned(Variant::from("radio")));
+            properties.insert(
+                "toggle-state".to_owned(),
+                owned(Variant::from(i32::from(checked))),
+            );
+        }
+        properties
+    }
+}
+
+/// Whether text for the user should be Chinese.
+fn chinese() -> bool {
+    std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_MESSAGES"))
         .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_default();
-    if locale.starts_with("zh") {
+        .is_ok_and(|locale| locale.starts_with("zh"))
+}
+
+/// "Direct input", in Chinese for Chinese locales.
+fn direct_input_label() -> &'static str {
+    if chinese() {
         "直接输入"
     } else {
         "Direct input"
+    }
+}
+
+/// "Configure Fcitx 5…", in Chinese for Chinese locales.
+fn settings_label(engine: &str) -> String {
+    if chinese() {
+        format!("配置 {engine}…")
+    } else {
+        format!("Configure {engine}…")
     }
 }
 
@@ -334,31 +415,21 @@ const ROOT: i32 = 0;
 struct Menu {
     requests: mpsc::UnboundedSender<ControlRequest>,
     revision: Arc<AtomicU32>,
-    /// What the entries of the layout last handed out switch to.
-    targets: Mutex<Vec<Option<String>>>,
+    /// What the entries of the layout last handed out do.
+    targets: Mutex<Vec<Option<MenuAction>>>,
 }
 
 impl Menu {
-    /// The entries, by id. Remembers what each one switches to.
+    /// The entries, by id. Remembers what each one does.
     async fn entries(&self) -> Vec<(i32, Properties)> {
         let entries = ask(&self.requests, ControlRequest::Tray).await.menu();
         if let Ok(mut targets) = self.targets.lock() {
-            *targets = entries.iter().map(|(target, ..)| target.clone()).collect();
+            *targets = entries.iter().map(|entry| entry.action.clone()).collect();
         }
         entries
-            .into_iter()
+            .iter()
             .zip(1..)
-            .map(|((_, label, current), id)| {
-                let properties = Properties::from([
-                    ("label".to_owned(), owned(Variant::from(label))),
-                    ("toggle-type".to_owned(), owned(Variant::from("radio"))),
-                    (
-                        "toggle-state".to_owned(),
-                        owned(Variant::from(i32::from(current))),
-                    ),
-                ]);
-                (id, properties)
-            })
+            .map(|(entry, id)| (id, entry.properties()))
             .collect()
     }
 
@@ -387,13 +458,21 @@ impl Menu {
     }
 
     fn clicked(&self, id: i32) {
-        let target = self.targets.lock().ok().and_then(|targets| {
+        let action = self.targets.lock().ok().and_then(|targets| {
             usize::try_from(id - 1)
                 .ok()
-                .and_then(|index| targets.get(index).cloned())
+                .and_then(|index| targets.get(index).cloned().flatten())
         });
-        if let Some(target) = target {
-            tell(&self.requests, |tx| ControlRequest::Switch(target, tx));
+        match action {
+            Some(MenuAction::Switch(target)) => {
+                tell(&self.requests, |tx| ControlRequest::Switch(target, tx));
+            }
+            Some(MenuAction::Settings(engine)) => {
+                tell(&self.requests, |tx| {
+                    ControlRequest::OpenSettings(engine, tx)
+                });
+            }
+            None => {}
         }
     }
 }
@@ -628,6 +707,7 @@ mod tests {
             enabled,
             state: "running",
             icon: icon.map(str::to_owned),
+            settings: id == "fcitx5",
         }
     }
 
@@ -697,21 +777,32 @@ mod tests {
 
     #[test]
     fn the_menu_lists_input_methods_and_direct_input() {
+        let switch = |id: Option<&str>, label: &str, checked: bool| {
+            MenuEntry::radio(
+                MenuAction::Switch(id.map(str::to_owned)),
+                label.to_owned(),
+                checked,
+            )
+        };
+        let choices = [
+            switch(Some("fcitx5/shuangpin"), "双拼", false),
+            // Two frameworks have a 拼音: each says which it is.
+            switch(Some("fcitx5/pinyin"), "拼音 (Fcitx 5)", true),
+            switch(Some("ibus/pinyin"), "拼音 (IBus)", false),
+            switch(Some("sparkle"), "Sparkle", false),
+            switch(None, direct_input_label(), false),
+        ];
+        // Fcitx 5 has settings, which the menu offers while it is in use.
         let menu = info(Some("fcitx5"), Some("fcitx5/pinyin")).menu();
-        let entries: Vec<(Option<&str>, &str, bool)> = menu
-            .iter()
-            .map(|(id, name, current)| (id.as_deref(), name.as_str(), *current))
-            .collect();
+        assert_eq!(menu[..5], choices);
+        assert_eq!(menu[5], MenuEntry::separator());
         assert_eq!(
-            entries,
-            [
-                (Some("fcitx5/shuangpin"), "双拼", false),
-                // Two frameworks have a 拼音: each says which it is.
-                (Some("fcitx5/pinyin"), "拼音 (Fcitx 5)", true),
-                (Some("ibus/pinyin"), "拼音 (IBus)", false),
-                (Some("sparkle"), "Sparkle", false),
-                (None, direct_input_label(), false),
-            ]
+            menu[6].action,
+            Some(MenuAction::Settings("fcitx5".to_owned()))
         );
+        assert_eq!(menu[6].label, settings_label("Fcitx 5"));
+        assert_eq!(menu.len(), 7);
+        let menu = info(Some("sparkle"), Some("sparkle")).menu();
+        assert_eq!(menu.len(), 5);
     }
 }

@@ -231,6 +231,47 @@ fn what_engines_print_goes_to_the_log_under_their_id() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn engine_settings_open_on_the_desktop_and_the_engine_reads_them() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
+    env.wait_for_hosted("the input method to start", |l| l == "ready")?;
+    // Settings like Fcitx 5's, which talk to the input method on its bus, and like
+    // IBus's, which it reads only when it starts.
+    let marker = env.dir().join("settings-saw");
+    let manifest = env.dir().join("engines/hosted/engine.toml");
+    let mut text = std::fs::read_to_string(&manifest)?;
+    text += &format!(
+        "\n[engine.settings]\nexec = [\"sh\", \"-c\", \"echo $WAYLAND_DISPLAY $DBUS_SESSION_BUS_ADDRESS > {}\"]\n\
+         bus = \"engine\"\nrestart = true\n",
+        marker.display()
+    );
+    std::fs::write(&manifest, text)?;
+    env.omime(&["reload"])?;
+
+    env.omime(&["settings", "hosted"])?;
+    let saw = omime_e2e::harness::wait_until("the settings program", || {
+        std::fs::read_to_string(&marker)
+            .ok()
+            .filter(|t| t.ends_with('\n'))
+    })?;
+    let (display, bus) = saw.trim().split_once(' ').unwrap_or_default();
+    // The compositor's display, not the engine's bridge.
+    assert!(
+        !display.is_empty() && !display.contains("oh-my-ime"),
+        "{saw}"
+    );
+    assert!(bus.contains("oh-my-ime/hosted/bus"), "{saw}");
+    // It closed: the input method starts again, to read what was changed.
+    env.wait_for_log("restarting the engine to read its settings")?;
+    wait_for_count(&env, "ready", 2)?;
+    assert_eq!(env.count_in_log("engine exited unexpectedly"), 0);
+    // An engine without settings says so.
+    let without = env.omime_status(&["settings", "nothing"])?;
+    assert!(!without.0.success());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn hosted_input_methods_run_on_a_private_bus() -> anyhow::Result<()> {
     let env = TestEnv::start(&[hosted_engine(&[])], Some("hosted"))?;
     env.wait_for_hosted("the input method to start", |l| l == "ready")?;

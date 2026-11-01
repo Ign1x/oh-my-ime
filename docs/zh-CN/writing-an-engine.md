@@ -100,6 +100,14 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 - 窗口上的点击会照常到达你的引擎。通过 `omime_sdk::spawn`（或 `ctx.host()`）得到的 `Host` 来响应它们，例如 `host.commit(ctx_id, text)`。
 - 对于自己占用主线程的工具包：用 `omime_sdk::spawn` 运行引擎，它会在引擎注册完成后返回。
 - 对于不应当作为弹窗的普通窗口（例如设置对话框），改为连接 `$OMIME_HOST_WAYLAND_DISPLAY` 中的 display，例如从一个独立进程连接。
+- 清单里的设置程序就是 `omime settings <id>` 和托盘菜单打开的东西，它以普通窗口出现在桌面上：
+
+  ```toml
+  [engine.settings]
+  exec = ["my-engine-settings"]   # 解析方式与 `exec` 相同
+  bus = "session"                 # "engine"：被托管输入法的私有总线
+  restart = false                 # true：设置程序关闭时重启引擎
+  ```
 
 [Sparkle](../../engines/sparkle) 引擎用 Slint 展示了以上全部内容。
 

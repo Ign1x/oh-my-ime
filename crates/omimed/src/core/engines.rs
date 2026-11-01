@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_proto::engine::{Dict, KeyEvent, WireAction};
-use omime_proto::manifest::InstalledEngine;
+use omime_proto::manifest::{InstalledEngine, SettingsBus};
 use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
     ENV_HOST_WAYLAND_DISPLAY,
@@ -256,6 +256,9 @@ pub struct EngineSlot {
     generation: u64,
     /// Stops the process; dropping it stops the process politely.
     kill: Option<oneshot::Sender<Stop>>,
+    /// The process is stopped on purpose, to start again at once: its exit is not a
+    /// crash.
+    reloading: bool,
     crashes: Vec<Instant>,
     sockets_ready: bool,
 }
@@ -322,6 +325,7 @@ impl EngineManager {
             framework: None,
             generation: 0,
             kill: None,
+            reloading: false,
             crashes: Vec::new(),
             sockets_ready: false,
         }
@@ -688,12 +692,17 @@ impl EngineManager {
         if slot.tray.take().is_some() {
             slot.status = Status::default();
         }
+        let now = Instant::now();
+        if std::mem::take(&mut slot.reloading) {
+            debug!(engine = id, "engine stopped to reload");
+            slot.state = EngineState::Restarting { at: now };
+            return;
+        }
         if !needed {
             slot.state = EngineState::Stopped;
             debug!(engine = id, ?status, "engine exited");
             return;
         }
-        let now = Instant::now();
         slot.crashes
             .retain(|t| now.duration_since(*t) < CRASH_WINDOW);
         slot.crashes.push(now);
@@ -716,6 +725,84 @@ impl EngineManager {
     /// save its state; it is restarted on demand.
     pub fn kill_unresponsive(&mut self, id: &str) {
         self.stop(id, Stop::Now);
+    }
+
+    /// Stops a running engine and starts it again right away, so that it reads its
+    /// settings again. Not a crash.
+    pub fn reload(&mut self, id: &str) {
+        if let Some(slot) = self.slots.get_mut(id)
+            && let Some(kill) = slot.kill.take()
+        {
+            info!(engine = id, "restarting the engine to read its settings");
+            slot.reloading = true;
+            let _ = kill.send(Stop::Politely);
+        }
+    }
+
+    /// Opens the settings program of `id`: an ordinary window on the user's desktop,
+    /// with the engine running. Tells the core when it closes, if the engine is to be
+    /// restarted then.
+    pub fn open_settings(&mut self, id: &str) -> anyhow::Result<()> {
+        let slot = self
+            .slots
+            .get(id)
+            .with_context(|| format!("no engine `{id}` is installed"))?;
+        let settings = slot
+            .installed
+            .manifest
+            .engine
+            .settings
+            .clone()
+            .with_context(|| format!("engine `{id}` has no settings"))?;
+        let argv = slot.installed.settings_command().with_context(|| {
+            format!(
+                "`{}`, the settings of engine `{id}`, is not installed",
+                settings.exec[0]
+            )
+        })?;
+        // The program talks to the engine.
+        self.ensure_started(id, true)?;
+        let (program, args) = argv.split_first().context("no settings program")?;
+        let mut command = tokio::process::Command::new(program);
+        command
+            .args(args)
+            .env(ENV_ENGINE_ID, id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // A window on the real compositor, not an engine window.
+        if let Some(display) = &self.host_display {
+            command.env("WAYLAND_DISPLAY", display);
+        }
+        if settings.bus == SettingsBus::Engine {
+            let bus = runtime_dir::engine_dir(id)?.join("bus");
+            command.env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", bus.display()),
+            );
+        }
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("cannot start `{program}`"))?;
+        info!(engine = id, program, "settings opened");
+        log_output(id, &mut child);
+        let engine = id.to_owned();
+        let events = self.events.clone();
+        tokio::task::spawn_local(async move {
+            let _ = child.wait().await;
+            debug!(engine, "settings closed");
+            if settings.restart {
+                let _ = events.send(CoreEvent::SettingsClosed { engine });
+            }
+        });
+        Ok(())
+    }
+
+    /// Whether `id` has a settings program that is installed.
+    pub fn has_settings(&self, id: &str) -> bool {
+        self.slots
+            .get(id)
+            .is_some_and(|slot| slot.installed.settings_command().is_some())
     }
 
     fn stop(&mut self, id: &str, how: Stop) {

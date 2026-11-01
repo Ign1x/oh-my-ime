@@ -775,7 +775,7 @@ mod tests {
             "echo".to_owned(),
             "`omimed-echo` is not in PATH, so omimed cannot start this engine".to_owned(),
         )];
-        let unknown = [("echo".to_owned(), "engine.settings".to_owned())];
+        let unknown = [("echo".to_owned(), "engine.from_the_future".to_owned())];
         let findings = engine_findings(&broken, &warnings, &unknown);
         assert_eq!(
             levels(&findings),
@@ -786,7 +786,7 @@ mod tests {
             "/engines/broken/engine.toml: `name` must not be empty"
         );
         assert!(findings[1].text.starts_with("engine echo: "));
-        assert!(findings[2].text.contains("`engine.settings`"));
+        assert!(findings[2].text.contains("`engine.from_the_future`"));
     }
 
     #[test]

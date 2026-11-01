@@ -85,6 +85,11 @@ pub enum CoreEvent {
         generation: u64,
         update: frameworks::FrameworkUpdate,
     },
+    /// The settings program of an engine that reads its settings only when it starts
+    /// closed.
+    SettingsClosed {
+        engine: String,
+    },
 }
 
 /// What users choose: an engine of omimed's, or an input method inside a hosted
@@ -217,6 +222,8 @@ pub struct EngineSummary {
     pub state: &'static str,
     /// The icon the manifest names.
     pub icon: Option<String>,
+    /// Whether it has a settings program that is installed.
+    pub settings: bool,
 }
 
 /// The core state.
@@ -497,6 +504,7 @@ impl Core {
                 enabled,
                 state: slot.state.name(),
                 icon: slot.installed.manifest.engine.icon.clone(),
+                settings: self.engines.has_settings(id),
             })
         };
         let enabled = self.enabled.iter().filter_map(|id| summary(id, true));
@@ -831,6 +839,8 @@ impl Core {
             }
             CoreEvent::Host { engine, call } => self.on_host_call(&engine, call, out),
             CoreEvent::Reply { ctx, token, reply } => self.on_reply(ctx, token, reply, out),
+            // It reads what was changed when it starts again.
+            CoreEvent::SettingsClosed { engine } => self.engines.reload(&engine),
         }
     }
 
@@ -1304,6 +1314,11 @@ impl Core {
             Some(engine) => self.switch_to(Some(engine), out),
             None => anyhow::bail!("no engines are enabled"),
         }
+    }
+
+    /// Opens the settings program of `engine`.
+    pub fn open_settings(&mut self, engine: &str) -> anyhow::Result<()> {
+        self.engines.open_settings(engine)
     }
 
     /// Forgets all text fields, e.g. after the compositor connection was lost.

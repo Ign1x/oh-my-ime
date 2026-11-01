@@ -90,6 +90,7 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | See what is installed | `omime engines` (`*` marks enabled engines) |
 | Find out what is wrong | `omime doctor` (exit status 1 when it finds a problem) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
+| Configure an engine | `omime settings fcitx5`, or "Configure …" in the tray menu |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Reload the configuration | `omime reload`, `systemctl --user reload omimed` or SIGHUP |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
@@ -171,12 +172,9 @@ exec = ["fcitx5"]
 protocol = "input-method-v2"
 ```
 
-Fcitx 5 keeps its configuration in `~/.config/fcitx5` as usual. Its configuration tool
-talks to it over D-Bus, so point it at the private bus:
-
-```sh
-DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
-```
+Fcitx 5 keeps its configuration in `~/.config/fcitx5` as usual. To change it, open its
+configuration tool with `omime settings fcitx5`, or "Configure Fcitx 5…" in the tray menu
+while Fcitx 5 is in use: omimed starts it on Fcitx 5's private bus, where Fcitx 5 is.
 
 The input methods you set up in Fcitx 5 are what you choose from, each on its own:
 `omime list` shows `fcitx5/shuangpin`, `fcitx5/pinyin` and so on (its keyboard layouts are
@@ -212,12 +210,13 @@ engine IBus uses, and each one you switch to with IBus's own tools.
 
 The hosted daemon writes its address where IBus tools look for it, so they work as
 usual: `ibus engine libpinyin` switches too, and `ibus-setup` configures engines,
-starting each engine's own setup tool. These tools save
-to dconf from your session. The hosted IBus itself runs on omimed's private session bus, where
-dconf's service is not reachable: it reads the settings dconf holds when it starts,
-but cannot save changes of its own, and sees what the tools changed the next time it
-starts (`omime switch` to another engine and back). Switch with omimed's hotkeys and
-`omime switch`; omimed takes `Ctrl+Space` before IBus sees it.
+starting each engine's own setup tool. These tools save to dconf from your session.
+The hosted IBus itself runs on omimed's private session bus, where dconf's service is
+not reachable: it reads the settings dconf holds when it starts, but cannot save
+changes of its own. Open `ibus-setup` with `omime settings ibus` or "Configure IBus…"
+in the tray menu, and omimed restarts IBus when you close it, so IBus reads what you
+changed. Switch with omimed's hotkeys and `omime switch`; omimed takes `Ctrl+Space`
+before IBus sees it.
 
 ## Which applications work
 

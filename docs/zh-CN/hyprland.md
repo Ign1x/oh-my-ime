@@ -81,6 +81,7 @@ bind = SUPER, space, exec, omime next
 | 查看已安装的内容 | `omime engines`（`*` 标记已启用的引擎） |
 | 排查问题 | `omime doctor`（发现问题时退出状态为 1） |
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
+| 配置引擎 | `omime settings fcitx5`，或托盘菜单里的“配置 …” |
 | 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 重新加载配置 | `omime reload`、`systemctl --user reload omimed` 或 SIGHUP |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
@@ -139,11 +140,7 @@ exec = ["fcitx5"]
 protocol = "input-method-v2"
 ```
 
-Fcitx 5 照常把配置保存在 `~/.config/fcitx5`。它的配置工具通过 D-Bus 与它通信，因此要让工具连到私有总线：
-
-```sh
-DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/oh-my-ime/fcitx5/bus fcitx5-configtool
-```
+Fcitx 5 照常把配置保存在 `~/.config/fcitx5`。要修改配置，用 `omime settings fcitx5` 打开它的配置工具，或在使用 Fcitx 5 时点托盘菜单里的“配置 Fcitx 5…”：omimed 会让配置工具连到 Fcitx 5 所在的私有总线上。
 
 你在 Fcitx 5 中设置的输入法就是可供选择的对象，每个都单独成项：`omime list` 会显示 `fcitx5/shuangpin`、`fcitx5/pinyin` 等等（它的键盘布局不在其中；直接输入属于 omimed），`omime switch fcitx5/shuangpin`、`Ctrl+Shift+Space` 与托盘菜单都能选中它们。omimed 会向 Fcitx 5 询问它有哪些输入法并记住，因此即使 Fcitx 5 尚未启动，它们也会被列出；Fcitx 5 再次启动时，omimed 会把正在使用的输入法还给它。
 
@@ -160,7 +157,7 @@ omime switch ibus
 
 你在 IBus 中选定的引擎（`ibus-setup`，或 dconf 中的 `preload-engines`）就是可供选择的对象，每个都单独成项，和 Fcitx 5 的一样：`omime switch ibus/libpinyin`、`Ctrl+Shift+Space` 与托盘菜单都能选中它们。没有选定任何引擎时，omimed 会列出 IBus 正在使用的引擎，以及你用 IBus 自己的工具切换到的每一个引擎。
 
-被托管的守护进程把它的地址写到 IBus 工具查找的位置，因此这些工具照常工作：`ibus engine libpinyin` 也能切换，`ibus-setup` 则用来配置引擎，它会启动各引擎自己的设置工具。这些工具在你的会话里运行，把设置保存到 dconf。被托管的 IBus 本身运行在 omimed 的私有会话总线上，那里无法访问 dconf 的服务：它在启动时读取 dconf 中保存的设置，但无法保存自己的更改，工具所做的更改要到它下次启动时才会看到（用 `omime switch` 切到另一个引擎再切回）。请用 omimed 的热键和 `omime switch` 切换；omimed 会在 IBus 看到 `Ctrl+Space` 之前先处理它。
+被托管的守护进程把它的地址写到 IBus 工具查找的位置，因此这些工具照常工作：`ibus engine libpinyin` 也能切换，`ibus-setup` 则用来配置引擎，它会启动各引擎自己的设置工具。这些工具在你的会话里运行，把设置保存到 dconf。被托管的 IBus 本身运行在 omimed 的私有会话总线上，那里无法访问 dconf 的服务：它在启动时读取 dconf 中保存的设置，但无法保存自己的更改。用 `omime settings ibus` 或托盘菜单里的“配置 IBus…”打开 `ibus-setup`，关闭它时 omimed 会重启 IBus，让 IBus 读到你做的更改。请用 omimed 的热键和 `omime switch` 切换；omimed 会在 IBus 看到 `Ctrl+Space` 之前先处理它。
 
 ## 哪些应用可用
 

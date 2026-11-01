@@ -26,6 +26,8 @@ Commands:
   toggle           Switch between direct input and the last engine
   enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
+  settings <ENGINE>
+                   Open the settings of an engine, such as `fcitx5`
   install <DIR>    Install an engine from a directory (`--force` to replace it)
   uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
@@ -49,6 +51,7 @@ trait Daemon {
     fn next(&self) -> zbus::Result<()>;
     fn toggle(&self) -> zbus::Result<()>;
     fn reload(&self) -> zbus::Result<()>;
+    fn open_settings(&self, engine: &str) -> zbus::Result<()>;
 
     /// The compositor, the seats and whether focus is reported; see `doctor`.
     fn diagnose(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
@@ -84,6 +87,7 @@ enum DaemonCommand {
     Enable(String),
     Disable(String),
     Reload,
+    Settings(String),
 }
 
 fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
@@ -115,6 +119,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             ["enable", engine] => DaemonCommand::Enable((*engine).to_owned()),
             ["disable", engine] => DaemonCommand::Disable((*engine).to_owned()),
             ["reload"] => DaemonCommand::Reload,
+            ["settings", engine] => DaemonCommand::Settings((*engine).to_owned()),
             _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
         }),
     }))
@@ -364,6 +369,7 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
         DaemonCommand::Enable(engine) => set_enabled(&daemon, &engine, true).await?,
         DaemonCommand::Disable(engine) => set_enabled(&daemon, &engine, false).await?,
         DaemonCommand::Reload => daemon.reload().await?,
+        DaemonCommand::Settings(engine) => daemon.open_settings(&engine).await?,
     }
     Ok(())
 }

@@ -135,6 +135,15 @@ text cursor whenever your engine is the active one.
   returns once the engine is registered.
 - For an ordinary window that should not be a popup (a settings dialog), connect to the
   display in `$OMIME_HOST_WAYLAND_DISPLAY` instead, e.g. from a separate process.
+- A settings program in the manifest is what `omime settings <id>` and the tray menu
+  open, as an ordinary window on the desktop:
+
+  ```toml
+  [engine.settings]
+  exec = ["my-engine-settings"]   # resolved like `exec`
+  bus = "session"                 # "engine": the private bus of a hosted input method
+  restart = false                 # true: restart the engine when the program closes
+  ```
 
 The [Sparkle](../engines/sparkle) engine shows all of this with Slint.
 
