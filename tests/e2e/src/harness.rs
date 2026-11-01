@@ -209,7 +209,17 @@ impl TestEnv {
         for engine in engines {
             let path = engine_dir.join(engine.id);
             std::fs::create_dir_all(&path)?;
-            let mut exec = vec![engine.program.display().to_string()];
+            let mut exec = Vec::new();
+            // An installed omimed runs without the dev shell's library path, which the
+            // test programs built in it need: they get it back through `env`.
+            if std::env::var_os(INSTALL_DIR_ENV).is_some()
+                && engine.program.starts_with(target_dir())
+                && let Ok(path) = std::env::var("LD_LIBRARY_PATH")
+            {
+                exec.push("env".to_owned());
+                exec.push(format!("LD_LIBRARY_PATH={path}"));
+            }
+            exec.push(engine.program.display().to_string());
             exec.extend(engine.args.iter().cloned());
             let exec: Vec<String> = exec.iter().map(|a| format!("{a:?}")).collect();
             let protocol = if engine.hosted {
