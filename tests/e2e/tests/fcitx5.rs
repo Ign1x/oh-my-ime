@@ -440,17 +440,13 @@ fn input_methods_outside_fcitx5s_group_are_added_when_chosen() -> anyhow::Result
     })?;
     // Shuangpin is installed, but not in the group of the profile: it can be enabled.
     assert!(!list.contains("fcitx5/shuangpin"), "{list}");
-    let all = omime_e2e::harness::wait_until("shuangpin to be offered", || {
+    // Fcitx 5 reports what it has before what it uses.
+    let all = omime_e2e::harness::wait_until("shuangpin offered and pinyin in use", || {
         let all = env.omime(&["list", "--all"]).ok()?;
-        all.lines()
-            .any(|l| l.starts_with("- fcitx5/shuangpin"))
-            .then_some(all)
+        let offered = all.lines().any(|l| l.starts_with("- fcitx5/shuangpin"));
+        let in_use = all.lines().any(|l| l.starts_with("* fcitx5/pinyin"));
+        (offered && in_use).then_some(all)
     })?;
-    // Pinyin is enabled, and in use.
-    assert!(
-        all.lines().any(|l| l.starts_with("* fcitx5/pinyin")),
-        "{all}"
-    );
     assert!(!all.contains("keyboard-"), "{all}");
     // omimed keeps what Fcitx 5 has, to list it before Fcitx 5 runs again.
     let catalog = std::fs::read_to_string(env.dir().join("cache/oh-my-ime/catalog.toml"))?;
