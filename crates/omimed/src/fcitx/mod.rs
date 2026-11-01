@@ -54,10 +54,18 @@ pub enum Request {
     FocusIn(IcId),
     FocusOut(IcId),
     Reset(IcId),
-    /// The text cursor; in X screen coordinates for X11 applications.
+    /// The text cursor; in X screen coordinates for X11 applications, relative to the
+    /// window for Wayland ones. `scale` divides it into logical pixels on Wayland.
     CursorRect {
         ic: IcId,
         rect: Rect,
+        scale: f64,
+    },
+    /// Where the focused window is on the screen, as the compositor says, after a
+    /// Wayland application focused a context.
+    Window {
+        ic: IcId,
+        window: Option<Rect>,
     },
     Capability {
         ic: IcId,
@@ -132,8 +140,15 @@ struct Ic {
     program: Option<String>,
     /// Whether the application runs on X11 (`display` is `x11:`).
     x11: bool,
-    /// The text cursor, for X11 applications.
+    /// Whether the application runs on Wayland (`display` is `wayland:`).
+    wayland: bool,
+    /// The text cursor: in X screen coordinates for X11 applications, relative to the
+    /// window for Wayland ones.
     cursor_rect: Option<Rect>,
+    /// What divides `cursor_rect` into logical pixels, for Wayland applications.
+    cursor_scale: f64,
+    /// Where the focused window was when the application last focused this field.
+    window: Option<Rect>,
     capability: u64,
     focused: bool,
     /// The core's context while the field has focus and is not sensitive.
@@ -211,6 +226,17 @@ impl FcitxFrontend {
             .max_by_key(|(ctx, _)| *ctx)
     }
 
+    /// The most recently focused field of a Wayland application and its text cursor, in
+    /// compositor coordinates, if the application reported one and the compositor said
+    /// where its window is (see [`crate::compositor_ipc`]).
+    pub fn focused_wayland_cursor(&self) -> Option<(ContextId, Option<Rect>)> {
+        self.ics
+            .values()
+            .filter(|ic| ic.wayland)
+            .filter_map(|ic| Some((ic.ctx?, on_screen(ic))))
+            .max_by_key(|(ctx, _)| *ctx)
+    }
+
     pub fn handle(&mut self, request: Request) {
         match request {
             Request::Created {
@@ -235,7 +261,10 @@ impl FcitxFrontend {
                         path,
                         program: arg("program").filter(|p| !p.is_empty()),
                         x11: arg("display").is_some_and(|d| d.starts_with("x11:")),
+                        wayland: arg("display").is_some_and(|d| d.starts_with("wayland:")),
                         cursor_rect: None,
+                        cursor_scale: 1.0,
+                        window: None,
                         capability: 0,
                         focused: false,
                         ctx: None,
@@ -253,9 +282,15 @@ impl FcitxFrontend {
                 self.end_context(ic);
             }
             Request::Reset(ic) => self.updated(ic, true),
-            Request::CursorRect { ic, rect } => {
+            Request::CursorRect { ic, rect, scale } => {
                 if let Some(state) = self.ics.get_mut(&ic) {
                     state.cursor_rect = Some(rect);
+                    state.cursor_scale = scale;
+                }
+            }
+            Request::Window { ic, window } => {
+                if let Some(state) = self.ics.get_mut(&ic) {
+                    state.window = window;
                 }
             }
             Request::Capability { ic, capability } => {
@@ -589,6 +624,25 @@ fn default_keymap() -> Option<xkb::State> {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     xkb::Keymap::new_from_names(&context, "", "", "", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)
         .map(|keymap| xkb::State::new(&keymap))
+}
+
+/// The text cursor of a Wayland application's field on the screen: its window's
+/// position plus the cursor in logical pixels.
+fn on_screen(ic: &Ic) -> Option<Rect> {
+    let (wx, wy, _, _) = ic.window?;
+    let (x, y, width, height) = ic.cursor_rect?;
+    let scale = if ic.cursor_scale > 0.0 {
+        ic.cursor_scale
+    } else {
+        1.0
+    };
+    let logical = |v: i32| (f64::from(v) / scale).round() as i32;
+    Some((
+        wx + logical(x),
+        wy + logical(y),
+        logical(width),
+        logical(height),
+    ))
 }
 
 #[cfg(test)]

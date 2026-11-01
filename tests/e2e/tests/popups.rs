@@ -73,6 +73,32 @@ fn engine_windows_follow_the_text_cursor_of_x11_applications() -> anyhow::Result
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn engine_windows_follow_wayland_applications_using_the_fcitx_module() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[dummy_engine(&ARGS)], Some("dummy"))?;
+    env.wait_for_log("engine window created")?;
+    // Two windows without text-input side by side; the one on the right has focus. Its
+    // application talks to omimed through the Fcitx5 module, with the text cursor
+    // relative to its window, as Wayland applications have it.
+    let _left = env.spawn_editor(&["--no-text-field", "--app-id", "left"])?;
+    env.wait_for_log("focused application changed app=\"left\"")?;
+    let _right = env.spawn_editor(&["--no-text-field", "--app-id", "right"])?;
+    env.wait_for_log("focused application changed app=\"right\"")?;
+    let client = env.fcitx_client(&["--display", "wayland:"])?;
+    client.send("focus-in")?;
+    client.send("cursor 100 200 2 20")?;
+    // sway gives each window half of the 1280 pixels wide output.
+    let (x, y) = below(640 + 100, 200, 20);
+    env.wait_for_pixel(x, y, RED)?;
+
+    // Qt sends the cursor in buffer pixels, with the scale.
+    client.send("cursor2 400 600 4 40 2")?;
+    let (x, y) = below(640 + 200, 300, 20);
+    env.wait_for_pixel(x, y, RED)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_follow_xim_applications() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[dummy_engine(&ARGS)], Some("dummy"))?;
     env.wait_for_log("engine window created")?;

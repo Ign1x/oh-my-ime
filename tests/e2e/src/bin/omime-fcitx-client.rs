@@ -7,7 +7,9 @@
 //!
 //! `--batch` sends keys with `ProcessKeyEventBatch` instead of `ProcessKeyEvent`;
 //! `--display x11:` makes the client an X11 application, whose text cursor (the
-//! `cursor X Y WIDTH HEIGHT` command) is in X screen coordinates.
+//! `cursor X Y WIDTH HEIGHT` command) is in X screen coordinates; with
+//! `--display wayland:` it is relative to the focused window, and `cursor2 X Y WIDTH
+//! HEIGHT SCALE` sends it in buffer pixels (`SetCursorRectV2`), as Qt does.
 
 use std::io::{BufRead as _, Write};
 use std::time::{Duration, Instant};
@@ -191,6 +193,20 @@ async fn command(
             };
             let body = (next()?, next()?, next()?, next()?);
             context_call_with(conn, stream, path, "SetCursorRect", &body).await
+        }
+        "cursor2" => {
+            let mut words = rest.split_whitespace();
+            let mut next = || -> anyhow::Result<&str> {
+                words.next().context("cursor2 needs x y width height scale")
+            };
+            let body: (i32, i32, i32, i32, f64) = (
+                next()?.parse()?,
+                next()?.parse()?,
+                next()?.parse()?,
+                next()?.parse()?,
+                next()?.parse()?,
+            );
+            context_call_with(conn, stream, path, "SetCursorRectV2", &body).await
         }
         "caps" => {
             let capability: u64 = take_word(rest)

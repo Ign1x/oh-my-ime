@@ -52,6 +52,10 @@ All notable changes to this project are documented here. The format follows
   running (`[panel] enabled = false` turns it off), drawn with Slint on a layer surface
   (namespace `omime-switcher`) by the new `omime-overlay` library. Switches from the
   tray menu and those that follow you between applications do not show it.
+- Engine windows open at the text cursor of Wayland applications that use the Fcitx5
+  module (`QT_IM_MODULE=fcitx`, `GTK_IM_MODULE=fcitx`) too, on Hyprland and sway: omimed
+  asks the compositor's IPC where the focused window is. Some applications reach an input
+  method no other way, WeChat for one.
 - X11 applications started with `XMODIFIERS=@im=fcitx` or `@im=ibus`, as setups of those
   input methods leave it, reach omimed too: it answers XIM clients by those names as well,
   unless Fcitx or IBus runs on the display.

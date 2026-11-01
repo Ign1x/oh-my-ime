@@ -181,6 +181,12 @@ know which frontend a key came from.
   a line from 16 pixels above to 6 pixels below the baseline. X11 coordinates are mapped to
   the compositor's by matching XWayland's RandR monitors with the compositor's outputs by
   name (xdg-output), which also handles Hyprland's `xwayland:force_zero_scaling`.
+  Wayland applications using the Fcitx5 modules (`display` is `wayland:`) have no input
+  popup either, and their text cursor is relative to their window: omimed asks the
+  compositor's own IPC where the focused window is (Hyprland's `j/activewindow`, sway's
+  `GET_TREE`) when the field gets focus, and again at most once a second as the cursor
+  moves, and shows the window on a mirror at the window's position plus the cursor
+  (`SetCursorRectV2` divided by its scale).
 
 ## Engine protocol (v1)
 

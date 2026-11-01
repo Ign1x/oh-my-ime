@@ -288,11 +288,14 @@ exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
 If omimed already runs, run `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`
 and restart it once.
 
-Do not set `GTK_IM_MODULE`/`QT_IM_MODULE` for the whole session. A Wayland GTK or Qt
-application with `GTK_IM_MODULE=fcitx` reaches omimed and can type, but omimed cannot
-place engine windows for it: Wayland does not tell clients where their windows are, so the
-candidates stay invisible. With `ibus` it reaches nothing. Set these variables only for
-X11 applications, in a wrapper script or a `.desktop` file:
+Wayland applications type through the compositor's text-input without these variables,
+which is best. Some cannot: WeChat, for one, reaches an input method only through its
+built-in Fcitx5 module. A Wayland application with `QT_IM_MODULE=fcitx` or
+`GTK_IM_MODULE=fcitx` reaches omimed through the Fcitx5 module, and on Hyprland and sway
+omimed asks the compositor where its window is, so engine windows open at its text cursor
+too (elsewhere they cannot be placed, Wayland does not tell clients where their windows
+are). With `ibus` it reaches nothing yet. Prefer setting these variables only for the
+applications that need them, in a wrapper script or a `.desktop` file:
 
 ```sh
 #!/bin/sh
@@ -331,9 +334,9 @@ layerrule = no_anim on, match:namespace omime-popup
   is running; see step 2. omimed keeps retrying and takes over once the seat is free.
 - **An application ignores the input method.** An X11 application needs
   `XMODIFIERS=@im=omime`, or, with the Fcitx5 modules installed,
-  `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`. Do not set the module variables for the
-  whole session: a Wayland application then types through omimed without engine windows
-  (see [X11 applications](#x11-applications)), and `ibus` reaches nothing. `omime doctor`
-  warns about input method variables in the environment.
+  `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`, which also suits Wayland applications that do
+  not use the compositor's text-input, such as WeChat (see
+  [X11 applications](#x11-applications)); `ibus` reaches nothing yet. `omime doctor` warns
+  about input method variables in the environment.
 - **Popups disappear over fullscreen windows, or sit slightly off with some fractional
   scaling setups.** Both are Hyprland limitations that affect every input method.

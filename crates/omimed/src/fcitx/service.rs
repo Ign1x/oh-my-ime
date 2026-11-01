@@ -7,6 +7,7 @@
 use std::hash::{BuildHasher as _, Hasher as _};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use std::pin::pin;
 
@@ -25,6 +26,9 @@ const INPUT_CONTEXT_INTERFACE: &str = "org.fcitx.Fcitx.InputContext1";
 const INPUT_METHOD_PATH: &str = "/org/freedesktop/portal/inputmethod";
 /// Where the portal name also serves it, for older clients.
 const INPUT_METHOD_COMPAT_PATH: &str = "/inputmethod";
+
+/// How long the position of a Wayland application's window is taken as known.
+const WINDOW_MAX_AGE: Duration = Duration::from_secs(1);
 
 /// The names fcitx5 owns, by [`Bus`].
 const BUS_NAMES: [&str; 2] = ["org.fcitx.Fcitx5", "org.freedesktop.portal.Fcitx"];
@@ -185,10 +189,15 @@ impl InputMethodObject {
         let ic = self.next_ic.fetch_add(1, Ordering::Relaxed) + 1;
         let path = OwnedObjectPath::try_from(format!("/org/freedesktop/portal/inputcontext/{ic}"))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let wayland = args
+            .iter()
+            .any(|(key, value)| key == "display" && value.starts_with("wayland:"));
         let object = InputContextObject {
             ic,
             owner: owner.clone(),
             requests: self.requests.clone(),
+            wayland,
+            window_asked: std::sync::Mutex::new(None),
         };
         server.at(&path, object).await?;
         let _ = self.requests.send(Request::Created {
@@ -226,6 +235,11 @@ struct InputContextObject {
     /// The unique bus name of the application; only it may use this context.
     owner: String,
     requests: mpsc::UnboundedSender<Request>,
+    /// Whether the application runs on Wayland, where its text cursor is relative to its
+    /// window, which only the compositor knows the position of.
+    wayland: bool,
+    /// When the compositor was last asked where the window is.
+    window_asked: std::sync::Mutex<Option<Instant>>,
 }
 
 impl InputContextObject {
@@ -240,6 +254,28 @@ impl InputContextObject {
         header
             .sender()
             .is_some_and(|sender| sender.as_str() == self.owner)
+    }
+
+    /// Asks the compositor where the focused window is, for a Wayland application, now
+    /// (`always`) or if it was asked long enough ago: windows move.
+    fn ask_window(&self, always: bool) {
+        if !self.wayland {
+            return;
+        }
+        {
+            let Ok(mut asked) = self.window_asked.lock() else {
+                return;
+            };
+            if !always && asked.is_some_and(|at| at.elapsed() < WINDOW_MAX_AGE) {
+                return;
+            }
+            *asked = Some(Instant::now());
+        }
+        let (ic, requests) = (self.ic, self.requests.clone());
+        tokio::spawn(async move {
+            let window = crate::compositor_ipc::focused_window().await;
+            let _ = requests.send(Request::Window { ic, window });
+        });
     }
 
     async fn key(
@@ -268,7 +304,10 @@ impl InputContextObject {
 #[zbus::interface(name = "org.fcitx.Fcitx.InputContext1")]
 impl InputContextObject {
     fn focus_in(&self, #[zbus(header)] header: Header<'_>) {
-        self.send(&header, Request::FocusIn(self.ic));
+        if self.is_owner(&header) {
+            self.send(&header, Request::FocusIn(self.ic));
+            self.ask_window(true);
+        }
     }
 
     fn focus_out(&self, #[zbus(header)] header: Header<'_>) {
@@ -281,7 +320,18 @@ impl InputContextObject {
 
     fn set_cursor_rect(&self, x: i32, y: i32, w: i32, h: i32, #[zbus(header)] header: Header<'_>) {
         let rect = (x, y, w, h);
-        self.send(&header, Request::CursorRect { ic: self.ic, rect });
+        let scale = 1.0;
+        self.send(
+            &header,
+            Request::CursorRect {
+                ic: self.ic,
+                rect,
+                scale,
+            },
+        );
+        if self.is_owner(&header) {
+            self.ask_window(false);
+        }
     }
 
     #[zbus(name = "SetCursorRectV2")]
@@ -291,11 +341,21 @@ impl InputContextObject {
         y: i32,
         w: i32,
         h: i32,
-        _scale: f64,
+        scale: f64,
         #[zbus(header)] header: Header<'_>,
     ) {
         let rect = (x, y, w, h);
-        self.send(&header, Request::CursorRect { ic: self.ic, rect });
+        self.send(
+            &header,
+            Request::CursorRect {
+                ic: self.ic,
+                rect,
+                scale,
+            },
+        );
+        if self.is_owner(&header) {
+            self.ask_window(false);
+        }
     }
 
     fn set_capability(&self, capability: u64, #[zbus(header)] header: Header<'_>) {

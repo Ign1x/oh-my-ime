@@ -1,6 +1,7 @@
 //! `omimed` — the oh-my-ime daemon.
 
 mod catalog;
+mod compositor_ipc;
 mod control;
 mod core;
 mod daemon;

@@ -200,7 +200,7 @@ exec-once = dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY
 
 如果 omimed 已经在运行，请执行 `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY`，然后重启它一次。
 
-不要为整个会话设置 `GTK_IM_MODULE`/`QT_IM_MODULE`。设置了 `GTK_IM_MODULE=fcitx` 的 Wayland GTK 或 Qt 应用能连到 omimed 并输入文字，但 omimed 无法为它放置引擎窗口：Wayland 不会告诉客户端自己的窗口在哪里，候选词因此始终不可见。设为 `ibus` 则什么都连不到。只在 X11 应用里设置这些变量，例如在包装脚本或 `.desktop` 文件中：
+Wayland 应用不设这些变量也能经由合成器的 text-input 输入，这是最好的方式。但有些应用做不到：比如微信，它只会通过自带的 Fcitx5 模块连接输入法。设置了 `QT_IM_MODULE=fcitx` 或 `GTK_IM_MODULE=fcitx` 的 Wayland 应用会通过 Fcitx5 模块连到 omimed；在 Hyprland 和 sway 上，omimed 会向合成器询问它的窗口位置，因此引擎窗口同样会出现在它的文本光标处（在其他合成器上则无法放置，因为 Wayland 不会告诉客户端自己的窗口在哪里）。设为 `ibus` 目前还连不到。最好只为需要的应用设置这些变量，例如在包装脚本或 `.desktop` 文件中：
 
 ```sh
 #!/bin/sh
@@ -229,5 +229,5 @@ layerrule = no_anim on, match:namespace omime-popup
 - **某些功能不正常。** 先运行 `omime doctor`：它检查守护进程、seat、`config.toml`、已安装的引擎和环境，每个发现输出一行（`✓` 正常、`!` 警告、`✗` 问题）。
 - **打字没有任何反应。** 检查 `omime status`。如果 omimed 没有运行，在终端里用 `OMIME_LOG=debug omimed` 启动它，看它输出什么。
 - **`another input method is active on this seat`。** fcitx5、IBus 或其他输入法正在运行；见第 2 步。omimed 会持续重试，一旦 seat 空闲就接管。
-- **某个应用忽略了输入法。** X11 应用需要 `XMODIFIERS=@im=omime`；或者安装 Fcitx5 模块后，使用 `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`。不要为整个会话设置模块变量：Wayland 应用虽然能经由 omimed 输入，却得不到引擎窗口（见 [X11 应用](#x11-应用)），设为 `ibus` 则什么都连不到。`omime doctor` 会对环境中的输入法变量发出警告。
+- **某个应用忽略了输入法。** X11 应用需要 `XMODIFIERS=@im=omime`；或者安装 Fcitx5 模块后，使用 `GTK_IM_MODULE=fcitx`/`QT_IM_MODULE=fcitx`；后者也适用于不使用合成器 text-input 的 Wayland 应用，例如微信（见 [X11 应用](#x11-应用)）。设为 `ibus` 目前还连不到。`omime doctor` 会对环境中的输入法变量发出警告。
 - **弹窗在全屏窗口上方消失，或在某些分数缩放的配置下位置略有偏移。** 这两者都是 Hyprland 的限制，影响所有输入法。

@@ -454,18 +454,26 @@ impl Daemon {
         Ok(end)
     }
 
-    /// The text cursor of the focused X11 application, in compositor coordinates: of
-    /// the field focused last, through either frontend.
+    /// The text cursor, in compositor coordinates, of the field focused last that has
+    /// no input popup of the compositor: of an X11 application, through either
+    /// frontend, or of a Wayland application using the Fcitx5 module.
     fn x11_cursor(&self, frontend: &Frontend) -> Option<Rect> {
         let xim = self.xim.as_ref();
-        let (_, cursor) = [
-            self.fcitx.focused_x11_cursor(),
-            xim.and_then(XimFrontend::focused_cursor),
+        let x11 = |found: Option<(_, _)>| found.map(|(ctx, cursor)| (ctx, cursor, true));
+        let (_, cursor, in_x11) = [
+            x11(self.fcitx.focused_x11_cursor()),
+            x11(xim.and_then(XimFrontend::focused_cursor)),
+            self.fcitx
+                .focused_wayland_cursor()
+                .map(|(ctx, cursor)| (ctx, cursor, false)),
         ]
         .into_iter()
         .flatten()
-        .max_by_key(|(ctx, _)| *ctx)?;
+        .max_by_key(|(ctx, ..)| *ctx)?;
         let cursor = cursor?;
+        if !in_x11 {
+            return Some(cursor);
+        }
         // XIM's connection describes the X screen's monitors, which map X11 coordinates.
         let x11_monitors = xim.map_or(&[][..], XimFrontend::monitors);
         Some(placement::x11_to_layout(
