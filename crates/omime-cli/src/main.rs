@@ -316,7 +316,7 @@ fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
     if doc.get("engines").is_none() {
         return Ok(());
     }
-    let updated = edit_engines(&text, &[], engine, enable)
+    let updated = edit_engines(&text, &[], engine, enable, &[])
         .with_context(|| format!("cannot update {}", path.display()))?;
     if updated != text {
         std::fs::write(&path, updated)
@@ -374,12 +374,31 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Adds `engine` to or removes it from `engines` in config.toml (keeping the rest of
-/// the file as it is), then asks the daemon to reload.
-async fn set_enabled(daemon: &DaemonProxy<'_>, engine: &str, enable: bool) -> anyhow::Result<()> {
+/// Adds `entry`, an engine or an input method inside one (`fcitx5/rime`), to
+/// `engines` in config.toml or removes it (keeping the rest of the file as it is), then
+/// asks the daemon to reload.
+async fn set_enabled(daemon: &DaemonProxy<'_>, entry: &str, enable: bool) -> anyhow::Result<()> {
     let installed = daemon.list_engines().await?;
+    let (engine, inner) = entry
+        .split_once('/')
+        .map_or((entry, None), |(e, i)| (e, Some(i)));
     if !installed.iter().any(|(id, ..)| id == engine) {
-        bail!("no engine `{engine}` is installed (see `omime list`)");
+        bail!("no engine `{engine}` is installed (see `omime engines`)");
+    }
+    // The input methods inside the engine now, which stay when one of them goes.
+    let prefix = format!("{engine}/");
+    let inside: Vec<String> = daemon
+        .list_input_methods()
+        .await?
+        .into_iter()
+        .map(|(id, ..)| id)
+        .filter(|id| id.starts_with(&prefix))
+        .collect();
+    if enable && inner.is_some() && !inside.iter().any(|id| id == entry) {
+        eprintln!(
+            "note: {engine} does not list `{}` yet; it gets it when you switch to it",
+            inner.unwrap_or_default()
+        );
     }
     let dir =
         omime_proto::paths::config_dir().context("cannot find the configuration directory")?;
@@ -394,7 +413,7 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, engine: &str, enable: bool) -> an
         .filter(|(.., enabled, _)| *enabled)
         .map(|(id, ..)| id.clone())
         .collect();
-    let updated = edit_engines(&text, &enabled_now, engine, enable)
+    let updated = edit_engines(&text, &enabled_now, entry, enable, &inside)
         .with_context(|| format!("cannot update {}", path.display()))?;
     std::fs::create_dir_all(&dir)?;
     std::fs::write(&path, updated).with_context(|| format!("cannot write {}", path.display()))?;
@@ -402,13 +421,17 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, engine: &str, enable: bool) -> an
     Ok(())
 }
 
-/// Returns `config` with `engine` added to or removed from the `engines` list. Without a
-/// list, `enabled_now` (everything installed) is the starting point.
+/// Returns `config` with `entry` (an engine, or an input method inside one) added to or
+/// removed from the `engines` list. Without a list, `enabled_now` (everything enabled)
+/// is the starting point. Removing an input method of an engine listed as a whole
+/// lists the engine's other input methods, `inside`, instead; removing an engine
+/// removes its input methods too.
 fn edit_engines(
     config: &str,
     enabled_now: &[String],
-    engine: &str,
+    entry: &str,
     enable: bool,
+    inside: &[String],
 ) -> anyhow::Result<String> {
     let mut doc: toml_edit::DocumentMut = config.parse()?;
     let mut list: Vec<String> = match doc.get("engines") {
@@ -420,13 +443,26 @@ fn edit_engines(
             .collect(),
         None => enabled_now.to_vec(),
     };
-    if enable {
-        if !list.iter().any(|e| e == engine) {
-            list.push(engine.to_owned());
+    match (enable, entry.split_once('/')) {
+        (true, _) => {
+            if !list.iter().any(|e| e == entry) {
+                list.push(entry.to_owned());
+            }
         }
-    } else {
-        list.retain(|e| e != engine);
+        (false, Some((engine, _))) => {
+            if let Some(at) = list.iter().position(|e| e == engine) {
+                let others = inside.iter().filter(|m| *m != entry).cloned();
+                list.splice(at..=at, others);
+            }
+            list.retain(|e| e != entry);
+        }
+        (false, None) => {
+            let prefix = format!("{entry}/");
+            list.retain(|e| e != entry && !e.starts_with(&prefix));
+        }
     }
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|e| seen.insert(e.clone()));
     let array: toml_edit::Array = list.iter().map(String::as_str).collect();
     doc["engines"] = toml_edit::value(array);
     Ok(doc.to_string())
@@ -533,18 +569,40 @@ mod tests {
     #[test]
     fn editing_engines_keeps_the_rest_of_the_file() {
         let config = "# my settings\nengines = [\"echo\"]\n\n[hotkeys]\nnext = \"Super+space\"\n";
-        let enabled = edit_engines(config, &[], "sparkle", true).unwrap();
+        let enabled = edit_engines(config, &[], "sparkle", true, &[]).unwrap();
         assert!(enabled.starts_with("# my settings\nengines = [\"echo\", \"sparkle\"]"));
         assert!(enabled.contains("next = \"Super+space\""));
-        let disabled = edit_engines(&enabled, &[], "echo", false).unwrap();
+        let disabled = edit_engines(&enabled, &[], "echo", false, &[]).unwrap();
         assert!(disabled.contains("engines = [\"sparkle\"]"));
     }
 
     #[test]
     fn disabling_without_a_list_starts_from_everything_enabled() {
         let all = ["echo".to_owned(), "sparkle".to_owned()];
-        let config = edit_engines("", &all, "echo", false).unwrap();
+        let config = edit_engines("", &all, "echo", false, &[]).unwrap();
         assert_eq!(config.trim(), "engines = [\"sparkle\"]");
+    }
+
+    #[test]
+    fn input_methods_inside_frameworks_are_entries_of_their_own() {
+        let inside = ["fcitx5/shuangpin".to_owned(), "fcitx5/pinyin".to_owned()];
+        let list = |config: &str| config.trim().to_owned();
+        // One more input method of Fcitx 5.
+        let config = "engines = [\"fcitx5\", \"sparkle\"]\n";
+        let config = edit_engines(config, &[], "fcitx5/rime", true, &inside).unwrap();
+        assert_eq!(
+            list(&config),
+            "engines = [\"fcitx5\", \"sparkle\", \"fcitx5/rime\"]"
+        );
+        // Fcitx 5 without pinyin: its other input methods stay, in place.
+        let config = edit_engines(&config, &[], "fcitx5/pinyin", false, &inside).unwrap();
+        assert_eq!(
+            list(&config),
+            "engines = [\"fcitx5/shuangpin\", \"sparkle\", \"fcitx5/rime\"]"
+        );
+        // No Fcitx 5 at all.
+        let config = edit_engines(&config, &[], "fcitx5", false, &inside).unwrap();
+        assert_eq!(list(&config), "engines = [\"sparkle\"]");
     }
 
     #[test]

@@ -183,6 +183,13 @@ not among them; direct input is omimed's), and `omime switch fcitx5/shuangpin`,
 it has and remembers them, so they are listed even before Fcitx 5 starts, and gives
 Fcitx 5 the input method in use back when it starts again.
 
+`omime enable fcitx5` enables everything in Fcitx 5's group. To choose input methods one
+by one, enable them by id instead: `omime enable fcitx5/rime` enables Rime even if it is
+not in Fcitx 5's group (omimed adds it there when you switch to it), and `omime disable
+fcitx5/pinyin` leaves the other input methods of Fcitx 5 enabled. In `config.toml` that
+is a list such as `engines = ["fcitx5/shuangpin", "fcitx5/rime", "sparkle"]`, in
+switching order.
+
 Switch with omimed's hotkeys, `omime switch` and the tray, not with Fcitx 5's trigger
 key: omimed takes `Ctrl+Space` before any engine sees it. Hotkeys that Fcitx 5 handles
 itself, such as `Ctrl+Shift` between its input methods, keep working, and omimed follows

@@ -144,6 +144,8 @@ Fcitx 5 照常把配置保存在 `~/.config/fcitx5`。要修改配置，用 `omi
 
 你在 Fcitx 5 中设置的输入法就是可供选择的对象，每个都单独成项：`omime list` 会显示 `fcitx5/shuangpin`、`fcitx5/pinyin` 等等（它的键盘布局不在其中；直接输入属于 omimed），`omime switch fcitx5/shuangpin`、`Ctrl+Shift+Space` 与托盘菜单都能选中它们。omimed 会向 Fcitx 5 询问它有哪些输入法并记住，因此即使 Fcitx 5 尚未启动，它们也会被列出；Fcitx 5 再次启动时，omimed 会把正在使用的输入法还给它。
 
+`omime enable fcitx5` 启用 Fcitx 5 分组里的全部输入法。要逐个挑选，就按 id 启用：`omime enable fcitx5/rime` 即使 Rime 不在 Fcitx 5 的分组里也能启用它（切换过去时 omimed 会把它加进分组），`omime disable fcitx5/pinyin` 则只禁用拼音，Fcitx 5 的其它输入法仍然启用。写在 `config.toml` 里就是 `engines = ["fcitx5/shuangpin", "fcitx5/rime", "sparkle"]` 这样的列表，顺序即切换顺序。
+
 请用 omimed 的热键、`omime switch` 和托盘切换，而不要用 Fcitx 5 的触发键：omimed 会在任何引擎看到 `Ctrl+Space` 之前先处理它。由 Fcitx 5 自己处理的热键（例如它内部输入法之间的 `Ctrl+Shift`）仍然有效，omimed 也会跟随它们。只显示 Fcitx 5 的弹窗，它的其他窗口无法显示。
 
 ### IBus 作为引擎

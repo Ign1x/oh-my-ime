@@ -2,9 +2,12 @@
 # Run `omime reload` after editing; it says what is wrong if anything is, and omimed
 # keeps the configuration it had then.
 
-# Enabled engines, in switching order. Without this line every installed engine is
-# enabled. `omime enable <id>` and `omime disable <id>` edit it for you.
-# engines = ["sparkle", "echo"]
+# Enabled engines and input methods, in switching order. An engine such as "fcitx5"
+# brings every input method it has; "fcitx5/shuangpin" is one input method inside it,
+# which omimed adds to Fcitx 5's group when you switch to it. Without this line every
+# installed engine is enabled, except Fcitx 5 and IBus, which are only offered.
+# `omime enable <id>` and `omime disable <id>` edit it for you.
+# engines = ["fcitx5/shuangpin", "sparkle", "echo"]
 
 [hotkeys]
 # Switch between direct input and the last used engine. Empty disables it.

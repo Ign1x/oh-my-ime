@@ -254,7 +254,11 @@ both answered by the bridge.
 - **Input methods inside.** Users choose input methods, not frameworks: Fcitx 5's 双拼
   and 拼音 and IBus's libpinyin are choices of their own, with ids `fcitx5/shuangpin`
   and `ibus/libpinyin` wherever an engine id goes (`Switch`, per-application engines,
-  `Ctrl+Shift+Space`, the tray menu). An adapter task runs beside each launch of a
+  `Ctrl+Shift+Space`, the tray menu, the `engines` list of `config.toml`, where an
+  entry `fcitx5` stands for everything in Fcitx 5's group and the engines to run are
+  those the entries name). Fcitx 5 switches only to input methods of its current
+  group, so selecting one that is not in it adds it there first
+  (`SetInputMethodGroupInfo`, which Fcitx 5 saves in its profile). An adapter task runs beside each launch of a
   hosted engine: it finds Fcitx 5 by its name on the private bus, or IBus by the address
   file `omime-ibus` names in `$OMIME_ENGINE_RUNTIME_DIR`, and reports the input methods
   (Fcitx 5's current group; IBus's `preload-engines` from the user's dconf database,

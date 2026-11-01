@@ -209,7 +209,8 @@ impl Framework {
                     None => break,
                     Some(FrameworkCommand::Select(id)) => {
                         self.select(&id).await?;
-                        false
+                        // Selecting may have added it to the list (Fcitx 5's group).
+                        true
                     }
                     Some(FrameworkCommand::Refresh) => false,
                 },
@@ -261,8 +262,12 @@ impl Framework {
     }
 
     async fn select(&self, id: &str) -> zbus::Result<()> {
+        debug!(input_method = id, "selecting in the framework");
         match self {
-            Self::Fcitx5(controller) => controller.call_method("SetCurrentIM", &(id,)).await?,
+            Self::Fcitx5(controller) => {
+                fcitx_add_to_group(controller, id).await?;
+                controller.call_method("SetCurrentIM", &(id,)).await?
+            }
             Self::Ibus(ibus) => ibus.call_method("SetGlobalEngine", &(id,)).await?,
         };
         Ok(())
@@ -280,6 +285,32 @@ fn chinese_locale() -> bool {
         .or_else(|_| std::env::var("LC_MESSAGES"))
         .or_else(|_| std::env::var("LANG"))
         .is_ok_and(|locale| locale.starts_with("zh"))
+}
+
+/// Adds the input method `id` to Fcitx 5's current group, at the end, unless it is in
+/// it: Fcitx 5 only switches to input methods of its current group. Fcitx 5 saves the
+/// group in its profile, as its own configuration tool would.
+async fn fcitx_add_to_group(controller: &zbus::Proxy<'_>, id: &str) -> zbus::Result<()> {
+    let group: String = controller.call("CurrentInputMethodGroup", &()).await?;
+    let (layout, mut items): (String, Vec<(String, String)>) = controller
+        .call("InputMethodGroupInfo", &(group.as_str(),))
+        .await?;
+    if items.iter().any(|(name, _)| name == id) {
+        return Ok(());
+    }
+    info!(
+        group,
+        input_method = id,
+        "adding the input method to Fcitx 5's group"
+    );
+    items.push((id.to_owned(), String::new()));
+    controller
+        .call_method(
+            "SetInputMethodGroupInfo",
+            &(group.as_str(), layout.as_str(), items),
+        )
+        .await?;
+    Ok(())
 }
 
 /// The input methods of Fcitx 5's current group, in its order.

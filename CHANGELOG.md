@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format follows
   input, a middle click switches to the next input method, and its menu switches to any
   input method. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
+- Input methods inside a framework can be enabled one by one: the `engines` list of
+  `config.toml` takes entries such as `fcitx5/shuangpin` next to whole engines, in
+  switching order, and `omime enable fcitx5/rime` and `omime disable fcitx5/pinyin`
+  edit it. Fcitx 5 switches only to input methods of its current group, so selecting
+  one that is not there adds it to the group first, which Fcitx 5 saves.
 - Engines can have settings: `[engine.settings]` in the manifest names a program, which
   `omime settings <engine>`, "Configure …" in the tray menu and the control API's
   `OpenSettings` open as an ordinary window on the desktop, with the engine running.

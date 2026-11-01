@@ -641,6 +641,13 @@ impl EngineManager {
                 changed
             }
             FrameworkUpdate::Current(inner) => {
+                debug!(
+                    engine = id,
+                    now = inner.as_deref().unwrap_or("-"),
+                    wanted = slot.wanted_inner.as_deref().unwrap_or("-"),
+                    retried = slot.wanted_retried,
+                    "the framework's input method in use"
+                );
                 if let (Some(wanted), Some(now)) = (&slot.wanted_inner, &inner) {
                     if wanted == now || slot.wanted_retried {
                         slot.wanted_inner = None;

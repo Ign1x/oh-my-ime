@@ -32,6 +32,7 @@ use crate::frontend::{FrontendEvent, Frontends, HostedEvent, KeyDelivery, KeyRef
 use crate::state::State;
 use crate::wayland::EngineId;
 use engines::{EngineManager, EngineState, HostCall, UiConnection};
+use frameworks::InnerMethod;
 
 /// How long keys wait for a hosted input method to start, or to grab the keyboard
 /// once it was activated, before they pass through.
@@ -275,7 +276,7 @@ impl Core {
         ui_connections: mpsc::UnboundedSender<UiConnection>,
         host_display: Option<String>,
     ) -> Self {
-        let enabled = enabled_engines(config, &installed);
+        let enabled = enabled_entries(config, &installed);
         Self {
             engines: EngineManager::new(installed, events.clone(), ui_connections, host_display),
             enabled,
@@ -319,8 +320,11 @@ impl Core {
                     .iter()
                     .map(|(app, engine)| (app.clone(), engine.clone().unwrap_or_default()))
                     .collect(),
+                // What the user chose, also before the framework took it.
                 inner: slots()
-                    .filter_map(|(id, slot)| Some((id, slot.inner.clone()?)))
+                    .filter_map(|(id, slot)| {
+                        Some((id, slot.wanted_inner.clone().or(slot.inner.clone())?))
+                    })
                     .collect(),
                 methods: slots()
                     .filter(|(_, slot)| !slot.methods.is_empty())
@@ -371,9 +375,21 @@ impl Core {
         }
     }
 
-    /// Whether `id` is installed and enabled.
+    /// Whether the engine `id` is installed and enabled, or input methods inside it are.
     pub fn is_enabled(&self, id: &str) -> bool {
-        self.enabled.iter().any(|e| e == id)
+        self.enabled.iter().any(|e| split_target(e).0 == id)
+    }
+
+    /// The engines to run, in switching order: those the enabled entries name.
+    fn enabled_engines(&self) -> Vec<&str> {
+        let mut engines: Vec<&str> = Vec::new();
+        for entry in &self.enabled {
+            let engine = split_target(entry).0;
+            if !engines.contains(&engine) {
+                engines.push(engine);
+            }
+        }
+        engines
     }
 
     /// Applies a new configuration and set of installed engines.
@@ -383,7 +399,7 @@ impl Core {
         installed: Vec<InstalledEngine>,
         out: &mut dyn Frontends,
     ) {
-        self.enabled = enabled_engines(config, &installed);
+        self.enabled = enabled_entries(config, &installed);
         self.hotkeys = parse_hotkeys(config);
         self.key_timeout = Duration::from_millis(config.engine.key_timeout_ms.max(1));
         self.remember_apps = config.apps.remember;
@@ -438,42 +454,54 @@ impl Core {
         Some(status)
     }
 
-    /// What users choose from: the enabled engines in switching order, each hosted
-    /// framework replaced by the input methods inside it once they are known.
+    /// What users choose from, in switching order: the enabled entries, with an engine
+    /// that is a hosted framework replaced by the input methods inside it once they are
+    /// known, and an entry `engine/inner` standing for that input method alone.
     pub fn input_methods(&self) -> Vec<InputMethod> {
         let locale = std::env::var("LC_ALL")
             .or_else(|_| std::env::var("LC_MESSAGES"))
             .or_else(|_| std::env::var("LANG"))
             .unwrap_or_default();
         let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
-        let mut methods = Vec::new();
-        for id in &self.enabled {
+        let mut methods: Vec<InputMethod> = Vec::new();
+        for entry in &self.enabled {
+            let (id, inner) = split_target(entry);
             let Some(slot) = self.engines.get(id) else {
                 continue;
             };
             let engine_name = slot.installed.manifest.localized_name(&locale).to_owned();
-            if slot.methods.is_empty() {
-                methods.push(InputMethod {
-                    id: id.clone(),
+            let inside = |method: &InnerMethod| InputMethod {
+                id: format!("{id}/{}", method.id),
+                name: method.name.clone(),
+                engine: id.to_owned(),
+                engine_name: engine_name.clone(),
+                icon: text(&method.icon),
+                label: text(&method.label),
+            };
+            match inner {
+                // Named before the framework has listed it, it is still there to choose.
+                Some(inner) => {
+                    let method = slot.methods.iter().find(|m| m.id == inner);
+                    methods.push(inside(method.unwrap_or(&InnerMethod {
+                        id: inner.to_owned(),
+                        name: inner.to_owned(),
+                        ..InnerMethod::default()
+                    })));
+                }
+                None if slot.methods.is_empty() => methods.push(InputMethod {
+                    id: id.to_owned(),
                     name: engine_name.clone(),
-                    engine: id.clone(),
-                    engine_name,
+                    engine: id.to_owned(),
+                    engine_name: engine_name.clone(),
                     icon: slot.installed.manifest.engine.icon.clone(),
                     label: None,
-                });
-                continue;
-            }
-            for method in &slot.methods {
-                methods.push(InputMethod {
-                    id: format!("{id}/{}", method.id),
-                    name: method.name.clone(),
-                    engine: id.clone(),
-                    engine_name: engine_name.clone(),
-                    icon: text(&method.icon),
-                    label: text(&method.label),
-                });
+                }),
+                None => methods.extend(slot.methods.iter().map(inside)),
             }
         }
+        // `fcitx5` and `fcitx5/shuangpin` both name 双拼: the first place counts.
+        let mut seen = HashSet::new();
+        methods.retain(|m| seen.insert(m.id.clone()));
         methods
     }
 
@@ -483,10 +511,16 @@ impl Core {
         let engine = self.current.as_deref()?;
         let slot = self.engines.get(engine)?;
         let inner = slot.wanted_inner.as_ref().or(slot.inner.as_ref());
+        // One the configuration names counts before the framework lists it.
+        let known = |inner: &str| {
+            slot.methods.iter().any(|m| m.id == inner)
+                || self
+                    .enabled
+                    .iter()
+                    .any(|e| split_target(e) == (engine, Some(inner)))
+        };
         Some(match inner {
-            Some(inner) if slot.methods.iter().any(|m| &m.id == inner) => {
-                format!("{engine}/{inner}")
-            }
+            Some(inner) if known(inner) => format!("{engine}/{inner}"),
             _ => engine.to_owned(),
         })
     }
@@ -507,11 +541,12 @@ impl Core {
                 settings: self.engines.has_settings(id),
             })
         };
-        let enabled = self.enabled.iter().filter_map(|id| summary(id, true));
+        let enabled_ids = self.enabled_engines();
+        let enabled = enabled_ids.iter().filter_map(|id| summary(id, true));
         let disabled = self
             .engines
             .ids()
-            .filter(|id| !self.enabled.iter().any(|e| e == id))
+            .filter(|id| !enabled_ids.contains(id))
             .filter_map(|id| summary(id, false));
         enabled.chain(disabled).collect()
     }
@@ -1224,8 +1259,14 @@ impl Core {
                 anyhow::bail!("no engine `{id}` is installed");
             };
             if let Some(inner) = &inner {
+                // One the framework has not listed yet, but the configuration names, is
+                // added to the framework when it is selected.
+                let named = self
+                    .enabled
+                    .iter()
+                    .any(|e| split_target(e) == (id, Some(inner)));
                 anyhow::ensure!(
-                    slot.methods.is_empty() || slot.methods.iter().any(|m| &m.id == inner),
+                    slot.methods.is_empty() || named || slot.methods.iter().any(|m| &m.id == inner),
                     "`{id}` has no input method `{inner}`"
                 );
             }
@@ -1233,6 +1274,7 @@ impl Core {
             self.engines.ensure_started(id, true)?;
             if let Some(inner) = inner {
                 self.engines.select_inner(id, inner);
+                self.state_changed();
                 if target.as_deref() == self.current.as_deref() {
                     self.status_changed();
                 }
@@ -1308,7 +1350,7 @@ impl Core {
         let target = self
             .last_engine
             .clone()
-            .filter(|e| self.enabled.contains(e))
+            .filter(|e| self.is_enabled(split_target(e).0))
             .or_else(|| self.enabled.first().cloned());
         match target {
             Some(engine) => self.switch_to(Some(engine), out),
@@ -1374,19 +1416,20 @@ impl Core {
     }
 }
 
-/// The enabled engines in switching order: the configured list (minus what is not
-/// installed) or every installed engine.
-/// The engines `config` enables, in switching order. Without a list, every installed
-/// engine that is enabled by default: engines of other frameworks are only offered.
-fn enabled_engines(config: &Config, installed: &[InstalledEngine]) -> Vec<String> {
-    let ids: Vec<String> = installed.iter().map(|e| e.id().to_owned()).collect();
+/// What `config` enables, in switching order: engines (`fcitx5`: all its input
+/// methods) and input methods inside them (`fcitx5/shuangpin`). Entries of engines
+/// that are not installed are left out. Without a list, every installed engine that is
+/// enabled by default: engines of other frameworks are only offered.
+fn enabled_entries(config: &Config, installed: &[InstalledEngine]) -> Vec<String> {
+    let ids: Vec<&str> = installed.iter().map(InstalledEngine::id).collect();
     match &config.engines {
         Some(list) => list
             .iter()
-            .filter(|id| {
-                let known = ids.contains(id);
+            .filter(|entry| {
+                let engine = split_target(entry).0;
+                let known = ids.contains(&engine);
                 if !known {
-                    warn!(engine = id.as_str(), "configured engine is not installed");
+                    warn!(engine, "configured engine is not installed");
                 }
                 known
             })

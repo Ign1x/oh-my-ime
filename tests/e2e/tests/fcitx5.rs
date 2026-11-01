@@ -5,6 +5,8 @@
 //! Fcitx5 is not installed. See `typing.rs` for how to run them.
 
 use std::path::PathBuf;
+
+use anyhow::Context as _;
 use std::time::{Duration, Instant};
 
 use omime_e2e::harness::{TIMEOUT, TestEngine, TestEnv};
@@ -418,5 +420,43 @@ fn the_input_methods_inside_fcitx5_are_chosen_directly() -> anyhow::Result<()> {
     env.restart_daemon()?;
     wait_for_method(&env, "fcitx5/pinyin")?;
     env.wait_for_status_starting("fcitx5/shuangpin")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn input_methods_outside_fcitx5s_group_are_added_when_chosen() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    start_pinyin(&env)?;
+    let _editor = env.editor(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    let list = omime_e2e::harness::wait_until("pinyin in omime list", || {
+        let list = env.omime(&["list"]).ok()?;
+        list.contains("fcitx5/pinyin").then_some(list)
+    })?;
+    // Shuangpin is installed, but not in the group of the profile.
+    assert!(!list.contains("fcitx5/shuangpin"), "{list}");
+    env.omime(&["enable", "fcitx5/shuangpin"])?;
+    let list = env.omime(&["list"])?;
+    assert!(list.contains("fcitx5/shuangpin"), "{list}");
+
+    env.omime(&["switch", "fcitx5/shuangpin"])?;
+    // Fcitx 5 got it in its group, saved it, and uses it.
+    let profile = env.dir().join("config/fcitx5/profile");
+    omime_e2e::harness::wait_until("shuangpin in Fcitx 5's profile", || {
+        let text = std::fs::read_to_string(&profile).ok()?;
+        text.contains("Name=shuangpin").then_some(())
+    })?;
+    omime_e2e::harness::wait_until("shuangpin in use", || {
+        let list = env.omime(&["list"]).ok()?;
+        list.lines()
+            .any(|l| l.starts_with('*') && l.contains("fcitx5/shuangpin"))
+            .then_some(())
+    })
+    .with_context(|| format!("omime list says {:?}", env.omime(&["list"])))?;
     Ok(())
 }
