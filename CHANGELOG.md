@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format follows
   input, a middle click switches to the next input method, and its menu switches to any
   input method. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
+- Engines learn whether an application shows the preedit itself (`client-preedit` in
+  the context, `ContextInfo::client_preedit` in the SDK): xterm and other XIM
+  applications that leave drawing it to the input method do not, so an engine with a
+  window shows it there. The context also says how the application reaches omimed
+  (`frontend`: `wayland`, `xim` or `fcitx`).
 - Engines stop with omimed even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted
   input methods get SIGTERM and a moment to save their state before SIGKILL.
 - What engines print goes into omimed's log line by line, under the target `engine`

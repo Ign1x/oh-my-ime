@@ -22,6 +22,8 @@
 //! key.
 //!
 //! `--spot X,Y` tells the server where the window draws text (0,0 by default).
+//! `--position` asks for the over-the-spot style (PREEDIT_POSITION), as xterm does,
+//! instead of drawing the preedit itself.
 
 use std::io::Write as _;
 
@@ -54,24 +56,32 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-/// Where the text is drawn in the window (`--spot X,Y`): the start of its baseline.
-fn spot() -> anyhow::Result<Point> {
+/// The command line: where the text is drawn in the window (`--spot X,Y`, the start of
+/// its baseline), and whether the input method draws the preedit (`--position`).
+fn options() -> anyhow::Result<(Point, bool)> {
+    const USAGE: &str = "usage: omime-xim-client [--spot X,Y] [--position]";
+    let mut spot = Point { x: 0, y: 0 };
+    let mut position = false;
     let mut args = std::env::args().skip(1);
-    match (args.next().as_deref(), args.next()) {
-        (None, _) => Ok(Point { x: 0, y: 0 }),
-        (Some("--spot"), Some(value)) => {
-            let (x, y) = value.split_once(',').context("--spot X,Y")?;
-            Ok(Point {
-                x: x.parse()?,
-                y: y.parse()?,
-            })
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--spot" => {
+                let value = args.next().context(USAGE)?;
+                let (x, y) = value.split_once(',').context("--spot X,Y")?;
+                spot = Point {
+                    x: x.parse()?,
+                    y: y.parse()?,
+                };
+            }
+            "--position" => position = true,
+            _ => anyhow::bail!(USAGE),
         }
-        _ => anyhow::bail!("usage: omime-xim-client [--spot X,Y]"),
     }
+    Ok((spot, position))
 }
 
 fn run() -> anyhow::Result<()> {
-    let spot = spot()?;
+    let (spot, position) = options()?;
     let (conn, screen_num) =
         RustConnection::connect(None).context("cannot connect to the X server")?;
     let screen = conn.setup().roots[screen_num].clone();
@@ -121,6 +131,7 @@ fn run() -> anyhow::Result<()> {
     let mut handler = Handler {
         window,
         spot,
+        position,
         input_method_id: None,
         input_context_id: None,
         document: String::new(),
@@ -226,6 +237,8 @@ impl Keymap {
 struct Handler {
     window: u32,
     spot: Point,
+    /// Whether the input method draws the preedit (PREEDIT_POSITION).
+    position: bool,
     input_method_id: Option<u16>,
     input_context_id: Option<u16>,
     /// What the application has typed and committed so far.
@@ -312,12 +325,17 @@ impl<C: Client<XEvent = KeyPressEvent> + ClientCore> ClientHandler<C> for Handle
         input_method_id: u16,
         _attributes: AHashMap<AttributeName, Vec<u8>>,
     ) -> Result<(), ClientError> {
-        // The application draws the preedit; it needs no status area.
+        // The application draws the preedit, unless `--position`; it needs no status area.
+        let preedit = if self.position {
+            InputStyle::PREEDIT_POSITION
+        } else {
+            InputStyle::PREEDIT_CALLBACKS
+        };
         let attributes = client
             .build_ic_attributes()
             .push(
                 AttributeName::InputStyle,
-                InputStyle::PREEDIT_CALLBACKS | InputStyle::STATUS_NOTHING,
+                preedit | InputStyle::STATUS_NOTHING,
             )
             .push(AttributeName::ClientWindow, self.window)
             .push(AttributeName::FocusWindow, self.window)

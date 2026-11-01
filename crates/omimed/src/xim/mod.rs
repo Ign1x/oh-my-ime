@@ -91,6 +91,19 @@ struct Ic {
     spot: Option<(i32, i32)>,
 }
 
+impl Ic {
+    /// What the core and engines learn about the field.
+    fn info(&self) -> ContextInfo {
+        ContextInfo {
+            frontend: Some("xim".into()),
+            // Applications of the other input styles leave drawing it to the input
+            // method.
+            client_preedit: self.preedit_callbacks,
+            ..ContextInfo::default()
+        }
+    }
+}
+
 /// A key the engine has not answered yet.
 #[derive(Debug)]
 struct Pending {
@@ -137,7 +150,7 @@ impl Handler {
         self.events.push_back(FrontendEvent::Activated {
             origin: Origin::Xim,
             ctx,
-            info: ContextInfo::default(),
+            info: ic.info(),
         });
     }
 
@@ -250,7 +263,7 @@ impl ServerHandler<Server> for Handler {
             if let Some(ctx) = ic.ctx {
                 self.events.push_back(FrontendEvent::Updated {
                     ctx,
-                    info: ContextInfo::default(),
+                    info: ic.info(),
                     reset: true,
                 });
             }

@@ -62,6 +62,10 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
 - `activate`, `deactivate`, `update` and `reset` tell you about focus and the field
   (`ctx.info()` has its content type, the surrounding text and, while your window is
   shown, the cursor rectangle). Password and PIN fields never reach engines.
+- Some applications do not show the preedit (xterm and other XIM applications that
+  leave drawing it to the input method): `ctx.info().client_preedit` is `false` then,
+  and an engine with a window shows what is being composed there. `frontend` says how
+  the application reaches omimed (`wayland`, `xim`, `fcitx`).
 
 ## Installing it
 

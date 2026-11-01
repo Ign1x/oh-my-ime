@@ -257,6 +257,9 @@ impl SeatSession {
                 .as_ref()
                 .map(|s| (s.text.clone(), s.cursor, s.anchor)),
             cursor_rect: None,
+            frontend: Some("wayland".into()),
+            // text-input-v3 applications show the preedit.
+            client_preedit: true,
         }
     }
 

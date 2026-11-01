@@ -8,6 +8,8 @@ use omime_proto::{ContentHints, ContentPurpose, ContentType};
 
 /// `fcitx::CapabilityFlag` bits this frontend reads.
 pub mod capability {
+    /// The application shows the preedit.
+    pub const PREEDIT: u64 = 1 << 1;
     pub const PASSWORD: u64 = 1 << 3;
     pub const EMAIL: u64 = 1 << 7;
     pub const DIGIT: u64 = 1 << 8;

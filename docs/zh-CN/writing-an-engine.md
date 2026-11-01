@@ -50,6 +50,7 @@ fn main() -> Result<(), omime_sdk::Error> {
 - 文本的偏移与长度以 UTF-8 字节计，与 Wayland 的 text-input 协议一致。`Preedit::with_cursor_at_end` 会替你计算。
 - 尽快回复。200 ms（可配置）之后，按键会被交给应用，迟到的回复被丢弃，随后执行 `reset`。
 - `activate`、`deactivate`、`update` 和 `reset` 告知你焦点与字段的情况（`ctx.info()` 包含内容类型、光标周围文本，以及窗口显示期间的光标矩形）。密码和 PIN 字段永远不会到达引擎。
+- 有些应用不显示预编辑（xterm 等把绘制预编辑交给输入法的 XIM 应用）：这时 `ctx.info().client_preedit` 为 `false`，有窗口的引擎应在自己的窗口里显示正在组字的内容。`frontend` 说明应用经由哪条路径到达 omimed（`wayland`、`xim`、`fcitx`）。
 
 ## 安装引擎
 

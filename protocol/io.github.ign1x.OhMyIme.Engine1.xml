@@ -30,6 +30,13 @@
     surrounding-cursor  u     cursor, bytes into surrounding-text
     surrounding-anchor  u     selection anchor, bytes into surrounding-text
     cursor-rect         (iiii) text cursor relative to the engine's popup window
+    frontend            s     how the application reaches the daemon: "wayland"
+                              (text-input), "xim" or "fcitx" (the Fcitx5 GTK/Qt
+                              modules); since 0.4
+    client-preedit      b     whether the application shows the preedit; when false
+                              (xterm and other XIM applications that leave drawing it
+                              to the input method) an engine with a window shows it
+                              there; true when absent; since 0.4
 -->
 <node>
   <interface name="io.github.ign1x.OhMyIme.Engine1">

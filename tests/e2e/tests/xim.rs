@@ -7,7 +7,7 @@
 //! cargo build --workspace && cargo test -p omime-e2e --test xim -- --ignored
 //! ```
 
-use omime_e2e::harness::{TestEnv, echo_engine};
+use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine};
 use omime_e2e::json_string;
 
 /// The line the client prints for `prefix` and `text`.
@@ -92,5 +92,18 @@ fn xim_survives_a_client_restart() -> anyhow::Result<()> {
     let second = env.xim_client(&[])?;
     env.type_on_seat("seat0", "cd ")?;
     second.wait_for_text("CD ")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn engines_learn_whether_xim_applications_show_the_preedit() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[dummy_engine(&[])], Some("dummy"))?;
+    // Like xterm: the input method is to draw the preedit.
+    let _xterm = env.xim_client(&["--position"])?;
+    env.wait_for_log("activate frontend=xim client-preedit=false")?;
+    // The client drawing its own preedit takes the focus.
+    let _drawing = env.xim_client(&[])?;
+    env.wait_for_log("activate frontend=xim client-preedit=true")?;
     Ok(())
 }

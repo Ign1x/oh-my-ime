@@ -570,6 +570,8 @@ fn info(state: &Ic) -> ContextInfo {
             )
         }),
         cursor_rect: None,
+        frontend: Some("fcitx".into()),
+        client_preedit: state.capability & convert::capability::PREEDIT != 0,
     }
 }
 

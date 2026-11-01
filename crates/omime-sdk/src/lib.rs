@@ -563,6 +563,8 @@ mod tests {
                 },
                 surrounding: Some(("中文 text".into(), 7, 7)),
                 cursor_rect: Some((10, -20, 2, 18) as Rect),
+                frontend: Some("wayland".into()),
+                client_preedit: true,
             };
             let actions = engine.activate(7, &info.to_dict()).await.unwrap();
             assert!(actions.is_empty());

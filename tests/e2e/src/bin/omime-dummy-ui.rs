@@ -43,6 +43,13 @@ struct PassThrough {
 
 impl omime_sdk::Engine for PassThrough {
     fn activate(&mut self, ctx: &mut omime_sdk::Context<'_>) {
+        // Into omimed's log, for tests to read.
+        let info = ctx.info();
+        println!(
+            "activate frontend={} client-preedit={}",
+            info.frontend.as_deref().unwrap_or("?"),
+            info.client_preedit
+        );
         if self.show {
             ctx.host().set_popup_visible(true);
         }

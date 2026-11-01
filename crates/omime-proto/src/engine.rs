@@ -182,7 +182,7 @@ pub type Rect = (i32, i32, i32, i32);
 ///
 /// Sent in full with `Activate` and as changes with `UpdateContext`; keys that are
 /// absent from an update keep their value.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextInfo {
     /// Application identifier (Wayland app id or X11 class), when known.
     pub app_id: Option<String>,
@@ -191,6 +191,26 @@ pub struct ContextInfo {
     pub surrounding: Option<(String, u32, u32)>,
     /// The text cursor relative to the engine's popup window, when it is shown.
     pub cursor_rect: Option<Rect>,
+    /// How the application reaches omimed: `wayland` (text-input), `xim` or `fcitx`
+    /// (the Fcitx5 GTK/Qt modules); `None` from daemons that do not say.
+    pub frontend: Option<String>,
+    /// Whether the application shows the preedit itself. Some do not (xterm and other
+    /// XIM applications that leave drawing it to the input method): an engine with a
+    /// window shows what is being composed there instead.
+    pub client_preedit: bool,
+}
+
+impl Default for ContextInfo {
+    fn default() -> Self {
+        Self {
+            app_id: None,
+            content_type: ContentType::default(),
+            surrounding: None,
+            cursor_rect: None,
+            frontend: None,
+            client_preedit: true,
+        }
+    }
 }
 
 mod key {
@@ -201,6 +221,8 @@ mod key {
     pub const SURROUNDING_CURSOR: &str = "surrounding-cursor";
     pub const SURROUNDING_ANCHOR: &str = "surrounding-anchor";
     pub const CURSOR_RECT: &str = "cursor-rect";
+    pub const FRONTEND: &str = "frontend";
+    pub const CLIENT_PREEDIT: &str = "client-preedit";
 }
 
 impl ContextInfo {
@@ -235,6 +257,16 @@ impl ContextInfo {
         if let Some(rect) = self.cursor_rect {
             dict.insert(key::CURSOR_RECT.into(), owned(Variant::from(rect)));
         }
+        if let Some(frontend) = &self.frontend {
+            dict.insert(
+                key::FRONTEND.into(),
+                owned(Variant::from(frontend.as_str())),
+            );
+        }
+        dict.insert(
+            key::CLIENT_PREEDIT.into(),
+            owned(Variant::from(self.client_preedit)),
+        );
         dict
     }
 
@@ -262,6 +294,12 @@ impl ContextInfo {
         if let Some(rect) = get::<Rect>(dict, key::CURSOR_RECT) {
             self.cursor_rect = Some(rect);
         }
+        if let Some(frontend) = get::<String>(dict, key::FRONTEND) {
+            self.frontend = Some(frontend);
+        }
+        if let Some(shown) = get::<bool>(dict, key::CLIENT_PREEDIT) {
+            self.client_preedit = shown;
+        }
     }
 
     /// Decodes a full context description.
@@ -288,6 +326,12 @@ impl ContextInfo {
         }
         if self.cursor_rect == old.cursor_rect {
             dict.remove(key::CURSOR_RECT);
+        }
+        if self.frontend == old.frontend {
+            dict.remove(key::FRONTEND);
+        }
+        if self.client_preedit == old.client_preedit {
+            dict.remove(key::CLIENT_PREEDIT);
         }
         dict
     }
@@ -374,8 +418,12 @@ mod tests {
             },
             surrounding: Some(("hello".into(), 5, 5)),
             cursor_rect: Some((0, -13, 6, 13)),
+            frontend: Some("xim".into()),
+            client_preedit: false,
         };
         assert_eq!(ContextInfo::from_dict(&info.to_dict()), info);
+        // Daemons that do not say have applications show the preedit.
+        assert!(ContextInfo::from_dict(&Dict::new()).client_preedit);
 
         let mut moved = info.clone();
         moved.cursor_rect = Some((10, -13, 6, 13));
