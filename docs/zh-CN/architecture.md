@@ -79,6 +79,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - `io.github.ign1x.OhMyIme.EngineHost1` 由守护进程在 `/io/github/ign1x/OhMyIme` 导出。它包含 `Register`、带外操作（例如在鼠标点击候选词之后上屏）、`SetPopupVisible`、`SetStatus` 和 `RequestSwitch`。除 `Register` 外，一切都是发后即忘。
 - 按键事件默认 200 ms 超时。超时后按键被转发给应用，迟到的回复被丢弃，随后发送 `Reset`。
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
+- 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。
 - 协议按接口名区分版本（主版本号），并在 `Register` 时协商（次版本号）。可扩展参数使用 `a{sv}`，未知键被忽略。`protocol/` 中的 XML 是权威来源。
 
 ## 被托管的输入法

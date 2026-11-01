@@ -60,6 +60,8 @@ pub enum CoreEvent {
     Registered {
         engine: String,
         conn: zbus::Connection,
+        /// The minor engine protocol version it speaks.
+        api_minor: u16,
     },
     Exited {
         engine: String,
@@ -927,8 +929,12 @@ impl Core {
 
     pub async fn on_event(&mut self, event: CoreEvent, out: &mut dyn Frontends) {
         match event {
-            CoreEvent::Registered { engine, conn } => {
-                if let Err(e) = self.engines.registered(&engine, conn).await {
+            CoreEvent::Registered {
+                engine,
+                conn,
+                api_minor,
+            } => {
+                if let Err(e) = self.engines.registered(&engine, conn, api_minor).await {
                     warn!(engine, "cannot talk to the engine: {e}");
                     return;
                 }
@@ -1032,6 +1038,43 @@ impl Core {
                 let target = (!target.is_empty()).then_some(target);
                 if let Err(e) = self.switch_to(target, out) {
                     warn!(engine, "switch requested by engine failed: {e:#}");
+                }
+            }
+            HostCall::SetInputMethods(methods, current) => {
+                let methods = methods
+                    .into_iter()
+                    .filter(|m| !m.id.contains('/'))
+                    .map(|m| InnerMethod {
+                        id: m.id,
+                        name: m.name,
+                        icon: m.icon.unwrap_or_default(),
+                        label: m.label.unwrap_or_default(),
+                        language: m.language.unwrap_or_default(),
+                    })
+                    .collect();
+                let listed = self
+                    .engines
+                    .native_update(engine, frameworks::FrameworkUpdate::Methods(methods));
+                let current = (!current.is_empty()).then_some(current);
+                let used = self
+                    .engines
+                    .native_update(engine, frameworks::FrameworkUpdate::Current(current));
+                if listed || used {
+                    self.state_changed();
+                    self.status_changed();
+                }
+                if listed {
+                    self.lists_changed();
+                }
+            }
+            HostCall::SetCurrentInputMethod(id) => {
+                let current = (!id.is_empty()).then_some(id);
+                if self
+                    .engines
+                    .native_update(engine, frameworks::FrameworkUpdate::Current(current))
+                {
+                    self.state_changed();
+                    self.status_changed();
                 }
             }
         }

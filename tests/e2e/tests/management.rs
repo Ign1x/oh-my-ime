@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TIMEOUT, TestEnv, echo_engine, program_dir, sparkle_engine};
+use omime_e2e::harness::{
+    TIMEOUT, TestEnv, dummy_engine, echo_engine, program_dir, sparkle_engine,
+};
 
 /// A running `omime status --watch --json`, with its lines read in the background.
 struct StatusWatch {
@@ -297,5 +299,39 @@ fn options_are_set_through_omimed_keeping_the_file() -> anyhow::Result<()> {
     }
     let unchanged = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
     assert_eq!(unchanged, file);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn engines_with_input_methods_of_their_own_list_and_switch_them() -> anyhow::Result<()> {
+    let mut env = TestEnv::start(
+        &[dummy_engine(&["--hidden", "--input-methods", "alpha,beta"])],
+        Some("dummy"),
+    )?;
+    let list = omime_e2e::harness::wait_until("the engine's input methods", || {
+        let list = env.omime(&["list"]).ok()?;
+        list.contains("dummy/beta").then_some(list)
+    })?;
+    assert!(
+        list.contains("dummy/alpha") && list.contains("ALPHA"),
+        "{list}"
+    );
+    env.wait_for_status_starting("dummy/alpha")?;
+
+    env.omime(&["switch", "dummy/beta"])?;
+    env.wait_for_log("engine: selected beta")?;
+    env.wait_for_status_starting("dummy/beta")?;
+    // The next one wraps around to the first.
+    env.omime(&["next"])?;
+    env.wait_for_log("engine: selected alpha")?;
+    env.wait_for_status_starting("dummy/alpha")?;
+
+    // A restarted engine gets back the input method in use.
+    env.omime(&["switch", "dummy/beta"])?;
+    env.wait_for_status_starting("dummy/beta")?;
+    env.restart_daemon()?;
+    env.wait_for_log("engine: selected beta")?;
+    env.wait_for_status_starting("dummy/beta")?;
     Ok(())
 }

@@ -197,6 +197,12 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
 - Key events time out after 200 ms by default. On timeout the key is forwarded to the
   application, and a late reply is discarded and followed by `Reset`.
 - Engines must not hide their toolkit windows. They ask the platform with `SetPopupVisible`.
+- Version 1.1 lets an engine have input methods of its own, such as the schemas of a
+  Rime engine: it announces them with `SetInputMethods` and the one in use with
+  `SetCurrentInputMethod`, users choose them as `engine/id` like the input methods
+  inside hosted frameworks, and the daemon asks for one with `SelectInputMethod`. The
+  core treats them like a framework's: the choice is kept across restarts and given
+  back to the engine when it registers.
 - The protocol is versioned by interface name (major) and negotiated at `Register` (minor).
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.

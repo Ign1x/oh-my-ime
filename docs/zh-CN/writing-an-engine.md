@@ -111,13 +111,38 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 
 [Sparkle](../../engines/sparkle) 引擎用 Slint 展示了以上全部内容。
 
+## 多个输入法
+
+引擎可以拥有自己的多个输入法，就像 Rime 引擎有多个方案。在 `registered` 中公布它们以及正在使用的那个：它先于其它任何调用运行，因此公布的内容是最新的。之后用户就能以 `engine/id` 选择它们（`omime switch my-engine/fast`、托盘菜单、`Ctrl+Shift+Space`、config.toml 的 `engines`），omimed 会请求你的引擎切换：
+
+```rust
+impl omime_sdk::Engine for MyEngine {
+    fn registered(&mut self, host: &omime_sdk::Host) {
+        let fast = omime_sdk::InputMethodInfo {
+            id: "fast".into(),
+            name: "Fast".into(),
+            ..Default::default()
+        };
+        host.set_input_methods(&[fast], self.mode.as_str());
+    }
+
+    fn select_input_method(&mut self, host: &omime_sdk::Host, id: &str) {
+        self.mode = id.to_owned();
+        host.set_current_input_method(id);
+    }
+    // ...
+}
+```
+
+引擎自己切换时，也要调用 `set_current_input_method`。omimed 会跨重启保留用户的选择，并在引擎启动时交还给它。
+
 ## 其他语言
 
 引擎协议是点对点 D-Bus，规范见 [`protocol/io.github.ign1x.OhMyIme.Engine1.xml`](../../protocol/io.github.ign1x.OhMyIme.Engine1.xml)。一个引擎需要：
 
 1. 以点对点连接的方式连到 `$OMIME_ENGINE_ADDRESS` 中的地址，
 2. 在 `/io/github/ign1x/OhMyIme/Engine` 导出 `io.github.ign1x.OhMyIme.Engine1`，
-3. 在 `/io/github/ign1x/OhMyIme`（`io.github.ign1x.OhMyIme.EngineHost1`）上调用 `Register($OMIME_ENGINE_ID, 1, 0, {})`，
+3. 在 `/io/github/ign1x/OhMyIme`（`io.github.ign1x.OhMyIme.EngineHost1`）上调用 `Register($OMIME_ENGINE_ID, 1, 1, {})`；没有自己多个输入法的引擎用次版本号 0 也可以，
 4. 应答调用，直到连接关闭或收到 `Shutdown`。
 
 GLib（`g_dbus_connection_new_for_address`）、Qt（`QDBusConnection::connectToPeer`）、sd-bus 和 zbus 都支持点对点连接。

@@ -32,16 +32,34 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 const USAGE: &str = "\
 Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]
-                      [--misbehave-once FILE] [--slow-ms N] [--hidden]";
+                      [--misbehave-once FILE] [--slow-ms N] [--hidden]
+                      [--input-methods ID,ID...]";
 
 /// An engine that consumes nothing, optionally slowly.
 struct PassThrough {
     slow: Duration,
     /// Whether to ask for the window to be shown.
     show: bool,
+    /// Input methods of its own, as a Rime engine has schemas.
+    input_methods: Vec<omime_sdk::InputMethodInfo>,
+    /// The one in use.
+    current: String,
 }
 
 impl omime_sdk::Engine for PassThrough {
+    fn registered(&mut self, host: &omime_sdk::Host) {
+        if !self.input_methods.is_empty() {
+            host.set_input_methods(&self.input_methods, self.current.as_str());
+        }
+    }
+
+    fn select_input_method(&mut self, host: &omime_sdk::Host, id: &str) {
+        // Into omimed's log, for tests to read.
+        println!("selected {id}");
+        self.current = id.to_owned();
+        host.set_current_input_method(id);
+    }
+
     fn activate(&mut self, ctx: &mut omime_sdk::Context<'_>) {
         // Into omimed's log, for tests to read.
         let info = ctx.info();
@@ -283,6 +301,8 @@ fn main() -> anyhow::Result<()> {
     let mut once: Option<std::path::PathBuf> = None;
     let mut slow = Duration::ZERO;
     let mut show = true;
+    // Input methods of its own, as a Rime engine has schemas; the first is in use.
+    let mut input_methods: Vec<omime_sdk::InputMethodInfo> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -303,6 +323,16 @@ fn main() -> anyhow::Result<()> {
             "--misbehave-once" => once = Some(value()?.into()),
             "--slow-ms" => slow = Duration::from_millis(value()?.parse()?),
             "--hidden" => show = false,
+            "--input-methods" => {
+                input_methods = value()?
+                    .split(',')
+                    .map(|id| omime_sdk::InputMethodInfo {
+                        id: id.to_owned(),
+                        name: id.to_uppercase(),
+                        ..omime_sdk::InputMethodInfo::default()
+                    })
+                    .collect();
+            }
             _ => bail!("{USAGE}"),
         }
     }
@@ -315,7 +345,16 @@ fn main() -> anyhow::Result<()> {
     }
     // Keep the engine connection alive for as long as the window exists.
     let _engine = if std::env::var_os(omime_sdk::ENGINE_ADDRESS_ENV).is_some() {
-        Some(omime_sdk::spawn(PassThrough { slow, show })?)
+        let current = input_methods
+            .first()
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        Some(omime_sdk::spawn(PassThrough {
+            slow,
+            show,
+            input_methods,
+            current,
+        })?)
     } else {
         None
     };

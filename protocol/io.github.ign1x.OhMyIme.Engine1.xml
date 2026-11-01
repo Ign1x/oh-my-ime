@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  oh-my-ime engine protocol, version 1.
+  oh-my-ime engine protocol, version 1.1.
+
+  Version 1.1 adds input methods of an engine's own (SetInputMethods,
+  SetCurrentInputMethod, SelectInputMethod). The daemon calls SelectInputMethod only on
+  engines that registered with minor version 1 or later.
 
   Each engine process talks to the daemon over its own peer-to-peer D-Bus connection.
   The address is passed in the OMIME_ENGINE_ADDRESS environment variable, and the
@@ -93,6 +97,14 @@
 
     <!-- The daemon asks the engine to exit. -->
     <method name="Shutdown"/>
+
+    <!--
+      Since 1.1. The user chose one of the input methods the engine announced with
+      SetInputMethods. Switch to it and confirm with SetCurrentInputMethod.
+    -->
+    <method name="SelectInputMethod">
+      <arg name="id" type="s" direction="in"/>
+    </method>
   </interface>
 
   <interface name="io.github.ign1x.OhMyIme.EngineHost1">
@@ -150,6 +162,24 @@
     <!-- Ask the daemon to switch to another engine; "" selects direct input. -->
     <method name="RequestSwitch">
       <arg name="engine" type="s" direction="in"/>
+    </method>
+
+    <!--
+      Since 1.1. The engine has input methods of its own, such as the schemas of a
+      Rime engine, which users choose like the input methods inside hosted frameworks
+      (`engine/id` in Switch, the tray menu and config.toml). Each entry: "id" (s,
+      [A-Za-z0-9._-]), "name", "icon", "label" (s, a short label such as 双),
+      "language" (s, BCP 47). current: the one in use, empty for none. Call it again
+      whenever the list changes.
+    -->
+    <method name="SetInputMethods">
+      <arg name="input_methods" type="aa{sv}" direction="in"/>
+      <arg name="current" type="s" direction="in"/>
+    </method>
+
+    <!-- Since 1.1. The input method in use changed, also when the engine switched on its own. -->
+    <method name="SetCurrentInputMethod">
+      <arg name="id" type="s" direction="in"/>
     </method>
   </interface>
 </node>

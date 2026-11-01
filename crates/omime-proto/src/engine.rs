@@ -337,6 +337,58 @@ impl ContextInfo {
     }
 }
 
+/// One of the input methods of an engine that has more than one (`SetInputMethods`,
+/// protocol 1.1), such as the schemas of a Rime engine. Users choose it as
+/// `engine/id`, like the input methods inside hosted frameworks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InputMethodInfo {
+    /// The engine's name for it; `[A-Za-z0-9._-]`, no `/`.
+    pub id: String,
+    pub name: String,
+    /// An icon name or file.
+    pub icon: Option<String>,
+    /// A short label, such as 双.
+    pub label: Option<String>,
+    /// The language it is for (BCP 47).
+    pub language: Option<String>,
+}
+
+impl InputMethodInfo {
+    pub fn to_dict(&self) -> Dict {
+        let mut dict = Dict::new();
+        dict.insert("id".into(), owned(Variant::from(self.id.as_str())));
+        dict.insert("name".into(), owned(Variant::from(self.name.as_str())));
+        for (key, value) in [
+            ("icon", &self.icon),
+            ("label", &self.label),
+            ("language", &self.language),
+        ] {
+            if let Some(value) = value {
+                dict.insert(key.into(), owned(Variant::from(value.as_str())));
+            }
+        }
+        dict
+    }
+
+    /// Decodes an entry of `SetInputMethods`; `None` without an id.
+    pub fn from_dict(dict: &Dict) -> Option<Self> {
+        let get = |key: &str| -> Option<String> {
+            dict.get(key)
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| String::try_from(v).ok())
+                .filter(|s| !s.is_empty())
+        };
+        let id = get("id")?;
+        Some(Self {
+            name: get("name").unwrap_or_else(|| id.clone()),
+            icon: get("icon"),
+            label: get("label"),
+            language: get("language"),
+            id,
+        })
+    }
+}
+
 /// Status an engine shows in panels and the CLI (`SetStatus`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Status {
@@ -432,6 +484,19 @@ mod tests {
         let mut applied = info.clone();
         applied.apply(&diff);
         assert_eq!(applied, moved);
+    }
+
+    #[test]
+    fn input_method_infos_round_trip() {
+        let info = InputMethodInfo {
+            id: "double_pinyin_flypy".into(),
+            name: "小鹤双拼".into(),
+            icon: None,
+            label: Some("鹤".into()),
+            language: Some("zh-CN".into()),
+        };
+        assert_eq!(InputMethodInfo::from_dict(&info.to_dict()), Some(info));
+        assert_eq!(InputMethodInfo::from_dict(&Dict::new()), None);
     }
 
     #[test]

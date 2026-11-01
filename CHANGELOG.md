@@ -39,6 +39,13 @@ All notable changes to this project are documented here. The format follows
   input, a middle click switches to the next input method, and its menu switches to any
   input method. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
+- Engine protocol 1.1: engines can have input methods of their own, such as the schemas
+  of a Rime engine, announced with `SetInputMethods` and `SetCurrentInputMethod` and
+  chosen by users as `engine/id` like the input methods inside Fcitx 5 and IBus; omimed
+  asks for one with `SelectInputMethod` and keeps the choice across restarts. The SDK
+  has `Host::set_input_methods`, `Host::set_current_input_method`,
+  `Engine::select_input_method` and `Engine::registered`, which runs on the engine's
+  thread right after it registered, before any other call.
 - The control API grows what a settings program needs, described in
   `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
   every engine and every input method with descriptions, languages and state, enabled

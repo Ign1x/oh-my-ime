@@ -147,6 +147,36 @@ text cursor whenever your engine is the active one.
 
 The [Sparkle](../engines/sparkle) engine shows all of this with Slint.
 
+## More than one input method
+
+An engine can have input methods of its own, as a Rime engine has schemas. Announce
+them, and the one in use, in `registered`, which runs before any other call, so that
+what it says is up to date; users then choose them as `engine/id`
+(`omime switch my-engine/fast`, the tray menu, `Ctrl+Shift+Space`, `engines` in
+config.toml), and omimed asks your engine to switch:
+
+```rust
+impl omime_sdk::Engine for MyEngine {
+    fn registered(&mut self, host: &omime_sdk::Host) {
+        let fast = omime_sdk::InputMethodInfo {
+            id: "fast".into(),
+            name: "Fast".into(),
+            ..Default::default()
+        };
+        host.set_input_methods(&[fast], self.mode.as_str());
+    }
+
+    fn select_input_method(&mut self, host: &omime_sdk::Host, id: &str) {
+        self.mode = id.to_owned();
+        host.set_current_input_method(id);
+    }
+    // ...
+}
+```
+
+Call `set_current_input_method` too when the engine switches on its own. omimed keeps
+the choice across restarts and gives it back to the engine when it starts.
+
 ## Other languages
 
 The engine protocol is peer-to-peer D-Bus and is specified in
@@ -155,8 +185,9 @@ An engine:
 
 1. connects to the address in `$OMIME_ENGINE_ADDRESS` as a peer-to-peer connection,
 2. exports `io.github.ign1x.OhMyIme.Engine1` at `/io/github/ign1x/OhMyIme/Engine`,
-3. calls `Register($OMIME_ENGINE_ID, 1, 0, {})` on `/io/github/ign1x/OhMyIme`
-   (`io.github.ign1x.OhMyIme.EngineHost1`),
+3. calls `Register($OMIME_ENGINE_ID, 1, 1, {})` on `/io/github/ign1x/OhMyIme`
+   (`io.github.ign1x.OhMyIme.EngineHost1`); minor version 0 is fine for engines
+   without input methods of their own,
 4. answers calls until the connection closes or `Shutdown` is called.
 
 GLib (`g_dbus_connection_new_for_address`), Qt (`QDBusConnection::connectToPeer`),

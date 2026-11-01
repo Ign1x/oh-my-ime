@@ -46,7 +46,9 @@ use omime_proto::names::{
 use tracing::warn;
 use zbus::OwnedVariant;
 
-pub use omime_proto::engine::{ContextId, ContextInfo, KeyEvent, Preedit, Status, modifiers};
+pub use omime_proto::engine::{
+    ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Status, modifiers,
+};
 pub use omime_proto::{ContentHints, ContentPurpose, ContentType};
 
 /// Errors that end an engine.
@@ -66,6 +68,13 @@ pub enum Error {
 ///
 /// All methods run on the SDK's thread, one at a time.
 pub trait Engine: Send + 'static {
+    /// The platform knows the engine now. Announce what it has here, such as its input
+    /// methods ([`Host::set_input_methods`]): this runs on the engine's thread before
+    /// any other call, so what it announces is up to date.
+    fn registered(&mut self, host: &Host) {
+        let _ = host;
+    }
+
     /// The engine became responsible for a focused text field.
     fn activate(&mut self, ctx: &mut Context<'_>) {
         let _ = ctx;
@@ -88,6 +97,13 @@ pub trait Engine: Send + 'static {
     /// The application changed the text on its own; drop any composition.
     fn reset(&mut self, ctx: &mut Context<'_>) {
         let _ = ctx;
+    }
+
+    /// The user chose the input method `id` of this engine (one it announced with
+    /// [`Host::set_input_methods`]). Switch to it, and confirm with
+    /// [`Host::set_current_input_method`].
+    fn select_input_method(&mut self, host: &Host, id: &str) {
+        let _ = (host, id);
     }
 }
 
@@ -177,6 +193,12 @@ trait EngineHost {
     fn set_popup_visible(&self, visible: bool) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
+    fn set_input_methods(&self, methods: &[Dict], current: &str) -> zbus::Result<()>;
+
+    #[zbus(no_reply)]
+    fn set_current_input_method(&self, id: &str) -> zbus::Result<()>;
+
+    #[zbus(no_reply)]
     fn set_status(&self, status: &Dict) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
@@ -264,6 +286,27 @@ impl Host {
         );
     }
 
+    /// Announces the input methods of this engine, for engines that have more than one
+    /// (Rime's schemas, for example), and the one in use. Users choose them as
+    /// `engine/id`; [`Engine::select_input_method`] hears about it.
+    pub fn set_input_methods(&self, methods: &[InputMethodInfo], current: impl Into<String>) {
+        let methods: Vec<Dict> = methods.iter().map(InputMethodInfo::to_dict).collect();
+        let current = current.into();
+        self.call("set_input_methods", move |p| async move {
+            p.set_input_methods(&methods, &current).await
+        });
+    }
+
+    /// Tells the platform which of the input methods announced with
+    /// [`Self::set_input_methods`] is in use, for example after the engine switched on
+    /// its own.
+    pub fn set_current_input_method(&self, id: impl Into<String>) {
+        let id = id.into();
+        self.call("set_current_input_method", move |p| async move {
+            p.set_current_input_method(&id).await
+        });
+    }
+
     /// Asks the platform to switch to engine `id` (`""` selects direct input).
     pub fn request_switch(&self, id: impl Into<String>) {
         let id = id.into();
@@ -342,6 +385,11 @@ impl EngineObject {
         self.with_context(context, |_| {}, |e, ctx| e.reset(ctx)).1
     }
 
+    fn select_input_method(&self, id: String) {
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard.engine.select_input_method(&self.host, &id);
+    }
+
     fn shutdown(&self) {
         self.shutdown.notify_one();
     }
@@ -395,6 +443,15 @@ async fn serve_on(
     proxy
         .register(id, API_VERSION.major, API_VERSION.minor, &Dict::new())
         .await?;
+    {
+        let object = conn
+            .object_server()
+            .interface::<_, EngineObject>(ENGINE_OBJECT_PATH)
+            .await?;
+        let object = object.get().await;
+        let mut guard = object.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard.engine.registered(&host);
+    }
     if let Some(ready) = ready {
         // The receiver only goes away if the caller gave up; nothing to do then.
         let _ = ready.send(host);

@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_proto::engine::{Dict, KeyEvent, WireAction};
+use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, WireAction};
 use omime_proto::manifest::{InstalledEngine, SettingsBus};
 use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
@@ -72,6 +72,10 @@ pub trait Engine {
 
     #[zbus(no_reply)]
     fn shutdown(&self) -> zbus::Result<()>;
+
+    /// Since 1.1.
+    #[zbus(no_reply)]
+    fn select_input_method(&self, id: &str) -> zbus::Result<()>;
 }
 
 /// What the engine host object reports to the core.
@@ -84,6 +88,9 @@ pub enum HostCall {
     SetPopupVisible(bool),
     SetStatus(Status),
     RequestSwitch(String),
+    /// The engine's own input methods, and the one in use (protocol 1.1).
+    SetInputMethods(Vec<InputMethodInfo>, String),
+    SetCurrentInputMethod(String),
 }
 
 /// `io.github.ign1x.OhMyIme.EngineHost1`, served to one engine.
@@ -135,6 +142,7 @@ impl HostObject {
         let _ = self.events.send(CoreEvent::Registered {
             engine: self.engine.clone(),
             conn: conn.clone(),
+            api_minor,
         });
         let mut session = Dict::new();
         session.insert("api-major".into(), owned(Variant::from(ours.major)));
@@ -192,6 +200,18 @@ impl HostObject {
 
     fn request_switch(&self, engine: String) {
         self.send(HostCall::RequestSwitch(engine));
+    }
+
+    fn set_input_methods(&self, methods: Vec<Dict>, current: String) {
+        let methods = methods
+            .iter()
+            .filter_map(InputMethodInfo::from_dict)
+            .collect();
+        self.send(HostCall::SetInputMethods(methods, current));
+    }
+
+    fn set_current_input_method(&self, id: String) {
+        self.send(HostCall::SetCurrentInputMethod(id));
     }
 }
 
@@ -256,6 +276,8 @@ pub struct EngineSlot {
     framework: Option<mpsc::UnboundedSender<FrameworkCommand>>,
     /// Increases with every launch; events of older processes are ignored.
     generation: u64,
+    /// The minor engine protocol version the running engine registered with.
+    api_minor: u16,
     /// Stops the process; dropping it stops the process politely.
     kill: Option<oneshot::Sender<Stop>>,
     /// The process is stopped on purpose, to start again at once: its exit is not a
@@ -327,6 +349,7 @@ impl EngineManager {
             wanted_retried: false,
             framework: None,
             generation: 0,
+            api_minor: 0,
             kill: None,
             reloading: false,
             crashes: Vec::new(),
@@ -583,7 +606,12 @@ impl EngineManager {
     }
 
     /// The engine registered on `conn`.
-    pub async fn registered(&mut self, id: &str, conn: zbus::Connection) -> anyhow::Result<()> {
+    pub async fn registered(
+        &mut self,
+        id: &str,
+        conn: zbus::Connection,
+        api_minor: u16,
+    ) -> anyhow::Result<()> {
         let proxy = EngineProxy::builder(&conn)
             .destination(DAEMON_BUS_NAME)
             .path(ENGINE_OBJECT_PATH)
@@ -593,9 +621,35 @@ impl EngineManager {
             return Ok(());
         };
         slot.proxy = Some(proxy);
+        slot.api_minor = api_minor;
         slot.state = EngineState::Ready;
         info!(engine = id, "engine ready");
+        // An engine with input methods of its own gets back the one in use.
+        if let Some(wanted) = slot.wanted_inner.clone() {
+            Self::select_native(slot, wanted);
+        }
         Ok(())
+    }
+
+    /// Asks an engine of omimed's to use its input method `inner` (protocol 1.1).
+    fn select_native(slot: &EngineSlot, inner: String) {
+        if slot.api_minor < 1 {
+            return;
+        }
+        if let Some(proxy) = slot.proxy.clone() {
+            tokio::task::spawn_local(async move {
+                let _ = proxy.select_input_method(&inner).await;
+            });
+        }
+    }
+
+    /// Takes what an engine of omimed's says about its own input methods, as framework
+    /// adapters report them. Returns whether anything changed.
+    pub fn native_update(&mut self, id: &str, update: FrameworkUpdate) -> bool {
+        let Some(generation) = self.slots.get(id).map(|slot| slot.generation) else {
+            return false;
+        };
+        self.framework_update(id, generation, update)
     }
 
     /// The engine process exited. If it is `needed`, it is restarted after a backoff.
@@ -679,8 +733,11 @@ impl EngineManager {
         let Some(slot) = self.slots.get_mut(id) else {
             return;
         };
-        if let Some(commands) = &slot.framework {
-            let _ = commands.send(FrameworkCommand::Select(inner.clone()));
+        match &slot.framework {
+            Some(commands) => {
+                let _ = commands.send(FrameworkCommand::Select(inner.clone()));
+            }
+            None => Self::select_native(slot, inner.clone()),
         }
         slot.wanted_inner = Some(inner);
         slot.wanted_retried = false;

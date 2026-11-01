@@ -26,7 +26,7 @@ pub struct ApiVersion {
 
 impl ApiVersion {
     /// The engine protocol version implemented by this crate.
-    pub const CURRENT: Self = Self { major: 1, minor: 0 };
+    pub const CURRENT: Self = Self { major: 1, minor: 1 };
 
     /// Returns whether a peer speaking `other` can talk to us.
     pub fn is_compatible_with(self, other: Self) -> bool {
@@ -82,6 +82,6 @@ mod tests {
         let current = ApiVersion::CURRENT;
         assert!(current.is_compatible_with(ApiVersion { major: 1, minor: 7 }));
         assert!(!current.is_compatible_with(ApiVersion { major: 2, minor: 0 }));
-        assert_eq!(current.to_string(), "1.0");
+        assert_eq!(current.to_string(), "1.1");
     }
 }
