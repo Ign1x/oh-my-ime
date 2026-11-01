@@ -60,6 +60,9 @@ fn engine_windows_follow_the_text_cursor_of_x11_applications() -> anyhow::Result
     client.send("cursor 300 690 2 20")?;
     env.wait_for_pixel(x, 690 - 20, RED)?;
     assert_ne!(env.pixel(x, y)?, RED, "the window stayed where it was");
+    // It moved on the same layer surface, which compositors would animate if it moved
+    // itself.
+    assert_eq!(env.count_in_log("mirror stage created"), 1);
 
     client.send("focus-out")?;
     std::thread::sleep(Duration::from_millis(500));

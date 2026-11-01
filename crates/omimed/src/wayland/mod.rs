@@ -37,6 +37,7 @@ use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::{
 use wl_proxy::protocols::text_input_unstable_v3::zwp_text_input_v3::{
     ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint, ZwpTextInputV3ContentPurpose,
 };
+use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wl_proxy::protocols::viewporter::wp_viewporter::WpViewporter;
 use wl_proxy::protocols::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use wl_proxy::protocols::wayland::wl_callback::{WlCallback, WlCallbackHandler};
@@ -45,6 +46,7 @@ use wl_proxy::protocols::wayland::wl_keyboard::{WlKeyboardKeyState, WlKeyboardKe
 use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::protocols::wayland::wl_output::WlOutput;
 use wl_proxy::protocols::wayland::wl_seat::{WlSeat, WlSeatCapability, WlSeatHandler};
+use wl_proxy::protocols::wayland::wl_subcompositor::WlSubcompositor;
 use wl_proxy::protocols::xdg_output_unstable_v1::zxdg_output_manager_v1::ZxdgOutputManagerV1;
 use wl_proxy::protocols::wlr_foreign_toplevel_management_unstable_v1::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1;
 use wl_proxy::protocols::wlr_layer_shell_unstable_v1::zwlr_layer_shell_v1::ZwlrLayerShellV1;
@@ -664,6 +666,10 @@ impl Frontend {
             }
             ObjectInterface::ZwlrLayerShellV1 => {
                 self.bind_for_bridge::<ZwlrLayerShellV1>(name, version.min(4));
+            }
+            ObjectInterface::WlSubcompositor => self.bind_for_bridge::<WlSubcompositor>(name, 1),
+            ObjectInterface::WpSinglePixelBufferManagerV1 => {
+                self.bind_for_bridge::<WpSinglePixelBufferManagerV1>(name, 1);
             }
             ObjectInterface::WpViewporter => self.bind_for_bridge::<WpViewporter>(name, 1),
             ObjectInterface::WpFractionalScaleManagerV1 => {

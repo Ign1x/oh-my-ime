@@ -215,20 +215,7 @@ GTK_IM_MODULE=fcitx exec "$@"
 
 有些 X11 应用把预编辑的绘制交给输入法，xterm 就是其中之一。omimed 自己不绘制文字，所以在这些应用里，正在输入的内容只会显示在引擎自己的窗口中（Sparkle 有窗口；Echo 没有），直到上屏。
 
-X11 应用的引擎窗口是命名空间为 `omime-popup` 的图层表面。Hyprland 会为图层表面播放动画。要为它们关掉动画，在 Lua 配置中写：
-
-```lua
-hl.layer_rule({
-    match = { namespace = "omime-popup" },
-    no_anim = true,
-})
-```
-
-在旧版 `hyprland.conf` 中写：
-
-```ini
-layerrule = no_anim on, match:namespace omime-popup
-```
+X11 应用（以及使用 Fcitx5 模块的 Wayland 应用）的引擎窗口显示在一个覆盖整个输出的透明图层表面上，命名空间为 `omime-popup`；只要这类应用拥有焦点，它就一直存在。因此窗口在上面出现、移动和改变大小时，不会触发 Hyprland 的图层动画。
 
 ## 故障排查
 
