@@ -150,7 +150,9 @@ know which frontend a key came from.
 - **XIM.** Built on the [`xim`](https://crates.io/crates/xim) and
   [`x11rb`](https://crates.io/crates/x11rb) crates. When `DISPLAY` is set at startup,
   omimed becomes the XIM server `omime` on that display; applications find it with
-  `XMODIFIERS=@im=omime`. While the X server is not up, omimed retries with a growing
+  `XMODIFIERS=@im=omime`. Its window also takes the selections `@server=fcitx` and
+  `@server=ibus` when no other XIM server holds them, for applications started with
+  what setups of Fcitx and IBus leave in `XMODIFIERS`. While the X server is not up, omimed retries with a growing
   delay (2 s, doubling up to 60 s), and it reconnects when the server goes away. Only key
   presses pass through XIM; releases reach the application directly. libX11 puts a commit
   or a key sent back at the front of the application's event queue, so two in a row would

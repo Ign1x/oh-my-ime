@@ -52,6 +52,9 @@ All notable changes to this project are documented here. The format follows
   running (`[panel] enabled = false` turns it off), drawn with Slint on a layer surface
   (namespace `omime-switcher`) by the new `omime-overlay` library. Switches from the
   tray menu and those that follow you between applications do not show it.
+- X11 applications started with `XMODIFIERS=@im=fcitx` or `@im=ibus`, as setups of those
+  input methods leave it, reach omimed too: it answers XIM clients by those names as well,
+  unless Fcitx or IBus runs on the display.
 - The control API's new `Switched(input_method, reason)` signal says who switched:
   omimed's hotkeys, a command, the tray menu or an engine.
 - Engines can have a menu (engine protocol 1.1): actions, switches and choices such as

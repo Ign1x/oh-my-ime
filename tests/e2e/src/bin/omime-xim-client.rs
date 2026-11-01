@@ -23,6 +23,7 @@
 //! key.
 //!
 //! `--spot X,Y` tells the server where the window draws text (0,0 by default).
+//! `--im NAME` connects to the XIM server NAME instead of the one `XMODIFIERS` names.
 //! `--position` asks for the over-the-spot style (PREEDIT_POSITION), as xterm does,
 //! instead of drawing the preedit itself.
 
@@ -59,11 +60,13 @@ fn main() -> std::process::ExitCode {
 }
 
 /// The command line: where the text is drawn in the window (`--spot X,Y`, the start of
-/// its baseline), and whether the input method draws the preedit (`--position`).
-fn options() -> anyhow::Result<(Point, bool)> {
-    const USAGE: &str = "usage: omime-xim-client [--spot X,Y] [--position]";
+/// its baseline), whether the input method draws the preedit (`--position`), and the
+/// XIM server to connect to (`--im NAME`).
+fn options() -> anyhow::Result<(Point, bool, Option<String>)> {
+    const USAGE: &str = "usage: omime-xim-client [--spot X,Y] [--position] [--im NAME]";
     let mut spot = Point { x: 0, y: 0 };
     let mut position = false;
+    let mut im = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -76,14 +79,15 @@ fn options() -> anyhow::Result<(Point, bool)> {
                 };
             }
             "--position" => position = true,
+            "--im" => im = Some(args.next().context(USAGE)?),
             _ => anyhow::bail!(USAGE),
         }
     }
-    Ok((spot, position))
+    Ok((spot, position, im))
 }
 
 fn run() -> anyhow::Result<()> {
-    let (spot, position) = options()?;
+    let (spot, position, im) = options()?;
     let (conn, screen_num) =
         RustConnection::connect(None).context("cannot connect to the X server")?;
     let screen = conn.setup().roots[screen_num].clone();
@@ -128,7 +132,7 @@ fn run() -> anyhow::Result<()> {
     conn.flush()?;
 
     let keymap = Keymap::load(&conn)?;
-    let mut client = X11rbClient::init(&conn, screen_num, None)
+    let mut client = X11rbClient::init(&conn, screen_num, im.as_deref())
         .context("cannot connect to the XIM server (XMODIFIERS)")?;
     let mut handler = Handler {
         window,

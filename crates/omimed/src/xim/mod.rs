@@ -24,15 +24,16 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use omime_proto::engine::{Action, ContextId, ContextInfo, Preedit};
 use tokio::io::unix::AsyncFd;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt as _, EventMask,
-    KeyPressEvent,
+    KeyPressEvent, PropMode,
 };
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 use xim::x11rb::{HasConnection as _, X11rbServer};
 use xim::{
     CommitData, Feedback, ForwardEventFlag, InputContext, InputStyle, PreeditDrawStatus, Request,
@@ -47,6 +48,10 @@ use keymap::Keymap;
 
 /// The name applications ask for with `XMODIFIERS=@im=omime`.
 pub const SERVER_NAME: &str = "omime";
+/// Other names omimed answers by, when no other XIM server holds them: the ones that
+/// setups of Fcitx 5 and IBus leave in `XMODIFIERS`, so that applications started with
+/// them reach omimed too.
+pub const ALIASES: [&str; 2] = ["fcitx", "ibus"];
 /// `KeyPressMask`: applications forward presses. Releases stay with them: every key
 /// sent back costs a round trip, and applications need not answer one for a release.
 const KEY_EVENTS: u32 = 1;
@@ -412,6 +417,16 @@ impl XimFrontend {
         let server = Server::init(conn, screen, SERVER_NAME, xim::ALL_LOCALES)
             .map_err(|e| anyhow::anyhow!("cannot register the XIM server: {e}"))?;
         info!(name = SERVER_NAME, "serving XIM");
+        for alias in ALIASES {
+            match register_alias(server.conn(), root, alias) {
+                Ok(true) => info!(name = alias, "serving XIM"),
+                Ok(false) => info!(
+                    name = alias,
+                    "another XIM server answers by this name; leaving it"
+                ),
+                Err(e) => warn!(name = alias, "cannot serve XIM by this name: {e:#}"),
+            }
+        }
         Ok(Self {
             server,
             connections: XimConnections::new(),
@@ -768,6 +783,40 @@ thread_local! {
 /// accepts the connection but never answers would block the whole daemon, keyboard input
 /// included; the attempt is left to itself instead, and fails here to be checked again
 /// later.
+/// Makes the window of the server [`SERVER_NAME`] answer by `name` as well, unless
+/// another XIM server does. Returns whether it does now.
+fn register_alias(conn: &RustConnection, root: u32, name: &str) -> anyhow::Result<bool> {
+    let atom = |name: &str| -> anyhow::Result<u32> {
+        Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
+    };
+    let own = atom(&format!("@server={SERVER_NAME}"))?;
+    let window = conn.get_selection_owner(own)?.reply()?.owner;
+    anyhow::ensure!(window != x11rb::NONE, "the server has no window");
+    let selection = atom(&format!("@server={name}"))?;
+    let owner = conn.get_selection_owner(selection)?.reply()?.owner;
+    if owner != x11rb::NONE && owner != window {
+        return Ok(false);
+    }
+    conn.set_selection_owner(window, selection, x11rb::CURRENT_TIME)?;
+    let servers = atom("XIM_SERVERS")?;
+    let listed = conn
+        .get_property(false, root, servers, AtomEnum::ATOM, 0, u32::MAX)?
+        .reply()?
+        .value32()
+        .is_some_and(|mut atoms| atoms.any(|atom| atom == selection));
+    if !listed {
+        conn.change_property32(
+            PropMode::APPEND,
+            root,
+            servers,
+            AtomEnum::ATOM,
+            &[selection],
+        )?;
+    }
+    conn.flush()?;
+    Ok(true)
+}
+
 fn connect_display(wait: Duration) -> anyhow::Result<(RustConnection, usize)> {
     let receiver = match PENDING_CONNECT.take() {
         Some(receiver) => receiver,

@@ -189,7 +189,7 @@ oh-my-ime 通过合成器的 text-input 协议连接 Wayland 应用，通过 XIM
 
 XWayland 应用收不到 `text-input`，因此通过另外的途径连接 omimed。两个前端都由 omimed 自己提供；fcitx5 不能运行。
 
-- **XIM。** 启动时若设置了 `DISPLAY`，omimed 就是 `$DISPLAY` 对应 X 显示上的 XIM 服务端 `omime`。以 `XMODIFIERS=@im=omime` 启动的应用会用它：xterm、urxvt、Emacs（X11）、Java（AWT/Swing）、Wine，以及设置了 `GTK_IM_MODULE=xim` 的 GTK 应用。只有 X11 应用会读取 `XMODIFIERS`，因此可以为整个会话设置它。
+- **XIM。** 启动时若设置了 `DISPLAY`，omimed 就是 `$DISPLAY` 对应 X 显示上的 XIM 服务端 `omime`。以 `XMODIFIERS=@im=omime` 启动的应用会用它：xterm、urxvt、Emacs（X11）、Java（AWT/Swing）、Wine，以及设置了 `GTK_IM_MODULE=xim` 的 GTK 应用。只有 X11 应用会读取 `XMODIFIERS`，因此可以为整个会话设置它。只要该显示上没有运行 Fcitx 或 IBus，omimed 也会以它们的名字提供服务，所以以 `XMODIFIERS=@im=fcitx` 或 `@im=ibus` 启动的应用（这些输入法的配置往往会留下这样的设置）同样能找到它。
 - **Fcitx5 模块。** 以 `GTK_IM_MODULE=fcitx` 或 `QT_IM_MODULE=fcitx` 启动的应用通过 Fcitx5 模块协议与 omimed 通信。需要安装对应的模块（`fcitx5-gtk`、`fcitx5-qt`）。
 
 使用 systemd 用户单元时，`DISPLAY` 必须在用户管理器的环境中，否则 omimed 启动时不会提供 XIM。在 Hyprland 中把它加入 `hyprland.conf`（Lua 配置中把同样的命令交给 `hl.exec_cmd`）：

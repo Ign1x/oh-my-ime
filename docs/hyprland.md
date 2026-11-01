@@ -270,6 +270,9 @@ serves both frontends itself; fcitx5 must not run.
   `DISPLAY` is set at startup. Applications started with `XMODIFIERS=@im=omime` use it:
   xterm, urxvt, Emacs (X11), Java (AWT/Swing), Wine, and GTK with `GTK_IM_MODULE=xim`.
   Only X11 applications read `XMODIFIERS`, so it is safe to set it for the whole session.
+  omimed answers by the names of Fcitx and IBus too, unless one of them runs on that
+  display, so applications started with `XMODIFIERS=@im=fcitx` or `@im=ibus` (as setups
+  of those input methods leave them) find it as well.
 - **Fcitx5 modules.** Applications started with `GTK_IM_MODULE=fcitx` or
   `QT_IM_MODULE=fcitx` talk to omimed through the Fcitx5 module protocol. The modules must
   be installed (`fcitx5-gtk`, `fcitx5-qt`).

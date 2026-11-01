@@ -107,3 +107,16 @@ fn engines_learn_whether_xim_applications_show_the_preedit() -> anyhow::Result<(
     env.wait_for_log("activate frontend=xim client-preedit=true")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn applications_find_omimed_by_the_names_of_fcitx_and_ibus() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    // XMODIFIERS=@im=fcitx or @im=ibus, as setups of those input methods leave it.
+    for (name, typed, text) in [("fcitx", "ab ", "AB "), ("ibus", "cd ", "CD ")] {
+        let client = env.xim_client(&["--im", name])?;
+        env.type_on_seat("seat0", typed)?;
+        client.wait_for_text(text)?;
+    }
+    Ok(())
+}
