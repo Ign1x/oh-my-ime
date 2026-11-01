@@ -5,8 +5,7 @@
 //! pass without testing anything when IBus is not installed. See `typing.rs` for how to
 //! run them.
 
-use anyhow::Context as _;
-use omime_e2e::harness::{Editor, TestEngine, TestEnv, program_dir, wait_until};
+use omime_e2e::harness::{TestEngine, TestEnv, program_dir, wait_until};
 
 /// IBus as a hosted engine, if it is installed.
 fn ibus() -> Option<TestEngine> {
@@ -52,48 +51,6 @@ fn current_engine(env: &TestEnv) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Waits until libpinyin composes in `editor`. IBus starts an engine's process when
-/// the engine is first chosen and passes keys on until it runs, which takes a while on
-/// a busy machine. The probe is an n: a preedit means libpinyin is there (Escape
-/// cancels it), an n in the text means it is not yet (BackSpace takes it back).
-fn wait_until_composing(env: &TestEnv, editor: &Editor) -> anyhow::Result<()> {
-    wait_until("libpinyin to compose", || {
-        let preedits = editor.preedits().len();
-        let text = editor.text();
-        env.keys_on_seat("seat0", "tap n\n").ok()?;
-        let composing = wait_until("the probe", || {
-            if editor.preedits()[preedits..].iter().any(|p| !p.is_empty()) {
-                Some(true)
-            } else if editor.text() != text {
-                Some(false)
-            } else {
-                None
-            }
-        })
-        .ok()?;
-        if composing {
-            env.keys_on_seat("seat0", "tap escape\n").ok()?;
-            wait_until("the probe to go", || {
-                editor
-                    .preedits()
-                    .last()
-                    .is_some_and(String::is_empty)
-                    .then_some(())
-            })
-            .ok()?;
-            return Some(());
-        }
-        // BackSpace is evdev key 14.
-        env.keys_on_seat("seat0", "tap 14\n").ok()?;
-        wait_until("the probe to be taken back", || {
-            (editor.text() == text).then_some(())
-        })
-        .ok()?;
-        None
-    })
-    .with_context(|| format!("the editor said {:?}", editor.lines()))
-}
-
 /// Picks libpinyin for the focused field, as a user would with `ibus engine`. The
 /// command cannot report success: after switching it runs `setxkbmap`, which fails
 /// without an X display. The engine the daemon reports is the truth. IBus's panel
@@ -125,7 +82,7 @@ fn pinyin_types_into_wayland_applications() -> anyhow::Result<()> {
     let editor = env.editor(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
     select_libpinyin(&env)?;
-    wait_until_composing(&env, &editor)?;
+    env.wait_until_composing(&editor)?;
     // Keys go in with real key codes: wtype uploads a keymap of its own for every
     // string, whose made-up key codes a hosted IBus decodes with a stale keymap.
     env.type_on_seat("seat0", "nihao")?;
@@ -152,7 +109,7 @@ fn pinyin_types_into_xim_applications() -> anyhow::Result<()> {
     let client = env.xim_client(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
     select_libpinyin(&env)?;
-    wait_until_composing(&env, &client)?;
+    env.wait_until_composing(&client)?;
     env.type_on_seat("seat0", "nihao ")?;
     client.wait_for_text("你好")?;
     env.type_on_seat("seat0", "zhongguo ")?;
@@ -224,7 +181,7 @@ fn ibus_engines_are_chosen_directly() -> anyhow::Result<()> {
     wait_until("IBus to use libpinyin", || {
         (current_engine(&env).as_deref() == Some("libpinyin")).then_some(())
     })?;
-    wait_until_composing(&env, &editor)?;
+    env.wait_until_composing(&editor)?;
     env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("你好")?;
     Ok(())

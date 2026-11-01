@@ -25,8 +25,17 @@ use crate::parse_json_string;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Calls `f` until it returns a value, for at most [`TIMEOUT`].
-pub fn wait_until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> anyhow::Result<T> {
-    let deadline = Instant::now() + TIMEOUT;
+pub fn wait_until<T>(what: &str, f: impl FnMut() -> Option<T>) -> anyhow::Result<T> {
+    wait_until_within(TIMEOUT, what, f)
+}
+
+/// Calls `f` until it returns a value, for at most `timeout`.
+pub fn wait_until_within<T>(
+    timeout: Duration,
+    what: &str,
+    mut f: impl FnMut() -> Option<T>,
+) -> anyhow::Result<T> {
+    let deadline = Instant::now() + timeout;
     loop {
         if let Some(value) = f() {
             return Ok(value);
@@ -652,6 +661,52 @@ impl TestEnv {
         // Let the keys travel through the compositor, daemon and engine.
         std::thread::sleep(Duration::from_millis(150));
         Ok(())
+    }
+
+    /// Waits until the input method in use composes in `editor`, on seat0. Frameworks
+    /// load an input method when it is first used (IBus starts an engine process,
+    /// Fcitx 5 loads an addon) and pass keys on until then, which takes a while on a
+    /// busy machine. The probe is an n: a preedit means the input method is there
+    /// (Escape cancels it), an n in the text means it is not yet (BackSpace takes it
+    /// back).
+    pub fn wait_until_composing(&self, editor: &Editor) -> anyhow::Result<()> {
+        // A probe that gets lost is tried again.
+        let probe = Duration::from_secs(3);
+        wait_until_within(TIMEOUT * 2, "the input method to compose", || {
+            let preedits = editor.preedits().len();
+            let text = editor.text();
+            self.keys_on_seat("seat0", "tap n\n").ok()?;
+            let composing = wait_until_within(probe, "the probe", || {
+                if editor.preedits()[preedits..].iter().any(|p| !p.is_empty()) {
+                    Some(true)
+                } else if editor.text() != text {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .ok()?;
+            if composing {
+                self.keys_on_seat("seat0", "tap escape\n").ok()?;
+                wait_until("the probe to go", || {
+                    editor
+                        .preedits()
+                        .last()
+                        .is_some_and(String::is_empty)
+                        .then_some(())
+                })
+                .ok()?;
+                return Some(());
+            }
+            // BackSpace is evdev key 14.
+            self.keys_on_seat("seat0", "tap 14\n").ok()?;
+            wait_until("the probe to be taken back", || {
+                (editor.text() == text).then_some(())
+            })
+            .ok()?;
+            None
+        })
+        .with_context(|| format!("the editor said {:?}", editor.lines()))
     }
 
     /// Gives keyboard focus to the window with `app_id` and waits until omimed holds the

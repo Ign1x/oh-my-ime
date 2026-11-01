@@ -87,6 +87,7 @@ fn pinyin_types_into_wayland_applications() -> anyhow::Result<()> {
     start_pinyin(&env)?;
     let editor = env.editor(&[])?;
     env.wait_for_log("hosted input method grabbed the keyboard")?;
+    env.wait_until_composing(&editor)?;
     // Space picks the first candidate.
     env.type_text("nihao ")?;
     editor.wait_for_text("你好")?;
@@ -170,6 +171,8 @@ fn pinyin_types_into_xim_applications() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[engine], None)?;
     start_pinyin(&env)?;
     let client = env.xim_client(&[])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    env.wait_until_composing(&client)?;
     env.type_on_seat("seat0", "nihao ")?;
     client.wait_for_text("你好")?;
     env.type_on_seat("seat0", "zhongguo ")?;
@@ -187,8 +190,7 @@ fn shortcuts_reach_xim_applications_with_their_modifiers() -> anyhow::Result<()>
     let env = TestEnv::start_with_x11(&[engine], None)?;
     start_pinyin(&env)?;
     let client = env.xim_client(&[])?;
-    env.type_on_seat("seat0", "nihao ")?;
-    client.wait_for_text("你好")?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
     // Fcitx5 does not want Ctrl+C and sends it back: the application must get it with
     // Control (mask 4), or it types a c. X11 key code 54 is c.
     env.keys_on_seat("seat0", "press ctrl\ntap c\nrelease ctrl\n")?;
