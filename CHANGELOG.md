@@ -39,6 +39,16 @@ All notable changes to this project are documented here. The format follows
   input, a middle click switches to the next input method, and its menu switches to any
   input method. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
+- The control API grows what a settings program needs, described in
+  `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
+  every engine and every input method with descriptions, languages and state, enabled
+  or not, including the input methods a framework has beyond what it is set up with
+  (kept in `~/.cache/oh-my-ime/catalog.toml`); `Config` and `Configure` read and set
+  options of `config.toml`, which omimed writes itself, keeping comments; `Apps`,
+  `SetAppInputMethod` and `ForgetApp` edit what `[apps] remember` keeps; the signals
+  `InputMethodsChanged` and `ConfigChanged` say when to read again; `Version`. New
+  commands use them: `omime list --all`, `omime config [<key> <value>]`, `omime apps
+  [forget <app>]`; `omime enable` and `disable` now go through omimed.
 - Input methods inside a framework can be enabled one by one: the `engines` list of
   `config.toml` takes entries such as `fcitx5/shuangpin` next to whole engines, in
   switching order, and `omime enable fcitx5/rime` and `omime disable fcitx5/pinyin`

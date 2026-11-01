@@ -100,6 +100,64 @@ impl Config {
     }
 }
 
+/// A value for [`edit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Value {
+    Bool(bool),
+    Integer(i64),
+    String(String),
+    List(Vec<String>),
+}
+
+/// The options [`edit`] can set, by dotted name.
+pub const KEYS: [&str; 6] = [
+    "engines",
+    "hotkeys.toggle",
+    "hotkeys.next",
+    "engine.key_timeout_ms",
+    "apps.remember",
+    "tray.enabled",
+];
+
+/// Returns `text`, a config.toml, with the option `key` (one of [`KEYS`]) set to
+/// `value`. Comments and everything else stay as they are. The result must still be a
+/// valid configuration: values of the wrong type, unknown keys and hotkeys that do not
+/// parse are errors.
+pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
+    if !KEYS.contains(&key) {
+        return Err(format!("there is no option `{key}`"));
+    }
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+    let item = match value {
+        Value::Bool(b) => toml_edit::value(b),
+        Value::Integer(i) => toml_edit::value(i),
+        Value::String(s) => toml_edit::value(s),
+        Value::List(list) => toml_edit::value(
+            list.iter()
+                .map(String::as_str)
+                .collect::<toml_edit::Array>(),
+        ),
+    };
+    match key.split_once('.') {
+        None => doc[key] = item,
+        Some((table, name)) => {
+            if doc.get(table).is_none() {
+                doc[table] = toml_edit::table();
+            }
+            doc[table][name] = item;
+        }
+    }
+    let edited = doc.to_string();
+    let (config, _) = Config::parse(&edited)?;
+    for hotkey in [&config.hotkeys.toggle, &config.hotkeys.next] {
+        HotkeySpec::parse(hotkey)?;
+    }
+    if config.engine.key_timeout_ms == 0 {
+        return Err("`engine.key_timeout_ms` must be at least 1".into());
+    }
+    Ok(edited)
+}
+
 /// A hotkey such as `Control+Shift+space`: modifier names and a keysym name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotkeySpec {
@@ -170,6 +228,41 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(unknown, ["bogus", "future", "hotkeys.togle"]);
         assert!(Config::parse("[apps]\nremember = \"yes\"").is_err());
+    }
+
+    #[test]
+    fn options_are_edited_in_place() {
+        let text =
+            "# mine\nengines = [\"echo\"]\n\n[hotkeys]\n# the toggle\ntoggle = \"Super+space\"\n";
+        let edited = edit(text, "apps.remember", Value::Bool(true)).unwrap();
+        assert!(
+            edited.starts_with("# mine\nengines = [\"echo\"]"),
+            "{edited}"
+        );
+        assert!(
+            edited.contains("# the toggle\ntoggle = \"Super+space\""),
+            "{edited}"
+        );
+        assert!(Config::parse(&edited).unwrap().0.apps.remember);
+        let edited = edit(&edited, "hotkeys.next", Value::String("Super+n".into())).unwrap();
+        assert_eq!(Config::parse(&edited).unwrap().0.hotkeys.next, "Super+n");
+        let list = Value::List(vec!["fcitx5/shuangpin".into(), "sparkle".into()]);
+        let edited = edit(&edited, "engines", list).unwrap();
+        assert_eq!(
+            Config::parse(&edited).unwrap().0.engines.unwrap(),
+            ["fcitx5/shuangpin", "sparkle"]
+        );
+        let edited = edit("", "engine.key_timeout_ms", Value::Integer(300)).unwrap();
+        assert_eq!(Config::parse(&edited).unwrap().0.engine.key_timeout_ms, 300);
+    }
+
+    #[test]
+    fn edits_must_leave_a_valid_configuration() {
+        assert!(edit("", "apps.remeber", Value::Bool(true)).is_err());
+        assert!(edit("", "apps.remember", Value::String("yes".into())).is_err());
+        assert!(edit("", "hotkeys.toggle", Value::String("Hyper+a".into())).is_err());
+        assert!(edit("", "engine.key_timeout_ms", Value::Integer(0)).is_err());
+        assert!(edit("", "engine.key_timeout_ms", Value::Integer(-5)).is_err());
     }
 
     #[test]

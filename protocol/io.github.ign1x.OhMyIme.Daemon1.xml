@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  oh-my-ime control API, version 1.
+
+  omimed owns io.github.ign1x.OhMyIme on the session bus and exports
+  io.github.ign1x.OhMyIme.Daemon1 at /io/github/ign1x/OhMyIme. The `omime` command
+  line tool, status bars and settings programs use it. Owning the name also keeps a
+  second daemon from starting in the same session.
+
+  Conventions
+  - Input method ids are what `Switch` and the `engines` list of config.toml take: an
+    engine's id (`sparkle`) or an input method inside a hosted framework
+    (`fcitx5/shuangpin`). The empty string is direct input.
+  - Dictionaries (a{sv}) may gain keys in later versions. Ignore keys you don't know.
+  - Failures are org.freedesktop.DBus.Error.Failed (or InvalidArgs) with a message
+    meant for people.
+-->
+<node>
+  <interface name="io.github.ign1x.OhMyIme.Daemon1">
+    <!-- The version of omimed, such as "0.4.0". -->
+    <property name="Version" type="s" access="read"/>
+
+    <!--
+      The installed engines, enabled ones first in switching order:
+      "id", "name", "description", "icon" (s), "languages" (as, BCP 47),
+      "kind" (s: "engine", or "hosted" for an unmodified Wayland input method such as
+      Fcitx 5), "state" (s: "stopped", "starting", "ready", "restarting", "failed"),
+      "enabled" (b), "settings" (b: OpenSettings can open its settings).
+    -->
+    <method name="Engines">
+      <arg name="engines" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Every input method there is to choose from: the enabled ones in switching order,
+      then those the installed engines have besides (input methods of frameworks that
+      are not set up or not enabled, engines that are not enabled):
+      "id", "name", "engine", "engine-name", "icon", "label", "language" (s, empty when
+      unknown), "enabled" (b), "in-use" (b).
+    -->
+    <method name="InputMethods">
+      <arg name="input_methods" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Emitted when what Engines or InputMethods return may have changed: engines came
+      or went, the configuration changed, or a framework reported its input methods.
+    -->
+    <signal name="InputMethodsChanged"/>
+
+    <!-- The enabled input methods: (id, name, engine name, label, in use). -->
+    <method name="ListInputMethods">
+      <arg name="input_methods" type="a(ssssb)" direction="out"/>
+    </method>
+
+    <!-- The installed engines: (id, name, enabled, state), as Engines has them. -->
+    <method name="ListEngines">
+      <arg name="engines" type="a(ssbs)" direction="out"/>
+    </method>
+
+    <!--
+      The input method in use: "engine" (s, empty for direct input), "input-method"
+      (s, its id), and the engine's "label", "icon" and "tooltip" (s) when it
+      published them.
+    -->
+    <method name="Status">
+      <arg name="status" type="a{sv}" direction="out"/>
+    </method>
+
+    <!-- Emitted when the current engine changes (empty for direct input). -->
+    <signal name="CurrentChanged">
+      <arg name="engine" type="s"/>
+    </signal>
+
+    <!-- Emitted when what Status returns changes; carries the new status. -->
+    <signal name="StatusChanged">
+      <arg name="status" type="a{sv}"/>
+    </signal>
+
+    <!-- Switches to an input method; the empty string selects direct input. -->
+    <method name="Switch">
+      <arg name="input_method" type="s" direction="in"/>
+    </method>
+
+    <!-- Switches to the next enabled input method. -->
+    <method name="Next"/>
+
+    <!-- Switches between direct input and the last engine. -->
+    <method name="Toggle"/>
+
+    <!--
+      The configuration in effect, by the dotted names of config.toml's options:
+      "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
+      "apps.remember", "tray.enabled" (b), and "engines" (as) when config.toml lists
+      engines (otherwise every engine enabled by default is).
+    -->
+    <method name="Config">
+      <arg name="config" type="a{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Sets options of config.toml by the names Config uses, keeping comments and the
+      rest of the file, and applies them. "engines" takes engines and input methods
+      inside them in switching order. Fails, changing nothing, if a value is not valid.
+    -->
+    <method name="Configure">
+      <arg name="changes" type="a{sv}" direction="in"/>
+    </method>
+
+    <!-- Emitted when the configuration in effect changed. -->
+    <signal name="ConfigChanged"/>
+
+    <!-- Reads config.toml again and looks for engines that were installed or removed. -->
+    <method name="Reload"/>
+
+    <!--
+      The input method remembered for each application with `[apps] remember`:
+      (app id, input method id or empty for direct input).
+    -->
+    <method name="Apps">
+      <arg name="apps" type="a(ss)" direction="out"/>
+    </method>
+
+    <!-- Remembers an input method (empty: direct input) for an application. -->
+    <method name="SetAppInputMethod">
+      <arg name="app" type="s" direction="in"/>
+      <arg name="input_method" type="s" direction="in"/>
+    </method>
+
+    <!-- Forgets the input method of an application. -->
+    <method name="ForgetApp">
+      <arg name="app" type="s" direction="in"/>
+    </method>
+
+    <!--
+      Opens the settings program of an engine as an ordinary window, with the engine
+      running. Fails if the engine has none, or it is not installed.
+    -->
+    <method name="OpenSettings">
+      <arg name="engine" type="s" direction="in"/>
+    </method>
+
+    <!--
+      What `omime doctor` checks: "display" (s, the compositor), "seats" (a(sb): each
+      seat's name and whether omimed is its input method), "focused-app" (b: whether
+      the compositor reports the focused window).
+    -->
+    <method name="Diagnose">
+      <arg name="diagnosis" type="a{sv}" direction="out"/>
+    </method>
+  </interface>
+</node>

@@ -1,5 +1,6 @@
 //! `omimed` — the oh-my-ime daemon.
 
+mod catalog;
 mod control;
 mod core;
 mod daemon;

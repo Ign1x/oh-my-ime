@@ -275,6 +275,28 @@ both answered by the bridge.
   `XAyatanaLabel` and the icon. omimed's own tray item shows the icon, with the input
   method's `share/icons` as the theme path when the item names none.
 
+## Control API
+
+`io.github.ign1x.OhMyIme.Daemon1` on the session bus is how everything else talks to
+omimed: the `omime` command line tool, status bars, and settings programs. The XML in
+[`protocol/`](../protocol/io.github.ign1x.OhMyIme.Daemon1.xml) describes it.
+
+- **Lists.** `Engines` and `InputMethods` return dictionaries meant for a settings
+  program: every installed engine with its description, languages, kind and state, and
+  every input method there is to choose from, enabled or not. What a framework has
+  beyond what it is set up with (Fcitx 5's `AvailableInputMethods`, IBus's `Engines`,
+  without keyboard layouts) is kept in `$XDG_CACHE_HOME/oh-my-ime/catalog.toml`, so it
+  is listed before the framework runs again. `InputMethodsChanged` says when to read
+  them again.
+- **Configuration.** omimed is the one that writes `config.toml`: `Configure` sets
+  options by dotted name (`apps.remember`, `engines`), checks that the file stays
+  valid, keeps comments and everything else, writes it through a temporary file and
+  reloads. `omime enable`, `disable` and `config` use it; only `omime install` and
+  `uninstall`, which work without omimed, write the file themselves.
+  `ConfigChanged` follows every reload.
+- **Applications.** `Apps`, `SetAppInputMethod` and `ForgetApp` read and edit what
+  `[apps] remember` keeps for each application.
+
 ## Tray item
 
 omimed publishes one tray item on the session bus (`org.kde.StatusNotifierItem`, with a

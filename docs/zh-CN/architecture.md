@@ -95,6 +95,14 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - **框架内的输入法。** 用户选择的是输入法，而不是框架：Fcitx 5 的双拼与拼音、IBus 的 libpinyin 都是独立的选择，id 分别为 `fcitx5/shuangpin` 与 `ibus/libpinyin`，凡是引擎 id 出现的地方都能用（`Switch`、每个应用各自的引擎、`Ctrl+Shift+Space`、托盘菜单，以及 `config.toml` 的 `engines` 列表：其中 `fcitx5` 这样的条目代表 Fcitx 5 分组里的全部输入法，要运行哪些引擎取各条目的前缀）。Fcitx 5 只会切换到当前分组里的输入法，因此选中一个不在分组里的输入法时，先把它加进分组（`SetInputMethodGroupInfo`，Fcitx 5 会把它存进 profile）。每次启动被托管的引擎时，都有一个适配任务在旁边运行：它在私有总线上按名字找到 Fcitx 5，或者按 `omime-ibus` 在 `$OMIME_ENGINE_RUNTIME_DIR` 中给出的地址文件找到 IBus，并报告有哪些输入法（Fcitx 5 的当前分组；IBus 的 `preload-engines`，取自用户的 dconf 数据库，按文件读取）以及正在使用的是哪一个（`CurrentInputMethod`、`GlobalEngine`），同时跟随 `InputMethodGroupChanged`、`GlobalEngineChanged` 和框架的托盘项。选择操作是 `SetCurrentIM` 或 `SetGlobalEngine`，即使没有获得焦点的文本框也能生效。键盘布局被排除在外：直接输入属于 omimed。输入法列表和正在使用的输入法都会跨重启保留，因此可以在框架启动之前就选好，而框架启动时会拿回正在使用的输入法。
 - **托盘项。** Fcitx 5 与 IBus 会发布一个托盘项（`org.kde.StatusNotifierItem`），其中带有它们当前的输入法。私有总线上没有状态栏接收它，于是 omimed 在那里扮演 `org.kde.StatusNotifierWatcher`，跟随输入法注册的那个托盘项，并由它得出引擎的状态：悬停提示的标题、`XAyatanaLabel` 和图标。omimed 自己的托盘项显示这个图标；托盘项没有给出图标主题时，用输入法的 `share/icons` 作为主题路径。
 
+## 控制 API
+
+会话总线上的 `io.github.ign1x.OhMyIme.Daemon1` 是其它程序与 omimed 交互的方式：`omime` 命令行工具、状态栏和设置程序都用它。[`protocol/`](../../protocol/io.github.ign1x.OhMyIme.Daemon1.xml) 中的 XML 描述了它。
+
+- **列表。** `Engines` 和 `InputMethods` 返回面向设置程序的字典：每个已安装的引擎及其描述、语言、类型和状态，以及所有可供选择的输入法，不论是否已启用。框架在已配置的输入法之外还拥有的那些（Fcitx 5 的 `AvailableInputMethods`、IBus 的 `Engines`，均不含键盘布局）保存在 `$XDG_CACHE_HOME/oh-my-ime/catalog.toml` 中，因此框架再次运行之前也能列出它们。`InputMethodsChanged` 表示需要重新读取。
+- **配置。** `config.toml` 由 omimed 来写：`Configure` 按点分名称（`apps.remember`、`engines`）设置选项，检查文件仍然有效，保留注释和其它所有内容，经临时文件写入后重新加载。`omime enable`、`disable` 和 `config` 都用它；只有不需要 omimed 也能运行的 `omime install` 和 `uninstall` 会自己写文件。每次重新加载之后都会发出 `ConfigChanged`。
+- **应用。** `Apps`、`SetAppInputMethod` 和 `ForgetApp` 读取和修改 `[apps] remember` 为每个应用记住的内容。
+
 ## 托盘项
 
 omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。`[tray] enabled = false` 可以关掉它。

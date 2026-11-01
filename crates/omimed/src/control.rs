@@ -13,12 +13,18 @@ use zbus::{OwnedVariant, Variant};
 
 use crate::core::{EngineSummary, InputMethod};
 
+/// Every input method and whether it is enabled, and the one in use (`None` for direct
+/// input).
+pub type AllInputMethods = (Vec<(InputMethod, bool)>, Option<String>);
+
 /// Requests from D-Bus clients, answered by the daemon loop.
 #[derive(Debug)]
 pub enum ControlRequest {
     List(oneshot::Sender<Vec<EngineSummary>>),
     /// The input methods, and the one in use (`None` for direct input).
     ListInputMethods(oneshot::Sender<(Vec<InputMethod>, Option<String>)>),
+    /// Every input method, whether it is enabled, and the one in use.
+    AllInputMethods(oneshot::Sender<AllInputMethods>),
     Status(oneshot::Sender<Dict>),
     /// `None` selects direct input.
     Switch(Option<String>, oneshot::Sender<Result<(), String>>),
@@ -27,6 +33,17 @@ pub enum ControlRequest {
     Reload(oneshot::Sender<Result<(), String>>),
     /// Opens the settings program of an engine.
     OpenSettings(String, oneshot::Sender<Result<(), String>>),
+    /// The input method remembered for each application (`None`: direct input).
+    Apps(oneshot::Sender<Vec<(String, Option<String>)>>),
+    SetApp(String, Option<String>, oneshot::Sender<Result<(), String>>),
+    ForgetApp(String, oneshot::Sender<Result<(), String>>),
+    /// The configuration in effect.
+    Config(oneshot::Sender<omime_proto::config::Config>),
+    /// Sets options of config.toml, by dotted name, and reloads.
+    Configure(
+        Vec<(String, omime_proto::config::Value)>,
+        oneshot::Sender<Result<(), String>>,
+    ),
     Diagnose(oneshot::Sender<Dict>),
     /// What the tray item shows.
     Tray(oneshot::Sender<crate::tray::TrayInfo>),
@@ -118,6 +135,98 @@ impl ControlObject {
         failed(self.ask(ControlRequest::Reload).await?)
     }
 
+    /// The installed engines, enabled ones first in switching order, each a dictionary:
+    /// "id", "name", "description", "icon" (s), "languages" (as), "kind" (s: "engine"
+    /// or "hosted", an unmodified Wayland input method), "state" (s: "stopped",
+    /// "starting", "ready", "restarting" or "failed"), "enabled" and "settings" (b:
+    /// whether `OpenSettings` can open its settings).
+    async fn engines(&self) -> zbus::fdo::Result<Vec<Dict>> {
+        let engines = self.ask(ControlRequest::List).await?;
+        Ok(engines.iter().map(engine_dict).collect())
+    }
+
+    /// Every input method there is to choose from: the enabled ones in switching order,
+    /// then the ones the installed engines have besides, each a dictionary: "id" (what
+    /// `Switch` and the `engines` list of config.toml take), "name", "engine",
+    /// "engine-name", "icon", "label", "language" (s, empty when unknown), "enabled"
+    /// and "in-use" (b).
+    async fn input_methods(&self) -> zbus::fdo::Result<Vec<Dict>> {
+        let (methods, current) = self.ask(ControlRequest::AllInputMethods).await?;
+        Ok(methods
+            .iter()
+            .map(|(method, enabled)| {
+                let in_use = current.as_deref() == Some(method.id.as_str());
+                input_method_dict(method, *enabled, in_use)
+            })
+            .collect())
+    }
+
+    /// The configuration in effect, by the dotted names of config.toml's options:
+    /// "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
+    /// "apps.remember", "tray.enabled" (b), and "engines" (as) when config.toml lists
+    /// engines (otherwise every engine enabled by default is).
+    async fn config(&self) -> zbus::fdo::Result<Dict> {
+        let config = self.ask(ControlRequest::Config).await?;
+        Ok(config_dict(&config))
+    }
+
+    /// Sets options of config.toml, by the names `Config` uses ("engines" takes engines
+    /// and input methods, such as `fcitx5/shuangpin`, in switching order), keeping the
+    /// rest of the file, and applies them. Fails, changing nothing, when a value is not
+    /// valid.
+    async fn configure(&self, changes: Dict) -> zbus::fdo::Result<()> {
+        let mut values = Vec::new();
+        for (key, value) in changes {
+            let value = config_value(&key, value).map_err(zbus::fdo::Error::InvalidArgs)?;
+            values.push((key, value));
+        }
+        failed(self.ask(|tx| ControlRequest::Configure(values, tx)).await?)
+    }
+
+    /// The input method remembered for each application with `[apps] remember`: (app
+    /// id, input method id, or empty for direct input).
+    async fn apps(&self) -> zbus::fdo::Result<Vec<(String, String)>> {
+        let apps = self.ask(ControlRequest::Apps).await?;
+        Ok(apps
+            .into_iter()
+            .map(|(app, target)| (app, target.unwrap_or_default()))
+            .collect())
+    }
+
+    /// Remembers `input_method` (empty for direct input) for the application `app`.
+    async fn set_app_input_method(
+        &self,
+        app: String,
+        input_method: String,
+    ) -> zbus::fdo::Result<()> {
+        let target = (!input_method.is_empty()).then_some(input_method);
+        failed(
+            self.ask(|tx| ControlRequest::SetApp(app, target, tx))
+                .await?,
+        )
+    }
+
+    /// Forgets the input method of the application `app`.
+    async fn forget_app(&self, app: String) -> zbus::fdo::Result<()> {
+        failed(self.ask(|tx| ControlRequest::ForgetApp(app, tx)).await?)
+    }
+
+    /// Emitted when the configuration in effect changed.
+    #[zbus(signal)]
+    async fn config_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    /// The version of omimed.
+    #[zbus(property)]
+    fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    /// Emitted when what `Engines` or `InputMethods` return may have changed: engines
+    /// came or went, the configuration changed, or a framework reported its input
+    /// methods.
+    #[zbus(signal)]
+    async fn input_methods_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
     /// Opens the settings of `engine` (its settings program, with an ordinary window).
     /// Fails if the engine has none, or it is not installed.
     async fn open_settings(&self, engine: String) -> zbus::fdo::Result<()> {
@@ -147,9 +256,12 @@ impl ControlObject {
 
 /// A signal waiting to be emitted.
 #[derive(Debug)]
+/// What changed, for the signal of the same name with `Changed`.
 enum Signal {
-    CurrentChanged(String),
-    StatusChanged(Dict),
+    Current(String),
+    Status(Dict),
+    InputMethods,
+    Config,
 }
 
 /// The running control service.
@@ -167,9 +279,19 @@ impl ControlService {
         if self.current.borrow().as_deref() != engine {
             self.current.replace(engine.map(str::to_owned));
             let engine = engine.unwrap_or_default().to_owned();
-            let _ = self.signals.send(Signal::CurrentChanged(engine));
+            let _ = self.signals.send(Signal::Current(engine));
         }
-        let _ = self.signals.send(Signal::StatusChanged(status));
+        let _ = self.signals.send(Signal::Status(status));
+    }
+
+    /// Announces that the engines or input methods to choose from may have changed.
+    pub fn input_methods_changed(&self) {
+        let _ = self.signals.send(Signal::InputMethods);
+    }
+
+    /// Announces that the configuration in effect changed.
+    pub fn config_changed(&self) {
+        let _ = self.signals.send(Signal::Config);
     }
 }
 
@@ -205,12 +327,10 @@ pub async fn start(
         };
         while let Some(signal) = pending.recv().await {
             let _ = match signal {
-                Signal::CurrentChanged(engine) => {
-                    ControlObject::current_changed(&emitter, &engine).await
-                }
-                Signal::StatusChanged(status) => {
-                    ControlObject::status_changed(&emitter, &status).await
-                }
+                Signal::Current(engine) => ControlObject::current_changed(&emitter, &engine).await,
+                Signal::Status(status) => ControlObject::status_changed(&emitter, &status).await,
+                Signal::InputMethods => ControlObject::input_methods_changed(&emitter).await,
+                Signal::Config => ControlObject::config_changed(&emitter).await,
             };
         }
     });
@@ -218,6 +338,125 @@ pub async fn start(
         signals,
         current: RefCell::new(None),
     })
+}
+
+fn owned(value: Variant<'_>) -> OwnedVariant {
+    OwnedVariant::try_from(value).expect("no file descriptors")
+}
+
+/// The reply of `Config`.
+fn config_dict(config: &omime_proto::config::Config) -> Dict {
+    let mut dict = Dict::from([
+        (
+            "hotkeys.toggle".to_owned(),
+            owned(Variant::from(config.hotkeys.toggle.as_str())),
+        ),
+        (
+            "hotkeys.next".to_owned(),
+            owned(Variant::from(config.hotkeys.next.as_str())),
+        ),
+        (
+            "engine.key_timeout_ms".to_owned(),
+            owned(Variant::from(config.engine.key_timeout_ms)),
+        ),
+        (
+            "apps.remember".to_owned(),
+            owned(Variant::from(config.apps.remember)),
+        ),
+        (
+            "tray.enabled".to_owned(),
+            owned(Variant::from(config.tray.enabled)),
+        ),
+    ]);
+    if let Some(engines) = &config.engines {
+        dict.insert("engines".to_owned(), owned(Variant::from(engines)));
+    }
+    dict
+}
+
+/// A value of `Configure`, checked against the type of its option.
+fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::Value, String> {
+    use omime_proto::config::Value;
+    let wrong = || format!("`{key}` does not take {}", value.value_signature());
+    let take = || value.try_clone().map_err(|_| wrong());
+    Ok(match key {
+        "engines" => Value::List(Vec::<String>::try_from(take()?).map_err(|_| wrong())?),
+        "hotkeys.toggle" | "hotkeys.next" => {
+            Value::String(String::try_from(take()?).map_err(|_| wrong())?)
+        }
+        "apps.remember" | "tray.enabled" => {
+            Value::Bool(bool::try_from(take()?).map_err(|_| wrong())?)
+        }
+        "engine.key_timeout_ms" => Value::Integer(match &*value {
+            Variant::U32(n) => i64::from(*n),
+            Variant::I32(n) => i64::from(*n),
+            Variant::U64(n) => i64::try_from(*n).map_err(|_| wrong())?,
+            Variant::I64(n) => *n,
+            _ => return Err(wrong()),
+        }),
+        _ => return Err(format!("there is no option `{key}`")),
+    })
+}
+
+/// An entry of the reply of `Engines`.
+fn engine_dict(engine: &EngineSummary) -> Dict {
+    Dict::from([
+        ("id".to_owned(), owned(Variant::from(engine.id.as_str()))),
+        (
+            "name".to_owned(),
+            owned(Variant::from(engine.name.as_str())),
+        ),
+        (
+            "description".to_owned(),
+            owned(Variant::from(
+                engine.description.as_deref().unwrap_or_default(),
+            )),
+        ),
+        (
+            "icon".to_owned(),
+            owned(Variant::from(engine.icon.as_deref().unwrap_or_default())),
+        ),
+        (
+            "languages".to_owned(),
+            owned(Variant::from(&engine.languages)),
+        ),
+        (
+            "kind".to_owned(),
+            owned(Variant::from(if engine.hosted {
+                "hosted"
+            } else {
+                "engine"
+            })),
+        ),
+        ("state".to_owned(), owned(Variant::from(engine.state))),
+        ("enabled".to_owned(), owned(Variant::from(engine.enabled))),
+        ("settings".to_owned(), owned(Variant::from(engine.settings))),
+    ])
+}
+
+/// An entry of the reply of `InputMethods`.
+fn input_method_dict(method: &InputMethod, enabled: bool, in_use: bool) -> Dict {
+    let text = |value: &Option<String>| owned(Variant::from(value.as_deref().unwrap_or_default()));
+    Dict::from([
+        ("id".to_owned(), owned(Variant::from(method.id.as_str()))),
+        (
+            "name".to_owned(),
+            owned(Variant::from(method.name.as_str())),
+        ),
+        (
+            "engine".to_owned(),
+            owned(Variant::from(method.engine.as_str())),
+        ),
+        (
+            "engine-name".to_owned(),
+            owned(Variant::from(method.engine_name.as_str())),
+        ),
+        ("icon".to_owned(), text(&method.icon)),
+        ("label".to_owned(), text(&method.label)),
+        ("language".to_owned(), text(&method.language)),
+        ("enabled".to_owned(), owned(Variant::from(enabled))),
+        ("in-use".to_owned(), owned(Variant::from(in_use))),
+    ])
 }
 
 /// Builds the reply of `Diagnose`.

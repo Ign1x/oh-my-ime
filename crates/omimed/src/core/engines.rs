@@ -241,6 +241,8 @@ pub struct EngineSlot {
     pub tray: Option<HostedTray>,
     /// The input methods inside a hosted framework, as it last reported them.
     pub methods: Vec<InnerMethod>,
+    /// Every input method the framework has, set up or not.
+    pub available: Vec<InnerMethod>,
     /// The input method the framework uses, as it last reported it.
     pub inner: Option<String>,
     /// The input method chosen through omimed that the framework does not use yet. It is
@@ -319,6 +321,7 @@ impl EngineManager {
             status: Status::default(),
             tray: None,
             methods: Vec::new(),
+            available: Vec::new(),
             inner: None,
             wanted_inner: None,
             wanted_retried: false,
@@ -638,6 +641,11 @@ impl EngineManager {
             FrameworkUpdate::Methods(methods) => {
                 let changed = slot.methods != methods;
                 slot.methods = methods;
+                changed
+            }
+            FrameworkUpdate::Available(available) => {
+                let changed = slot.available != available;
+                slot.available = available;
                 changed
             }
             FrameworkUpdate::Current(inner) => {

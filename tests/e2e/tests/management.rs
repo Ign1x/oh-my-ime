@@ -267,3 +267,35 @@ fn frameworks_are_offered_where_installed_and_enabled_when_asked() -> anyhow::Re
     assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn options_are_set_through_omimed_keeping_the_file() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], None)?;
+    env.configure("# my settings\n[hotkeys]\n# mine too\nnext = \"Super+n\"\n")?;
+    let config = env.omime(&["config"])?;
+    assert!(config.contains("hotkeys.next = \"Super+n\""), "{config}");
+    assert!(config.contains("apps.remember = false"), "{config}");
+
+    env.omime(&["config", "apps.remember", "true"])?;
+    env.omime(&["config", "engine.key_timeout_ms", "300"])?;
+    assert!(env.omime(&["config"])?.contains("apps.remember = true"));
+    let file = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
+    assert!(file.starts_with("# my settings\n"), "{file}");
+    assert!(file.contains("# mine too\nnext = \"Super+n\""), "{file}");
+    assert!(file.contains("key_timeout_ms = 300"), "{file}");
+
+    // What is not valid is refused, and changes nothing.
+    for (key, value) in [
+        ("hotkeys.toggle", "Hyper+a"),
+        ("apps.remember", "maybe"),
+        ("apps.remeber", "true"),
+        ("engines", "echo,gone"),
+    ] {
+        let (status, _) = env.omime_status(&["config", key, value])?;
+        assert!(!status.success(), "{key} = {value}");
+    }
+    let unchanged = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
+    assert_eq!(unchanged, file);
+    Ok(())
+}

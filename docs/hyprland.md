@@ -86,13 +86,15 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | Toggle between direct input and the last engine | `Ctrl+Space` (while a text field is focused) |
 | Next input method | `Ctrl+Shift+Space`, or `omime next` |
 | Pick an input method | `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`, or the tray menu |
-| See what to choose from | `omime list` (`*` marks the input method in use) |
+| See what to choose from | `omime list` (`*` marks the input method in use); `omime list --all` adds what you can enable (`-`) |
 | See what is installed | `omime engines` (`*` marks enabled engines) |
 | Find out what is wrong | `omime doctor` (exit status 1 when it finds a problem) |
 | Enable / disable an engine | `omime enable echo`, `omime disable echo` |
 | Configure an engine | `omime settings fcitx5`, or "Configure …" in the tray menu |
 | Install / remove an engine | `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Reload the configuration | `omime reload`, `systemctl --user reload omimed` or SIGHUP |
+| See or set options | `omime config`, `omime config apps.remember true` |
+| What each application gets back | `omime apps`, `omime apps forget <app>` |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
 omimed starts with the engine you used last. The hotkeys and the key timeout live in

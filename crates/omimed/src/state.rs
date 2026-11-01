@@ -84,6 +84,7 @@ mod tests {
                     name: "双拼".into(),
                     icon: "fcitx-shuangpin".into(),
                     label: "双".into(),
+                    language: "zh_CN".into(),
                 }],
             )]),
         };

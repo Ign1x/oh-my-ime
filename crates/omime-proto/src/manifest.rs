@@ -245,12 +245,26 @@ impl Manifest {
     /// The engine's name in `locale` (e.g. `zh-CN` or `zh_CN.UTF-8`), falling back to
     /// the language alone and then to the untranslated name.
     pub fn localized_name(&self, locale: &str) -> &str {
+        self.translation(locale, |t| t.name.as_deref())
+            .unwrap_or(&self.engine.name)
+    }
+
+    /// The engine's description in `locale`, like [`Self::localized_name`].
+    pub fn localized_description(&self, locale: &str) -> Option<&str> {
+        self.translation(locale, |t| t.description.as_deref())
+            .or(self.engine.description.as_deref())
+    }
+
+    fn translation<'a>(
+        &'a self,
+        locale: &str,
+        field: impl Fn(&'a Translation) -> Option<&'a str>,
+    ) -> Option<&'a str> {
         let locale = locale.split('.').next().unwrap_or(locale).replace('_', "-");
         let language = locale.split('-').next().unwrap_or(&locale);
         [locale.as_str(), language]
             .iter()
-            .find_map(|l| self.engine.i18n.get(*l).and_then(|t| t.name.as_deref()))
-            .unwrap_or(&self.engine.name)
+            .find_map(|l| self.engine.i18n.get(*l).and_then(&field))
     }
 }
 

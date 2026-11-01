@@ -77,13 +77,15 @@ bind = SUPER, space, exec, omime next
 | 在直接输入与上次使用的引擎之间切换 | `Ctrl+Space`（在文本框获得焦点时） |
 | 下一个输入法 | `Ctrl+Shift+Space`，或 `omime next` |
 | 指定输入法 | `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`，或使用托盘菜单 |
-| 查看可选项 | `omime list`（`*` 标记正在使用的输入法） |
+| 查看可选项 | `omime list`（`*` 标记正在使用的输入法）；`omime list --all` 还会列出可以启用的（`-`） |
 | 查看已安装的内容 | `omime engines`（`*` 标记已启用的引擎） |
 | 排查问题 | `omime doctor`（发现问题时退出状态为 1） |
 | 启用 / 禁用引擎 | `omime enable echo`、`omime disable echo` |
 | 配置引擎 | `omime settings fcitx5`，或托盘菜单里的“配置 …” |
 | 安装 / 移除引擎 | `omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 重新加载配置 | `omime reload`、`systemctl --user reload omimed` 或 SIGHUP |
+| 查看或修改选项 | `omime config`、`omime config apps.remember true` |
+| 各个应用会拿回的输入法 | `omime apps`、`omime apps forget <应用>` |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
 omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。

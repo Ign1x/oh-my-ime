@@ -16,7 +16,8 @@ const USAGE: &str = "\
 Usage: omime <COMMAND>
 
 Commands:
-  list             List the input methods to choose from (* marks the one in use)
+  list [--all]     List the input methods to choose from (* marks the one in use);
+                   with --all also those you can enable (marked -)
   engines          List installed engines (* marks enabled ones)
   status [--json] [--watch]
                    Show the input method in use (`--watch` keeps streaming changes)
@@ -28,6 +29,12 @@ Commands:
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
   settings <ENGINE>
                    Open the settings of an engine, such as `fcitx5`
+  apps [forget <APP>]
+                   Show the input method each application gets back with
+                   `[apps] remember`, or forget one
+  config [<KEY> <VALUE>]
+                   Show the options of config.toml, or set one, such as
+                   `omime config apps.remember true`
   install <DIR>    Install an engine from a directory (`--force` to replace it)
   uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
@@ -52,6 +59,11 @@ trait Daemon {
     fn toggle(&self) -> zbus::Result<()>;
     fn reload(&self) -> zbus::Result<()>;
     fn open_settings(&self, engine: &str) -> zbus::Result<()>;
+    fn input_methods(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
+    fn config(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
+    fn apps(&self) -> zbus::Result<Vec<(String, String)>>;
+    fn forget_app(&self, app: &str) -> zbus::Result<()>;
+    fn configure(&self, changes: HashMap<&str, zbus::Variant<'_>>) -> zbus::Result<()>;
 
     /// The compositor, the seats and whether focus is reported; see `doctor`.
     fn diagnose(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
@@ -79,8 +91,11 @@ enum Command {
 
 enum DaemonCommand {
     List,
+    ListAll,
     Engines,
-    Status { json: bool },
+    Status {
+        json: bool,
+    },
     Switch(String),
     Next,
     Toggle,
@@ -88,6 +103,10 @@ enum DaemonCommand {
     Disable(String),
     Reload,
     Settings(String),
+    /// Shows the configuration (`None`) or sets an option.
+    Config(Option<(String, String)>),
+    Apps,
+    ForgetApp(String),
 }
 
 fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
@@ -110,6 +129,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
         }
         args => Command::Daemon(match args {
             ["list"] => DaemonCommand::List,
+            ["list", "--all"] => DaemonCommand::ListAll,
             ["engines"] => DaemonCommand::Engines,
             ["status"] => DaemonCommand::Status { json: false },
             ["status", "--json"] => DaemonCommand::Status { json: true },
@@ -120,6 +140,12 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             ["disable", engine] => DaemonCommand::Disable((*engine).to_owned()),
             ["reload"] => DaemonCommand::Reload,
             ["settings", engine] => DaemonCommand::Settings((*engine).to_owned()),
+            ["apps"] => DaemonCommand::Apps,
+            ["apps", "forget", app] => DaemonCommand::ForgetApp((*app).to_owned()),
+            ["config"] => DaemonCommand::Config(None),
+            ["config", key, value] => {
+                DaemonCommand::Config(Some(((*key).to_owned(), (*value).to_owned())))
+            }
             _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
         }),
     }))
@@ -310,17 +336,13 @@ fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
     };
-    let doc: toml_edit::DocumentMut = text
-        .parse()
-        .with_context(|| format!("cannot parse {}", path.display()))?;
-    if doc.get("engines").is_none() {
-        return Ok(());
-    }
-    let updated = edit_engines(&text, &[], engine, enable, &[])
+    let updated = edit_engines(&text, engine, enable)
         .with_context(|| format!("cannot update {}", path.display()))?;
     if updated != text {
-        std::fs::write(&path, updated)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+        // Through a temporary file: omimed may be reading it.
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, updated).with_context(|| format!("cannot write {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
     }
     Ok(())
 }
@@ -343,6 +365,28 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
                 } else {
                     engine
                 };
+                println!("{mark} {id:<24} {} {engine}", pad(&name, 24));
+            }
+        }
+        DaemonCommand::ListAll => {
+            let flag = |method: &HashMap<String, OwnedVariant>, key: &str| {
+                method
+                    .get(key)
+                    .and_then(|v| v.try_clone().ok())
+                    .and_then(|v| bool::try_from(v).ok())
+                    .unwrap_or(false)
+            };
+            for method in daemon.input_methods().await? {
+                let mark = match (flag(&method, "in-use"), flag(&method, "enabled")) {
+                    (true, _) => '*',
+                    (false, true) => ' ',
+                    (false, false) => '-',
+                };
+                let id = string(&method, "id").unwrap_or_default();
+                let name = string(&method, "name").unwrap_or_default();
+                let engine = string(&method, "engine-name")
+                    .filter(|engine| *engine != name)
+                    .unwrap_or_default();
                 println!("{mark} {id:<24} {} {engine}", pad(&name, 24));
             }
         }
@@ -370,6 +414,31 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
         DaemonCommand::Disable(engine) => set_enabled(&daemon, &engine, false).await?,
         DaemonCommand::Reload => daemon.reload().await?,
         DaemonCommand::Settings(engine) => daemon.open_settings(&engine).await?,
+        DaemonCommand::Apps => {
+            for (app, target) in daemon.apps().await? {
+                let target = if target.is_empty() {
+                    "direct"
+                } else {
+                    target.as_str()
+                };
+                println!("{app:<32} {target}");
+            }
+        }
+        DaemonCommand::ForgetApp(app) => daemon.forget_app(&app).await?,
+        DaemonCommand::Config(None) => {
+            let config = daemon.config().await?;
+            let mut keys: Vec<&String> = config.keys().collect();
+            keys.sort();
+            for key in keys {
+                println!("{key} = {}", show_value(&config[key]));
+            }
+        }
+        DaemonCommand::Config(Some((key, value))) => {
+            let value = parse_value(&key, &value)?;
+            daemon
+                .configure(HashMap::from([(key.as_str(), value)]))
+                .await?;
+        }
     }
     Ok(())
 }
@@ -400,49 +469,79 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, entry: &str, enable: bool) -> any
             inner.unwrap_or_default()
         );
     }
-    let dir =
-        omime_proto::paths::config_dir().context("cannot find the configuration directory")?;
-    let path = dir.join(omime_proto::config::CONFIG_FILE);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    // omimed writes config.toml, so that it is the only one that does.
+    let config = daemon.config().await?;
+    let list: Vec<String> = match config.get("engines") {
+        Some(value) => value.try_clone()?.try_into()?,
+        None => installed
+            .iter()
+            .filter(|(.., enabled, _)| *enabled)
+            .map(|(id, ..)| id.clone())
+            .collect(),
     };
-    let enabled_now: Vec<String> = installed
-        .iter()
-        .filter(|(.., enabled, _)| *enabled)
-        .map(|(id, ..)| id.clone())
-        .collect();
-    let updated = edit_engines(&text, &enabled_now, entry, enable, &inside)
-        .with_context(|| format!("cannot update {}", path.display()))?;
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(&path, updated).with_context(|| format!("cannot write {}", path.display()))?;
-    daemon.reload().await?;
+    let list = edited_entries(list, entry, enable, &inside);
+    let value = zbus::Variant::from(list);
+    daemon
+        .configure(HashMap::from([("engines", value)]))
+        .await?;
     Ok(())
 }
 
-/// Returns `config` with `entry` (an engine, or an input method inside one) added to or
-/// removed from the `engines` list. Without a list, `enabled_now` (everything enabled)
-/// is the starting point. Removing an input method of an engine listed as a whole
-/// lists the engine's other input methods, `inside`, instead; removing an engine
+/// An option's value as config.toml writes it.
+fn show_value(value: &OwnedVariant) -> String {
+    use zbus::Variant as Value;
+    match &**value {
+        Value::Str(s) => format!("{:?}", s.as_str()),
+        Value::Bool(b) => b.to_string(),
+        Value::U64(n) => n.to_string(),
+        Value::Array(items) => {
+            let items: Vec<String> = items
+                .iter()
+                .map(|item| match item {
+                    Value::Str(s) => format!("{:?}", s.as_str()),
+                    other => format!("{other}"),
+                })
+                .collect();
+            format!("[{}]", items.join(", "))
+        }
+        other => format!("{other}"),
+    }
+}
+
+/// The value `text` gives the option `key` on the command line: true or false, a
+/// number, or a list of comma-separated entries for `engines`.
+fn parse_value(key: &str, text: &str) -> anyhow::Result<zbus::Variant<'static>> {
+    use zbus::Variant as Value;
+    Ok(match key {
+        "apps.remember" | "tray.enabled" => Value::from(
+            text.parse::<bool>()
+                .with_context(|| format!("`{key}` is true or false"))?,
+        ),
+        "engine.key_timeout_ms" => Value::from(
+            text.parse::<u64>()
+                .with_context(|| format!("`{key}` is a number of milliseconds"))?,
+        ),
+        "engines" => Value::from(
+            text.split(',')
+                .map(str::trim)
+                .filter(|e| !e.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<String>>(),
+        ),
+        _ => Value::from(text.to_owned()),
+    })
+}
+
+/// `list`, the `engines` of config.toml, with `entry` (an engine, or an input method
+/// inside one) added or removed. Removing an input method of an engine listed as a
+/// whole lists the engine's other input methods, `inside`, instead; removing an engine
 /// removes its input methods too.
-fn edit_engines(
-    config: &str,
-    enabled_now: &[String],
+fn edited_entries(
+    mut list: Vec<String>,
     entry: &str,
     enable: bool,
     inside: &[String],
-) -> anyhow::Result<String> {
-    let mut doc: toml_edit::DocumentMut = config.parse()?;
-    let mut list: Vec<String> = match doc.get("engines") {
-        Some(item) => item
-            .as_array()
-            .context("`engines` must be a list of engine ids")?
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect(),
-        None => enabled_now.to_vec(),
-    };
+) -> Vec<String> {
     match (enable, entry.split_once('/')) {
         (true, _) => {
             if !list.iter().any(|e| e == entry) {
@@ -463,9 +562,25 @@ fn edit_engines(
     }
     let mut seen = std::collections::HashSet::new();
     list.retain(|e| seen.insert(e.clone()));
-    let array: toml_edit::Array = list.iter().map(String::as_str).collect();
-    doc["engines"] = toml_edit::value(array);
-    Ok(doc.to_string())
+    list
+}
+
+/// Returns `config` with `entry` added to or removed from an explicit `engines` list,
+/// which [`edited_entries`] edits; without a list, nothing changes.
+fn edit_engines(config: &str, entry: &str, enable: bool) -> anyhow::Result<String> {
+    let doc: toml_edit::DocumentMut = config.parse()?;
+    let Some(item) = doc.get("engines") else {
+        return Ok(config.to_owned());
+    };
+    let list: Vec<String> = item
+        .as_array()
+        .context("`engines` must be a list of engine ids")?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect();
+    let list = edited_entries(list, entry, enable, &[]);
+    omime_proto::config::edit(config, "engines", omime_proto::config::Value::List(list))
+        .map_err(anyhow::Error::msg)
 }
 
 fn main() -> ExitCode {
@@ -564,45 +679,49 @@ mod tests {
         assert!(parse(&args("uninstall")).is_err());
         assert!(parse(&args("switch")).is_err());
         assert!(parse(&args("frobnicate")).is_err());
+        assert!(matches!(
+            parse(&args("list --all")),
+            Ok(Some(Command::Daemon(DaemonCommand::ListAll)))
+        ));
+        assert!(matches!(
+            parse(&args("config")),
+            Ok(Some(Command::Daemon(DaemonCommand::Config(None))))
+        ));
+        assert!(matches!(
+            parse(&args("config apps.remember true")),
+            Ok(Some(Command::Daemon(DaemonCommand::Config(Some(_)))))
+        ));
+        assert!(parse(&args("config apps.remember")).is_err());
     }
 
     #[test]
     fn editing_engines_keeps_the_rest_of_the_file() {
         let config = "# my settings\nengines = [\"echo\"]\n\n[hotkeys]\nnext = \"Super+space\"\n";
-        let enabled = edit_engines(config, &[], "sparkle", true, &[]).unwrap();
+        let enabled = edit_engines(config, "sparkle", true).unwrap();
         assert!(enabled.starts_with("# my settings\nengines = [\"echo\", \"sparkle\"]"));
         assert!(enabled.contains("next = \"Super+space\""));
-        let disabled = edit_engines(&enabled, &[], "echo", false, &[]).unwrap();
+        let disabled = edit_engines(&enabled, "echo", false).unwrap();
         assert!(disabled.contains("engines = [\"sparkle\"]"));
-    }
-
-    #[test]
-    fn disabling_without_a_list_starts_from_everything_enabled() {
-        let all = ["echo".to_owned(), "sparkle".to_owned()];
-        let config = edit_engines("", &all, "echo", false, &[]).unwrap();
-        assert_eq!(config.trim(), "engines = [\"sparkle\"]");
+        // Without a list, every installed engine is enabled already.
+        assert_eq!(edit_engines("", "echo", true).unwrap(), "");
     }
 
     #[test]
     fn input_methods_inside_frameworks_are_entries_of_their_own() {
         let inside = ["fcitx5/shuangpin".to_owned(), "fcitx5/pinyin".to_owned()];
-        let list = |config: &str| config.trim().to_owned();
+        let list = |entries: &[&str]| entries.iter().map(|e| (*e).to_owned()).collect::<Vec<_>>();
         // One more input method of Fcitx 5.
-        let config = "engines = [\"fcitx5\", \"sparkle\"]\n";
-        let config = edit_engines(config, &[], "fcitx5/rime", true, &inside).unwrap();
-        assert_eq!(
-            list(&config),
-            "engines = [\"fcitx5\", \"sparkle\", \"fcitx5/rime\"]"
-        );
+        let entries = edited_entries(list(&["fcitx5", "sparkle"]), "fcitx5/rime", true, &inside);
+        assert_eq!(entries, list(&["fcitx5", "sparkle", "fcitx5/rime"]));
         // Fcitx 5 without pinyin: its other input methods stay, in place.
-        let config = edit_engines(&config, &[], "fcitx5/pinyin", false, &inside).unwrap();
+        let entries = edited_entries(entries, "fcitx5/pinyin", false, &inside);
         assert_eq!(
-            list(&config),
-            "engines = [\"fcitx5/shuangpin\", \"sparkle\", \"fcitx5/rime\"]"
+            entries,
+            list(&["fcitx5/shuangpin", "sparkle", "fcitx5/rime"])
         );
         // No Fcitx 5 at all.
-        let config = edit_engines(&config, &[], "fcitx5", false, &inside).unwrap();
-        assert_eq!(list(&config), "engines = [\"sparkle\"]");
+        let entries = edited_entries(entries, "fcitx5", false, &inside);
+        assert_eq!(entries, list(&["sparkle"]));
     }
 
     #[test]

@@ -27,6 +27,11 @@ pub fn state_dir() -> Option<PathBuf> {
     xdg_dir("XDG_STATE_HOME", ".local/state").map(|d| d.join(PROJECT_DIR))
 }
 
+/// `$XDG_CACHE_HOME/oh-my-ime`.
+pub fn cache_dir() -> Option<PathBuf> {
+    xdg_dir("XDG_CACHE_HOME", ".cache").map(|d| d.join(PROJECT_DIR))
+}
+
 /// `$XDG_DATA_HOME/oh-my-ime/engines`, the directory `omime install` writes to.
 pub fn user_engine_dir() -> Option<PathBuf> {
     xdg_dir("XDG_DATA_HOME", ".local/share").map(|d| d.join(PROJECT_DIR).join("engines"))

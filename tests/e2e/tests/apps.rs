@@ -69,3 +69,24 @@ fn applications_share_the_engine_by_default() -> anyhow::Result<()> {
     a.wait_for_text("cd ")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_remembered_input_methods_can_be_listed_and_forgotten() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], None)?;
+    env.omime(&["config", "apps.remember", "true"])?;
+    let _a = env.editor(&["--app-id", "editor-a"])?;
+    env.wait_for_log("focused application changed app=\"editor-a\"")?;
+    env.omime(&["switch", "echo"])?;
+    let apps = env.omime(&["apps"])?;
+    assert!(
+        apps.lines()
+            .any(|l| l.starts_with("editor-a") && l.ends_with("echo")),
+        "{apps}"
+    );
+    env.omime(&["apps", "forget", "editor-a"])?;
+    assert_eq!(env.omime(&["apps"])?, "");
+    // Nothing more to forget.
+    assert!(env.omime(&["apps", "forget", "editor-a"]).is_err());
+    Ok(())
+}

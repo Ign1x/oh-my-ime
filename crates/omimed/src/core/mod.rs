@@ -28,6 +28,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use xkbcommon::xkb;
 
+use crate::catalog::Catalog;
 use crate::frontend::{FrontendEvent, Frontends, HostedEvent, KeyDelivery, KeyRef, Origin};
 use crate::state::State;
 use crate::wayland::EngineId;
@@ -106,6 +107,8 @@ pub struct InputMethod {
     pub icon: Option<String>,
     /// A short label, such as 双.
     pub label: Option<String>,
+    /// The language it is for (`zh_CN`, `ja`), when known.
+    pub language: Option<String>,
 }
 
 /// Splits a switch target `engine/inner` into the engine and the input method inside.
@@ -211,6 +214,10 @@ impl Context {
 
 /// Callback for changes of what is kept across restarts.
 type StateListener = Box<dyn Fn(&State)>;
+/// Callback for changes of what the frameworks have.
+type CatalogListener = Box<dyn Fn(&Catalog)>;
+/// Callback for changes of the engines and input methods to choose from.
+type ListsListener = Box<dyn Fn()>;
 /// Callback for changes of the current engine or of the status it published.
 type StatusListener = Box<dyn Fn(Option<&str>, Option<&str>, Option<&Status>)>;
 
@@ -225,6 +232,11 @@ pub struct EngineSummary {
     pub icon: Option<String>,
     /// Whether it has a settings program that is installed.
     pub settings: bool,
+    pub description: Option<String>,
+    /// The languages it is for (BCP 47).
+    pub languages: Vec<String>,
+    /// Whether it is a hosted Wayland input method rather than an engine of omimed's.
+    pub hosted: bool,
 }
 
 /// The core state.
@@ -251,6 +263,8 @@ pub struct Core {
     /// Called whenever `current` changes.
     on_state: Option<StateListener>,
     on_status: Option<StatusListener>,
+    on_catalog: Option<CatalogListener>,
+    on_lists: Option<ListsListener>,
     /// Whether applications keep their own engine (`[apps] remember`).
     remember_apps: bool,
     /// The app id of the focused window, when the compositor reports it.
@@ -293,6 +307,8 @@ impl Core {
             visible_engines: BTreeSet::new(),
             on_state: None,
             on_status: None,
+            on_catalog: None,
+            on_lists: None,
             remember_apps: config.apps.remember,
             focused_app: None,
             app_engines: BTreeMap::new(),
@@ -303,6 +319,44 @@ impl Core {
     /// and the last engine, and the engines of applications.
     pub fn set_state_listener(&mut self, listener: impl Fn(&State) + 'static) {
         self.on_state = Some(Box::new(listener));
+    }
+
+    pub fn set_catalog_listener(&mut self, listener: impl Fn(&Catalog) + 'static) {
+        self.on_catalog = Some(Box::new(listener));
+    }
+
+    /// Called when the engines or input methods to choose from may have changed.
+    pub fn set_lists_listener(&mut self, listener: impl Fn() + 'static) {
+        self.on_lists = Some(Box::new(listener));
+    }
+
+    fn lists_changed(&self) {
+        if let Some(listener) = &self.on_lists {
+            listener();
+        }
+    }
+
+    /// What the frameworks had when omimed last saw them.
+    pub fn restore_catalog(&mut self, catalog: &Catalog) {
+        for (engine, available) in &catalog.available {
+            if let Some(slot) = self.engines.get_mut(engine) {
+                slot.available = available.clone();
+            }
+        }
+    }
+
+    fn catalog_changed(&self) {
+        if let Some(listener) = &self.on_catalog {
+            listener(&Catalog {
+                available: self
+                    .engines
+                    .ids()
+                    .filter_map(|id| Some((id, self.engines.get(id)?)))
+                    .filter(|(_, slot)| !slot.available.is_empty())
+                    .map(|(id, slot)| (id.to_owned(), slot.available.clone()))
+                    .collect(),
+            });
+        }
     }
 
     fn state_changed(&self) {
@@ -418,6 +472,7 @@ impl Core {
             self.last_engine = None;
         }
         info!(enabled = self.enabled.join(", "), "configuration reloaded");
+        self.lists_changed();
     }
 
     pub fn current(&self) -> Option<&str> {
@@ -477,6 +532,7 @@ impl Core {
                 engine_name: engine_name.clone(),
                 icon: text(&method.icon),
                 label: text(&method.label),
+                language: text(&method.language),
             };
             match inner {
                 // Named before the framework has listed it, it is still there to choose.
@@ -495,6 +551,7 @@ impl Core {
                     engine_name: engine_name.clone(),
                     icon: slot.installed.manifest.engine.icon.clone(),
                     label: None,
+                    language: slot.installed.manifest.engine.languages.first().cloned(),
                 }),
                 None => methods.extend(slot.methods.iter().map(inside)),
             }
@@ -503,6 +560,60 @@ impl Core {
         let mut seen = HashSet::new();
         methods.retain(|m| seen.insert(m.id.clone()));
         methods
+    }
+
+    /// Every input method there is to choose from, and whether it is enabled: the
+    /// enabled ones in switching order, then what the installed engines have besides
+    /// (input methods of frameworks that are not set up or enabled, engines that are
+    /// not enabled).
+    pub fn all_input_methods(&self) -> Vec<(InputMethod, bool)> {
+        let locale = std::env::var("LC_ALL")
+            .or_else(|_| std::env::var("LC_MESSAGES"))
+            .or_else(|_| std::env::var("LANG"))
+            .unwrap_or_default();
+        let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+        let mut all: Vec<(InputMethod, bool)> = self
+            .input_methods()
+            .into_iter()
+            .map(|m| (m, true))
+            .collect();
+        for id in self.engines.ids() {
+            let Some(slot) = self.engines.get(id) else {
+                continue;
+            };
+            let engine_name = slot.installed.manifest.localized_name(&locale).to_owned();
+            let mut offered: Vec<InputMethod> = slot
+                .methods
+                .iter()
+                .chain(&slot.available)
+                .map(|method| InputMethod {
+                    id: format!("{id}/{}", method.id),
+                    name: method.name.clone(),
+                    engine: id.to_owned(),
+                    engine_name: engine_name.clone(),
+                    icon: text(&method.icon),
+                    label: text(&method.label),
+                    language: text(&method.language),
+                })
+                .collect();
+            if offered.is_empty() {
+                offered.push(InputMethod {
+                    id: id.to_owned(),
+                    name: engine_name.clone(),
+                    engine: id.to_owned(),
+                    engine_name,
+                    icon: slot.installed.manifest.engine.icon.clone(),
+                    label: None,
+                    language: slot.installed.manifest.engine.languages.first().cloned(),
+                });
+            }
+            for method in offered {
+                if !all.iter().any(|(m, _)| m.id == method.id) {
+                    all.push((method, false));
+                }
+            }
+        }
+        all
     }
 
     /// The input method in use: the current engine, or the input method inside it (the
@@ -539,6 +650,13 @@ impl Core {
                 state: slot.state.name(),
                 icon: slot.installed.manifest.engine.icon.clone(),
                 settings: self.engines.has_settings(id),
+                description: slot
+                    .installed
+                    .manifest
+                    .localized_description(&locale)
+                    .map(str::to_owned),
+                languages: slot.installed.manifest.engine.languages.clone(),
+                hosted: slot.installed.manifest.is_hosted(),
             })
         };
         let enabled_ids = self.enabled_engines();
@@ -867,9 +985,18 @@ impl Core {
                 generation,
                 update,
             } => {
+                let catalog = matches!(update, frameworks::FrameworkUpdate::Available(_));
+                let methods = matches!(update, frameworks::FrameworkUpdate::Methods(_));
                 if self.engines.framework_update(&engine, generation, update) {
-                    self.state_changed();
-                    self.status_changed();
+                    if catalog {
+                        self.catalog_changed();
+                    } else {
+                        self.state_changed();
+                        self.status_changed();
+                    }
+                    if catalog || methods {
+                        self.lists_changed();
+                    }
                 }
             }
             CoreEvent::Host { engine, call } => self.on_host_call(&engine, call, out),
@@ -1356,6 +1483,47 @@ impl Core {
             Some(engine) => self.switch_to(Some(engine), out),
             None => anyhow::bail!("no engines are enabled"),
         }
+    }
+
+    /// The input method remembered for each application (`None` is direct input).
+    pub fn apps(&self) -> Vec<(String, Option<String>)> {
+        self.app_engines
+            .iter()
+            .map(|(app, target)| (app.clone(), target.clone()))
+            .collect()
+    }
+
+    /// Remembers `target` (`None`: direct input) for `app`, and uses it if `app` has
+    /// the focus.
+    pub fn set_app(
+        &mut self,
+        app: String,
+        target: Option<String>,
+        out: &mut dyn Frontends,
+    ) -> anyhow::Result<()> {
+        if let Some(target) = &target {
+            let engine = split_target(target).0;
+            anyhow::ensure!(
+                self.engines.get(engine).is_some(),
+                "no engine `{engine}` is installed"
+            );
+        }
+        if self.remember_apps && self.focused_app.as_deref() == Some(app.as_str()) {
+            self.set_current(target.clone(), out)?;
+        }
+        self.app_engines.insert(app, target);
+        self.state_changed();
+        Ok(())
+    }
+
+    /// Forgets what `app` used: it gets the input method in use when it has focus.
+    pub fn forget_app(&mut self, app: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.app_engines.remove(app).is_some(),
+            "nothing is remembered for `{app}`"
+        );
+        self.state_changed();
+        Ok(())
     }
 
     /// Opens the settings program of `engine`.

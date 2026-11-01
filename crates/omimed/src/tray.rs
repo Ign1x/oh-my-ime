@@ -708,6 +708,9 @@ mod tests {
             state: "running",
             icon: icon.map(str::to_owned),
             settings: id == "fcitx5",
+            description: None,
+            languages: Vec::new(),
+            hosted: id == "fcitx5" || id == "ibus",
         }
     }
 
@@ -719,6 +722,7 @@ mod tests {
             engine_name: engine_name.to_owned(),
             icon: None,
             label: None,
+            language: None,
         }
     }
 

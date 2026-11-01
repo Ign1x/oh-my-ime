@@ -12,6 +12,7 @@ repository.workspace = true
 serde.workspace = true
 serde_ignored.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 zbus.workspace = true
 
 [lints]

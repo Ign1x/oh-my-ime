@@ -2969,6 +2969,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "toml",
+ "toml_edit 0.23.10+spec-1.0.0",
  "zbus 6.1.0",
 ]
 

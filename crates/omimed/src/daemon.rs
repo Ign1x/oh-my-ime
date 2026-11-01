@@ -18,6 +18,7 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use crate::catalog::Catalog;
 use crate::control::{self, ControlRequest, ControlService};
 use crate::core::engines::UiConnection;
 use crate::core::{Core, CoreEvent};
@@ -145,7 +146,7 @@ struct Daemon {
     ui_rx: mpsc::UnboundedReceiver<UiConnection>,
     control_rx: mpsc::UnboundedReceiver<ControlRequest>,
     /// Kept alive for the control service's lifetime.
-    _control: Option<Rc<ControlService>>,
+    control: Option<Rc<ControlService>>,
     /// For the tray item, which asks the daemon loop what to show.
     control_tx: mpsc::UnboundedSender<ControlRequest>,
     /// The tray item, unless it is turned off.
@@ -217,11 +218,23 @@ impl Daemon {
         let saved = State::load();
         core.restore(&saved);
         core.set_state_listener(State::save);
+        core.restore_catalog(&Catalog::load());
+        core.set_catalog_listener(Catalog::save);
         let service = control.clone();
         let tray_item = tray.clone();
         core.set_status_listener(move |current, method, status| {
             if let Some(service) = &service {
                 service.status_changed(current, control::status_dict(current, method, status));
+            }
+            if let Some(tray) = &*tray_item.borrow() {
+                tray.changed();
+            }
+        });
+        let service = control.clone();
+        let tray_item = tray.clone();
+        core.set_lists_listener(move || {
+            if let Some(service) = &service {
+                service.input_methods_changed();
             }
             if let Some(tray) = &*tray_item.borrow() {
                 tray.changed();
@@ -240,7 +253,7 @@ impl Daemon {
             core_rx,
             ui_rx,
             control_rx,
-            _control: control,
+            control,
             control_tx,
             tray,
             context_ids,
@@ -473,6 +486,9 @@ impl Daemon {
             ControlRequest::List(reply) => {
                 let _ = reply.send(self.core.engines());
             }
+            ControlRequest::AllInputMethods(reply) => {
+                let _ = reply.send((self.core.all_input_methods(), self.core.current_method()));
+            }
             ControlRequest::ListInputMethods(reply) => {
                 let _ = reply.send((self.core.input_methods(), self.core.current_method()));
             }
@@ -529,10 +545,59 @@ impl Daemon {
             ControlRequest::Reload(reply) => {
                 let _ = reply.send(self.reload(frontend).await);
             }
+            ControlRequest::Apps(reply) => {
+                let _ = reply.send(self.core.apps());
+            }
+            ControlRequest::SetApp(app, target, reply) => {
+                let outputs = &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut());
+                let _ = reply.send(result(self.core.set_app(app, target, outputs)));
+            }
+            ControlRequest::ForgetApp(app, reply) => {
+                let _ = reply.send(result(self.core.forget_app(&app)));
+            }
+            ControlRequest::Config(reply) => {
+                let _ = reply.send(self.config.clone());
+            }
+            ControlRequest::Configure(changes, reply) => {
+                let _ = reply.send(self.configure(changes, frontend).await);
+            }
             ControlRequest::OpenSettings(engine, reply) => {
                 let _ = reply.send(result(self.core.open_settings(&engine)));
             }
         }
+    }
+
+    /// Sets options of config.toml and applies them; nothing is written when a value is
+    /// not valid.
+    async fn configure(
+        &mut self,
+        changes: Vec<(String, omime_proto::config::Value)>,
+        frontend: &mut Frontend,
+    ) -> Result<(), String> {
+        let path = omime_proto::paths::config_dir()
+            .map(|dir| dir.join(CONFIG_FILE))
+            .ok_or("cannot find the configuration directory")?;
+        let mut text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let installed: Vec<String> = self.core.engines().into_iter().map(|e| e.id).collect();
+        for (key, value) in changes {
+            if let omime_proto::config::Value::List(entries) = &value {
+                for entry in entries {
+                    let engine = crate::core::split_target(entry).0;
+                    if !installed.iter().any(|id| id == engine) {
+                        return Err(format!("no engine `{engine}` is installed"));
+                    }
+                }
+            }
+            text =
+                omime_proto::config::edit(&text, &key, value).map_err(|e| format!("{key}: {e}"))?;
+        }
+        write_atomically(&path, &text)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        self.reload(frontend).await
     }
 
     /// Reads the configuration again and looks for engines; a broken config.toml keeps
@@ -550,7 +615,7 @@ impl Daemon {
             installed,
             &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
         );
-        let wanted = self.config.tray.enabled && self._control.is_some();
+        let wanted = self.config.tray.enabled && self.control.is_some();
         let shown = self.tray.borrow().is_some();
         if wanted && !shown {
             let tray = start_tray(&self.control_tx).await;
@@ -563,8 +628,24 @@ impl Daemon {
         if let Some(tray) = &*self.tray.borrow() {
             tray.changed();
         }
+        if result.is_ok()
+            && let Some(control) = &self.control
+        {
+            control.config_changed();
+        }
         result.map_err(|e| format!("{e}\nomimed keeps the configuration it had"))
     }
+}
+
+/// Writes `text` to `path` through a temporary file, so that a reader never sees half of
+/// it.
+fn write_atomically(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Shows the tray item; `None` if it cannot be shown.

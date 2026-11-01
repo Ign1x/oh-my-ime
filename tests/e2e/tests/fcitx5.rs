@@ -438,8 +438,23 @@ fn input_methods_outside_fcitx5s_group_are_added_when_chosen() -> anyhow::Result
         let list = env.omime(&["list"]).ok()?;
         list.contains("fcitx5/pinyin").then_some(list)
     })?;
-    // Shuangpin is installed, but not in the group of the profile.
+    // Shuangpin is installed, but not in the group of the profile: it can be enabled.
     assert!(!list.contains("fcitx5/shuangpin"), "{list}");
+    let all = omime_e2e::harness::wait_until("shuangpin to be offered", || {
+        let all = env.omime(&["list", "--all"]).ok()?;
+        all.lines()
+            .any(|l| l.starts_with("- fcitx5/shuangpin"))
+            .then_some(all)
+    })?;
+    // Pinyin is enabled, and in use.
+    assert!(
+        all.lines().any(|l| l.starts_with("* fcitx5/pinyin")),
+        "{all}"
+    );
+    assert!(!all.contains("keyboard-"), "{all}");
+    // omimed keeps what Fcitx 5 has, to list it before Fcitx 5 runs again.
+    let catalog = std::fs::read_to_string(env.dir().join("cache/oh-my-ime/catalog.toml"))?;
+    assert!(catalog.contains("shuangpin"), "{catalog}");
     env.omime(&["enable", "fcitx5/shuangpin"])?;
     let list = env.omime(&["list"])?;
     assert!(list.contains("fcitx5/shuangpin"), "{list}");

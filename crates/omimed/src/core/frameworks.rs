@@ -49,6 +49,8 @@ pub struct InnerMethod {
     pub icon: String,
     /// A short label, such as 双.
     pub label: String,
+    /// The language it is for, as the framework says it (`zh_CN`, `ja`).
+    pub language: String,
 }
 
 /// What the core asks of an adapter.
@@ -70,6 +72,8 @@ pub enum FrameworkUpdate {
     /// The input method in use; `None` when the framework passes keys on (Fcitx 5's
     /// keyboard layouts, IBus's `xkb:` engines).
     Current(Option<String>),
+    /// Every input method the framework has, set up or not, without keyboard layouts.
+    Available(Vec<InnerMethod>),
 }
 
 /// The adapter of one launch. Dropping it stops the adapter.
@@ -188,7 +192,15 @@ impl Framework {
         report(FrameworkUpdate::Connected(commands));
         let mut methods = self.methods(&[]).await?;
         report(FrameworkUpdate::Methods(methods.clone()));
-        report(FrameworkUpdate::Current(self.current().await?));
+        let mut current = self.current().await?;
+        // IBus is read once it uses an engine: reading its engines while it starts keeps
+        // its panel from ever showing candidates.
+        let mut listed = false;
+        if matches!(self, Self::Fcitx5(_)) || current.is_some() {
+            report(FrameworkUpdate::Available(self.available().await?));
+            listed = true;
+        }
+        report(FrameworkUpdate::Current(current));
         // What tells that the list or the current input method changed.
         let mut changes = match &self {
             Self::Fcitx5(controller) => {
@@ -228,9 +240,33 @@ impl Framework {
                     report(FrameworkUpdate::Methods(methods.clone()));
                 }
             }
-            report(FrameworkUpdate::Current(self.current().await?));
+            current = self.current().await?;
+            if !listed && current.is_some() {
+                report(FrameworkUpdate::Available(self.available().await?));
+                listed = true;
+            }
+            report(FrameworkUpdate::Current(current));
         }
         Ok(())
+    }
+
+    /// Every input method of the framework, without keyboard layouts.
+    async fn available(&self) -> zbus::Result<Vec<InnerMethod>> {
+        Ok(match self {
+            Self::Fcitx5(controller) => {
+                let available: Vec<FcitxMethod> =
+                    controller.call("AvailableInputMethods", &()).await?;
+                fcitx_available(&available, chinese_locale())
+            }
+            Self::Ibus(ibus) => {
+                let engines: Vec<OwnedVariant> = ibus.get_property("Engines").await?;
+                engines
+                    .iter()
+                    .filter_map(engine_desc)
+                    .filter(|m| !is_layout(&m.id))
+                    .collect()
+            }
+        })
     }
 
     fn proxy(&self) -> &zbus::Proxy<'static> {
@@ -318,43 +354,59 @@ async fn fcitx_methods(controller: &zbus::Proxy<'_>) -> zbus::Result<Vec<InnerMe
     let group: String = controller.call("CurrentInputMethodGroup", &()).await?;
     let (_, items): (String, Vec<(String, String)>) =
         controller.call("InputMethodGroupInfo", &(group,)).await?;
-    // (unique name, name, native name, icon, label, language, configurable)
-    let available: Vec<(String, String, String, String, String, String, bool)> =
-        controller.call("AvailableInputMethods", &()).await?;
+    let available: Vec<FcitxMethod> = controller.call("AvailableInputMethods", &()).await?;
     let known: HashMap<&str, _> = available.iter().map(|m| (m.0.as_str(), m)).collect();
     Ok(fcitx_list(&items, &known, chinese_locale()))
 }
 
-#[allow(clippy::type_complexity)]
 fn fcitx_list(
     items: &[(String, String)],
-    known: &HashMap<&str, &(String, String, String, String, String, String, bool)>,
+    known: &HashMap<&str, &FcitxMethod>,
     chinese: bool,
 ) -> Vec<InnerMethod> {
     items
         .iter()
         .map(|(id, _layout)| id)
         .filter(|id| !is_layout(id))
-        .map(|id| {
-            let Some((_, name, native, icon, label, ..)) = known.get(id.as_str()).copied() else {
-                return InnerMethod {
-                    id: id.clone(),
-                    name: id.clone(),
-                    ..InnerMethod::default()
-                };
-            };
-            let name = if chinese && !native.is_empty() {
-                native
-            } else {
-                name
-            };
-            InnerMethod {
+        .map(|id| match known.get(id.as_str()) {
+            Some(method) => fcitx_method(method, chinese),
+            None => InnerMethod {
                 id: id.clone(),
-                name: name.clone(),
-                icon: icon.clone(),
-                label: label.clone(),
-            }
+                name: id.clone(),
+                ..InnerMethod::default()
+            },
         })
+        .collect()
+}
+
+/// An entry of Fcitx 5's `AvailableInputMethods`: (unique name, name, native name,
+/// icon, label, language, configurable).
+type FcitxMethod = (String, String, String, String, String, String, bool);
+
+fn fcitx_method(
+    (id, name, native, icon, label, language, _): &FcitxMethod,
+    chinese: bool,
+) -> InnerMethod {
+    let name = if chinese && !native.is_empty() {
+        native
+    } else {
+        name
+    };
+    InnerMethod {
+        id: id.clone(),
+        name: name.clone(),
+        icon: icon.clone(),
+        label: label.clone(),
+        language: language.clone(),
+    }
+}
+
+/// Every input method Fcitx 5 has, without its keyboard layouts.
+fn fcitx_available(available: &[FcitxMethod], chinese: bool) -> Vec<InnerMethod> {
+    available
+        .iter()
+        .filter(|m| !is_layout(&m.0))
+        .map(|m| fcitx_method(m, chinese))
         .collect()
 }
 
@@ -427,6 +479,7 @@ fn engine_desc(value: &OwnedVariant) -> Option<InnerMethod> {
         name: long_name.unwrap_or_else(|| id.clone()),
         icon: text(8).unwrap_or_default(),
         label: text(12).unwrap_or_default(),
+        language: text(5).unwrap_or_default(),
         id,
     })
 }
@@ -515,6 +568,7 @@ mod tests {
                 name: "Intelligent Pinyin".into(),
                 icon: "/icons/ibus-pinyin.svg".into(),
                 label: "拼".into(),
+                language: "zh_CN".into(),
             })
         );
     }
