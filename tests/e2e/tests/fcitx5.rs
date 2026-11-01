@@ -383,6 +383,8 @@ fn the_input_methods_inside_fcitx5_are_chosen_directly() -> anyhow::Result<()> {
         return Ok(());
     };
     let mut env = TestEnv::start(&[engine], None)?;
+    // `next` goes round Fcitx 5's input methods only.
+    env.configure("engines = [\"fcitx5\"]\n")?;
     let config: PathBuf = env.dir().join("config/fcitx5");
     std::fs::create_dir_all(config.join("conf"))?;
     std::fs::write(config.join("profile"), SHUANGPIN_PROFILE)?;

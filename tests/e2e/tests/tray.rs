@@ -31,7 +31,7 @@ fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
     env.wait_for_status("direct input")?;
     tray.wait_for_latest("direct input in the tooltip", "tooltip ", |t| t == direct)?;
     tray.wait_for_latest("direct input checked", "menu ", |m| {
-        m == format!("echo|{direct}*")
+        m.starts_with("echo|") && m.ends_with(&format!("|{direct}*"))
     })?;
 
     // A click goes back to the last engine.

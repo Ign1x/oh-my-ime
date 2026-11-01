@@ -309,6 +309,8 @@ fn engines_with_input_methods_of_their_own_list_and_switch_them() -> anyhow::Res
         &[dummy_engine(&["--hidden", "--input-methods", "alpha,beta"])],
         Some("dummy"),
     )?;
+    // `next` goes round the engine's input methods only.
+    env.configure("engines = [\"dummy\"]\n")?;
     let list = omime_e2e::harness::wait_until("the engine's input methods", || {
         let list = env.omime(&["list"]).ok()?;
         list.contains("dummy/beta").then_some(list)

@@ -74,6 +74,11 @@ pub fn target_dir() -> PathBuf {
 const INSTALL_DIR_ENV: &str = "OMIME_E2E_INSTALL_DIR";
 
 /// The directory with the programs under test: omimed, omime and the bundled engines.
+///
+/// An installed build (`OMIME_E2E_INSTALL_DIR`) also finds the engines it bundles
+/// (Echo, Sparkle, and the Fcitx 5 and IBus manifests), behind the test's own engines.
+/// Tests that count or cycle through the enabled input methods list theirs in
+/// `engines`.
 pub fn program_dir() -> PathBuf {
     std::env::var_os(INSTALL_DIR_ENV).map_or_else(target_dir, PathBuf::from)
 }
