@@ -52,7 +52,7 @@ All notable changes to this project are documented here. The format follows
   (`Engine::activate_property`). The control API's `Properties`, `ActivateProperty`
   and `PropertiesChanged` offer the menu of the engine in use to status bars and
   settings programs; `omime properties` shows it and `omime activate <id>` activates
-  an entry.
+  an entry. The tray menu shows it below the input methods, with its submenus.
 - The control API grows what a settings program needs, described in
   `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
   every engine and every input method with descriptions, languages and state, enabled
@@ -99,6 +99,8 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs.
+- Names with an underscore show it in the tray menu, instead of underlining the
+  character after it.
 - A key that a hosted input method sends back only after it was released no longer
   stays held in the application: a busy Fcitx 5 or IBus could leave a key repeating
   there until the next key.

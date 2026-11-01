@@ -104,7 +104,7 @@ remember = true
 
 ### 托盘
 
-omimed 在状态栏的托盘中显示正在使用的输入法（StatusNotifierItem）：waybar 的 `tray` 模块、KDE 的系统托盘等等。悬停提示写出它的名字，Fcitx 5 内的输入法会写成“双拼 (Fcitx 5)”这样；用 Fcitx 5 与 IBus 时，图标也来自它们。单击在直接输入与上一个引擎之间切换，中键单击切到下一个输入法，菜单列出输入法与直接输入。要隐藏它，在 `~/.config/oh-my-ime/config.toml` 中这样设置，然后运行 `omime reload`：
+omimed 在状态栏的托盘中显示正在使用的输入法（StatusNotifierItem）：waybar 的 `tray` 模块、KDE 的系统托盘等等。悬停提示写出它的名字，Fcitx 5 内的输入法会写成“双拼 (Fcitx 5)”这样；用 Fcitx 5 与 IBus 时，图标也来自它们。单击在直接输入与上一个引擎之间切换，中键单击切到下一个输入法，菜单列出输入法与直接输入，之后是正在使用的引擎的开关（例如中文标点）和它的设置。要隐藏它，在 `~/.config/oh-my-ime/config.toml` 中这样设置，然后运行 `omime reload`：
 
 ```toml
 [tray]

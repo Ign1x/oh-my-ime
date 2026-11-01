@@ -321,7 +321,10 @@ current engine, its status or the engines change, which sends `NewIcon`, `NewToo
 manifest icon, else `input-keyboard`; the tooltip is "engine · status". A click toggles
 direct input, a middle click switches to the next input method, and the menu holds the
 input methods and direct input as radio items; for an input method inside a framework
-the tooltip is "input method (framework)". `[tray] enabled = false` turns it off.
+the tooltip is "input method (framework)". Below them come the current engine's own
+menu, with its switches as check items and its submenus, and "Configure …" for an
+engine with settings. An entry keeps its id while the menu changes, so a click on a menu
+shown before a change does what the entry said. `[tray] enabled = false` turns it off.
 
 ## Compatibility layers (planned)
 

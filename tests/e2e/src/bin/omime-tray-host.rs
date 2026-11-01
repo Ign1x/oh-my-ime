@@ -12,13 +12,16 @@
 //! theme <IconThemePath>
 //! tooltip <the ToolTip's title>
 //! label <XAyatanaLabel>
-//! menu <entry>|<entry>*|...      (* marks the checked entry)
+//! menu <entry>|<entry>*|-|<submenu>(<entry>|<entry>)|...
 //! end
 //! unregistered <service>
 //! ```
 //!
+//! In the menu, `*` marks checked entries, `-` is a separator and a submenu's entries
+//! follow it in parentheses.
+//!
 //! It reads commands from stdin: `activate` (a click), `secondary` (a middle click) and
-//! `click <menu entry>`.
+//! `click <menu entry>`, which finds entries in submenus too.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, Write as _};
@@ -76,18 +79,75 @@ fn get<T: TryFrom<OwnedVariant>>(values: &HashMap<String, OwnedVariant>, key: &s
     values.get(key)?.try_clone().ok()?.try_into().ok()
 }
 
-/// The entries of the menu: (id, label, checked).
-fn entries(layout: &Layout) -> Vec<(i32, String, bool)> {
+/// An entry of the menu, with the entries of its submenu.
+struct Entry {
+    id: i32,
+    label: String,
+    checked: bool,
+    separator: bool,
+    children: Vec<Entry>,
+}
+
+/// The entries below `layout`.
+fn entries(layout: &Layout) -> Vec<Entry> {
     layout
         .2
         .iter()
         .filter_map(|child| {
             let child: Layout = child.try_clone().ok()?.try_into().ok()?;
             let label = get::<String>(&child.1, "label").unwrap_or_default();
-            let checked = get::<i32>(&child.1, "toggle-state") == Some(1);
-            Some((child.0, label, checked))
+            Some(Entry {
+                id: child.0,
+                label: without_access_key(&label),
+                checked: get::<i32>(&child.1, "toggle-state") == Some(1),
+                separator: get::<String>(&child.1, "type").as_deref() == Some("separator"),
+                children: entries(&child),
+            })
         })
         .collect()
+}
+
+/// A dbusmenu label as shown: `_` marks the access key, `__` is an underscore.
+fn without_access_key(label: &str) -> String {
+    let mut shown = String::new();
+    let mut chars = label.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '_' => shown.extend(chars.next()),
+            c => shown.push(c),
+        }
+    }
+    shown
+}
+
+fn show(entries: &[Entry]) -> String {
+    let shown: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            if entry.separator {
+                return "-".to_owned();
+            }
+            let mut text = entry.label.clone();
+            if entry.checked {
+                text.push('*');
+            }
+            if !entry.children.is_empty() {
+                text += &format!("({})", show(&entry.children));
+            }
+            text
+        })
+        .collect();
+    shown.join("|")
+}
+
+fn find<'a>(entries: &'a [Entry], label: &str) -> Option<&'a Entry> {
+    entries.iter().find_map(|entry| {
+        if entry.label == label {
+            Some(entry)
+        } else {
+            find(&entry.children, label)
+        }
+    })
 }
 
 struct Followed<'a> {
@@ -98,7 +158,7 @@ struct Followed<'a> {
 
 impl Followed<'_> {
     /// Prints a snapshot of the item; returns the menu's entries.
-    async fn print(&self) -> anyhow::Result<Vec<(i32, String, bool)>> {
+    async fn print(&self) -> anyhow::Result<Vec<Entry>> {
         let interface =
             zbus::names::InterfaceName::from_static_str_unchecked("org.kde.StatusNotifierItem");
         let values = self.properties.get_all(interface).await?;
@@ -129,11 +189,7 @@ impl Followed<'_> {
                 .call("GetLayout", &(0i32, -1i32, Vec::<String>::new()))
                 .await?;
             entries_now = entries(&layout);
-            let shown: Vec<String> = entries_now
-                .iter()
-                .map(|(_, label, checked)| format!("{label}{}", if *checked { "*" } else { "" }))
-                .collect();
-            say(&format!("menu {}", shown.join("|")));
+            say(&format!("menu {}", show(&entries_now)));
         }
         say("end");
         Ok(entries_now)
@@ -251,13 +307,11 @@ async fn main() -> anyhow::Result<()> {
                         }
                         ("click", label) => {
                             let menu = followed.menu.as_ref().context("the item has no menu")?;
-                            let (id, ..) = entries_now
-                                .iter()
-                                .find(|(_, l, _)| l == label)
+                            let entry = find(&entries_now, label)
                                 .with_context(|| format!("no menu entry {label:?}"))?;
                             menu.call_method(
                                 "Event",
-                                &(*id, "clicked", Variant::from(0i32), 0u32),
+                                &(entry.id, "clicked", Variant::from(0i32), 0u32),
                             )
                             .await?;
                         }

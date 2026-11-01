@@ -6,17 +6,18 @@
 //! [`crate::core::sni_watcher`]): Fcitx 5's "双拼", for example. The tooltip names the
 //! engine and, when it says, what it is doing ("Fcitx 5 · 双拼"). A click switches
 //! between direct input and the last engine, a middle click to the next engine, and the
-//! menu (`com.canonical.dbusmenu`) lists the enabled engines and direct input.
+//! menu (`com.canonical.dbusmenu`) lists the enabled engines and direct input, then the
+//! current engine's own menu (switches such as Chinese punctuation) and its settings.
 //!
 //! The item keeps no state of its own: every property is read from the daemon loop, and
 //! the daemon tells the item when something changed.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::StreamExt as _;
-use omime_proto::engine::Status;
+use omime_proto::engine::{Property, PropertyKind, Status};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
 use zbus::object_server::SignalEmitter;
@@ -49,6 +50,8 @@ pub struct TrayInfo {
     pub methods: Vec<InputMethod>,
     /// The input method in use; `None` is direct input.
     pub method: Option<String>,
+    /// The current engine's menu.
+    pub properties: Vec<Property>,
 }
 
 impl TrayInfo {
@@ -117,9 +120,9 @@ impl TrayInfo {
         self.status.label.clone().unwrap_or_default()
     }
 
-    /// The menu: the input methods and direct input, to choose from, then the settings
-    /// of the current engine if it has any. Input methods of the same name in two
-    /// frameworks say which one they are in.
+    /// The menu: the input methods and direct input, to choose from, the current
+    /// engine's own menu, then its settings if it has any. Input methods of the same name
+    /// in two frameworks say which one they are in.
     fn menu(&self) -> Vec<MenuEntry> {
         let mut entries: Vec<_> = self
             .methods
@@ -140,68 +143,169 @@ impl TrayInfo {
             direct_input_label().to_owned(),
             self.engine.is_none(),
         ));
+        let own = MenuEntry::from_properties(&self.properties, "", 0);
+        if !own.is_empty() {
+            entries.push(MenuEntry::separator());
+            entries.extend(own);
+        }
         if let Some(engine) = self.current().filter(|e| e.settings) {
             entries.push(MenuEntry::separator());
-            entries.push(MenuEntry {
-                action: Some(MenuAction::Settings(engine.id.clone())),
-                label: settings_label(&engine.name),
-                checked: None,
-            });
+            entries.push(MenuEntry::item(
+                MenuAction::Settings(engine.id.clone()),
+                settings_label(&engine.name),
+            ));
         }
         entries
     }
 }
 
 /// What a menu entry does.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum MenuAction {
     /// Switches to an input method; `None` is direct input.
     Switch(Option<String>),
     /// Opens the settings of an engine.
     Settings(String),
+    /// Activates an entry of the current engine's menu.
+    Property(String),
 }
 
 /// An entry of the tray menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MenuEntry {
-    /// `None` is a separator.
-    action: Option<MenuAction>,
+    kind: EntryKind,
     label: String,
-    /// Whether a radio entry is checked; `None` for other entries.
-    checked: Option<bool>,
+    /// An icon name.
+    icon: Option<String>,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryKind {
+    Separator,
+    /// Does something when clicked, and may show whether it is on.
+    Item {
+        action: MenuAction,
+        toggle: Option<Toggle>,
+    },
+    /// The submenu of the engine's menu entry `id`.
+    Submenu {
+        id: String,
+        entries: Vec<MenuEntry>,
+    },
+}
+
+/// How an entry shows whether it is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Toggle {
+    /// A switch.
+    Checkmark(bool),
+    /// One choice among several.
+    Radio(bool),
 }
 
 impl MenuEntry {
+    fn item(action: MenuAction, label: String) -> Self {
+        Self {
+            kind: EntryKind::Item {
+                action,
+                toggle: None,
+            },
+            label,
+            icon: None,
+            enabled: true,
+        }
+    }
+
     fn radio(action: MenuAction, label: String, checked: bool) -> Self {
         Self {
-            action: Some(action),
-            label,
-            checked: Some(checked),
+            kind: EntryKind::Item {
+                action,
+                toggle: Some(Toggle::Radio(checked)),
+            },
+            ..Self::item(MenuAction::Switch(None), label)
         }
     }
 
     fn separator() -> Self {
         Self {
-            action: None,
+            kind: EntryKind::Separator,
             label: String::new(),
-            checked: None,
+            icon: None,
+            enabled: true,
         }
     }
 
-    fn properties(&self) -> Properties {
-        if self.action.is_none() {
-            return Properties::from([("type".to_owned(), owned(Variant::from("separator")))]);
+    /// The entries of an engine's menu that are in its entry `parent` (`""`: at the
+    /// top). Entries whose parent is not a menu entry are left out.
+    fn from_properties(properties: &[Property], parent: &str, depth: usize) -> Vec<Self> {
+        // Engines that give two entries the same id could nest menus forever.
+        if depth > 8 {
+            return Vec::new();
         }
-        let mut properties = Properties::from([(
-            "label".to_owned(),
-            owned(Variant::from(self.label.as_str())),
-        )]);
-        if let Some(checked) = self.checked {
-            properties.insert("toggle-type".to_owned(), owned(Variant::from("radio")));
-            properties.insert(
-                "toggle-state".to_owned(),
-                owned(Variant::from(i32::from(checked))),
-            );
+        properties
+            .iter()
+            .filter(|p| p.parent == parent)
+            .map(|p| {
+                let item = |toggle| EntryKind::Item {
+                    action: MenuAction::Property(p.id.clone()),
+                    toggle,
+                };
+                let kind = match p.kind {
+                    PropertyKind::Separator => return Self::separator(),
+                    PropertyKind::Action => item(None),
+                    PropertyKind::Toggle => item(Some(Toggle::Checkmark(p.checked))),
+                    PropertyKind::Radio => item(Some(Toggle::Radio(p.checked))),
+                    PropertyKind::Menu => EntryKind::Submenu {
+                        id: p.id.clone(),
+                        entries: Self::from_properties(properties, &p.id, depth + 1),
+                    },
+                };
+                Self {
+                    kind,
+                    label: p.label.clone(),
+                    icon: p.icon.clone(),
+                    enabled: p.enabled,
+                }
+            })
+            .collect()
+    }
+
+    /// Its properties in `com.canonical.dbusmenu`.
+    fn properties(&self) -> Properties {
+        let text = |value: &str| owned(Variant::from(value));
+        let mut properties = Properties::new();
+        match &self.kind {
+            EntryKind::Separator => {
+                properties.insert("type".to_owned(), text("separator"));
+                return properties;
+            }
+            EntryKind::Item {
+                toggle: Some(toggle),
+                ..
+            } => {
+                let (kind, on) = match *toggle {
+                    Toggle::Checkmark(on) => ("checkmark", on),
+                    Toggle::Radio(on) => ("radio", on),
+                };
+                properties.insert("toggle-type".to_owned(), text(kind));
+                properties.insert(
+                    "toggle-state".to_owned(),
+                    owned(Variant::from(i32::from(on))),
+                );
+            }
+            EntryKind::Item { toggle: None, .. } => {}
+            EntryKind::Submenu { .. } => {
+                properties.insert("children-display".to_owned(), text("submenu"));
+            }
+        }
+        // An underscore marks the access key in dbusmenu labels.
+        properties.insert("label".to_owned(), text(&self.label.replace('_', "__")));
+        if let Some(icon) = &self.icon {
+            properties.insert("icon-name".to_owned(), text(icon));
+        }
+        if !self.enabled {
+            properties.insert("enabled".to_owned(), owned(Variant::from(false)));
         }
         properties
     }
@@ -409,60 +513,147 @@ fn owned(value: Variant<'_>) -> OwnedVariant {
     OwnedVariant::try_from(value).expect("menu values have no file descriptors")
 }
 
-/// The id of the root entry; entry `i` of [`TrayInfo::menu`] has the id `i + 1`.
+/// The id of the root entry.
 const ROOT: i32 = 0;
+
+/// What an entry of the menu is, whatever else changes: the same entry keeps its id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum EntryKey {
+    Action(MenuAction),
+    Submenu(String),
+    /// The n-th separator.
+    Separator(usize),
+}
+
+/// The ids of menu entries. An entry keeps its id while the menu changes, so a click on
+/// a menu shown before a change still does what the entry said.
+#[derive(Debug, Default)]
+struct Ids {
+    ids: HashMap<EntryKey, i32>,
+    actions: HashMap<i32, MenuAction>,
+    last: i32,
+}
+
+impl Ids {
+    fn id(&mut self, key: EntryKey) -> i32 {
+        if let Some(id) = self.ids.get(&key) {
+            return *id;
+        }
+        self.last += 1;
+        if let EntryKey::Action(action) = &key {
+            self.actions.insert(self.last, action.clone());
+        }
+        self.ids.insert(key, self.last);
+        self.last
+    }
+
+    /// The menu's entries with their ids.
+    fn nodes(&mut self, entries: &[MenuEntry], separators: &mut usize) -> Vec<Node> {
+        entries
+            .iter()
+            .map(|entry| {
+                let (key, children) = match &entry.kind {
+                    EntryKind::Separator => {
+                        *separators += 1;
+                        (EntryKey::Separator(*separators), Vec::new())
+                    }
+                    EntryKind::Item { action, .. } => {
+                        (EntryKey::Action(action.clone()), Vec::new())
+                    }
+                    EntryKind::Submenu { id, entries } => (
+                        EntryKey::Submenu(id.clone()),
+                        self.nodes(entries, separators),
+                    ),
+                };
+                Node {
+                    id: self.id(key),
+                    properties: entry.properties(),
+                    children,
+                }
+            })
+            .collect()
+    }
+}
+
+/// A menu entry with its id, and the entries of its submenu.
+struct Node {
+    id: i32,
+    properties: Properties,
+    children: Vec<Node>,
+}
+
+impl Node {
+    fn find(&self, id: i32) -> Option<&Node> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children.iter().find_map(|child| child.find(id))
+    }
+
+    /// The entry and all entries below it.
+    fn all(&self) -> Vec<&Node> {
+        std::iter::once(self)
+            .chain(self.children.iter().flat_map(Node::all))
+            .collect()
+    }
+
+    /// The layout of the entry with `depth` levels of entries below it (-1: all), with
+    /// the properties in `names` (all if it is empty).
+    fn layout(&self, depth: i32, names: &[String]) -> Layout {
+        let children = if depth == 0 {
+            Vec::new()
+        } else {
+            self.children
+                .iter()
+                .map(|child| {
+                    owned(Variant::from(Structure::from(
+                        child.layout(depth - 1, names),
+                    )))
+                })
+                .collect()
+        };
+        (self.id, filtered(&self.properties, names), children)
+    }
+}
+
+/// `properties` limited to `names`, unless it is empty.
+fn filtered(properties: &Properties, names: &[String]) -> Properties {
+    properties
+        .iter()
+        .filter(|(name, _)| names.is_empty() || names.contains(name))
+        .filter_map(|(name, value)| Some((name.clone(), value.try_clone().ok()?)))
+        .collect()
+}
 
 struct Menu {
     requests: mpsc::UnboundedSender<ControlRequest>,
     revision: Arc<AtomicU32>,
-    /// What the entries of the layout last handed out do.
-    targets: Mutex<Vec<Option<MenuAction>>>,
+    ids: Mutex<Ids>,
 }
 
 impl Menu {
-    /// The entries, by id. Remembers what each one does.
-    async fn entries(&self) -> Vec<(i32, Properties)> {
+    /// The menu as it is now.
+    async fn tree(&self) -> Node {
         let entries = ask(&self.requests, ControlRequest::Tray).await.menu();
-        if let Ok(mut targets) = self.targets.lock() {
-            *targets = entries.iter().map(|entry| entry.action.clone()).collect();
+        let mut ids = self.ids.lock().unwrap_or_else(PoisonError::into_inner);
+        Node {
+            id: ROOT,
+            properties: Properties::from([(
+                "children-display".to_owned(),
+                owned(Variant::from("submenu")),
+            )]),
+            children: ids.nodes(&entries, &mut 0),
         }
-        entries
-            .iter()
-            .zip(1..)
-            .map(|(entry, id)| (id, entry.properties()))
-            .collect()
-    }
-
-    fn root() -> Properties {
-        Properties::from([(
-            "children-display".to_owned(),
-            owned(Variant::from("submenu")),
-        )])
-    }
-
-    /// The properties of `id`, limited to `names` unless it is empty.
-    async fn properties(&self, id: i32, names: &[String]) -> Option<Properties> {
-        let mut properties = if id == ROOT {
-            Self::root()
-        } else {
-            self.entries()
-                .await
-                .into_iter()
-                .find(|(entry, _)| *entry == id)?
-                .1
-        };
-        if !names.is_empty() {
-            properties.retain(|name, _| names.contains(name));
-        }
-        Some(properties)
     }
 
     fn clicked(&self, id: i32) {
-        let action = self.targets.lock().ok().and_then(|targets| {
-            usize::try_from(id - 1)
-                .ok()
-                .and_then(|index| targets.get(index).cloned().flatten())
-        });
+        let action = self
+            .ids
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .actions
+            .get(&id)
+            .cloned();
         match action {
             Some(MenuAction::Switch(target)) => {
                 tell(&self.requests, |tx| ControlRequest::Switch(target, tx));
@@ -470,6 +661,11 @@ impl Menu {
             Some(MenuAction::Settings(engine)) => {
                 tell(&self.requests, |tx| {
                     ControlRequest::OpenSettings(engine, tx)
+                });
+            }
+            Some(MenuAction::Property(property)) => {
+                tell(&self.requests, |tx| {
+                    ControlRequest::ActivateProperty(property, tx)
                 });
             }
             None => {}
@@ -482,32 +678,15 @@ impl Menu {
     async fn get_layout(
         &self,
         parent_id: i32,
-        _recursion_depth: i32,
+        recursion_depth: i32,
         property_names: Vec<String>,
     ) -> zbus::fdo::Result<(u32, Layout)> {
         let revision = self.revision.load(Ordering::Relaxed);
-        let filter = |mut properties: Properties| {
-            if !property_names.is_empty() {
-                properties.retain(|name, _| property_names.contains(name));
-            }
-            properties
-        };
-        let entries = self.entries().await;
-        if parent_id == ROOT {
-            let children = entries
-                .into_iter()
-                .map(|(id, properties)| {
-                    let entry: Layout = (id, filter(properties), Vec::new());
-                    owned(Variant::from(Structure::from(entry)))
-                })
-                .collect();
-            return Ok((revision, (ROOT, filter(Self::root()), children)));
-        }
-        let (id, properties) = entries
-            .into_iter()
-            .find(|(id, _)| *id == parent_id)
+        let tree = self.tree().await;
+        let parent = tree
+            .find(parent_id)
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no menu entry {parent_id}")))?;
-        Ok((revision, (id, filter(properties), Vec::new())))
+        Ok((revision, parent.layout(recursion_depth, &property_names)))
     }
 
     async fn get_group_properties(
@@ -515,19 +694,20 @@ impl Menu {
         ids: Vec<i32>,
         property_names: Vec<String>,
     ) -> Vec<(i32, Properties)> {
-        let mut result = Vec::new();
-        for id in ids {
-            if let Some(properties) = self.properties(id, &property_names).await {
-                result.push((id, properties));
-            }
-        }
-        result
+        let tree = self.tree().await;
+        // No ids: all entries.
+        tree.all()
+            .into_iter()
+            .filter(|node| node.id != ROOT && (ids.is_empty() || ids.contains(&node.id)))
+            .map(|node| (node.id, filtered(&node.properties, &property_names)))
+            .collect()
     }
 
     async fn get_property(&self, id: i32, name: String) -> zbus::fdo::Result<OwnedVariant> {
-        self.properties(id, std::slice::from_ref(&name))
+        self.tree()
             .await
-            .and_then(|mut properties| properties.remove(&name))
+            .find(id)
+            .and_then(|node| node.properties.get(&name)?.try_clone().ok())
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no property {name} of {id}")))
     }
 
@@ -625,7 +805,7 @@ pub async fn start(requests: mpsc::UnboundedSender<ControlRequest>) -> zbus::Res
             Menu {
                 requests,
                 revision: revision.clone(),
-                targets: Mutex::new(Vec::new()),
+                ids: Mutex::new(Ids::default()),
             },
         )
         .build()
@@ -801,12 +981,157 @@ mod tests {
         assert_eq!(menu[..5], choices);
         assert_eq!(menu[5], MenuEntry::separator());
         assert_eq!(
-            menu[6].action,
-            Some(MenuAction::Settings("fcitx5".to_owned()))
+            menu[6],
+            MenuEntry::item(
+                MenuAction::Settings("fcitx5".to_owned()),
+                settings_label("Fcitx 5")
+            )
         );
-        assert_eq!(menu[6].label, settings_label("Fcitx 5"));
         assert_eq!(menu.len(), 7);
         let menu = info(Some("sparkle"), Some("sparkle")).menu();
         assert_eq!(menu.len(), 5);
+    }
+
+    fn property(id: &str, parent: &str, kind: PropertyKind, checked: bool) -> Property {
+        Property {
+            id: id.to_owned(),
+            parent: parent.to_owned(),
+            kind,
+            label: id.to_uppercase(),
+            checked,
+            ..Property::default()
+        }
+    }
+
+    /// A menu like a Rime engine's.
+    fn engine_menu() -> Vec<Property> {
+        vec![
+            property("punct", "", PropertyKind::Toggle, true),
+            property("width", "", PropertyKind::Menu, false),
+            property("full", "width", PropertyKind::Radio, false),
+            property("half", "width", PropertyKind::Radio, true),
+            property("sep", "", PropertyKind::Separator, false),
+            Property {
+                enabled: false,
+                icon: Some("view-refresh".to_owned()),
+                ..property("deploy", "", PropertyKind::Action, false)
+            },
+            // Not in any menu.
+            property("lost", "nowhere", PropertyKind::Action, false),
+        ]
+    }
+
+    #[test]
+    fn the_menu_has_the_engines_own_menu() {
+        let mut info = info(Some("sparkle"), Some("sparkle"));
+        info.properties = engine_menu();
+        let menu = info.menu();
+        let own = &menu[5..];
+        let property = |id: &str, toggle| MenuEntry {
+            kind: EntryKind::Item {
+                action: MenuAction::Property(id.to_owned()),
+                toggle,
+            },
+            label: id.to_uppercase(),
+            icon: None,
+            enabled: true,
+        };
+        assert_eq!(own[0], MenuEntry::separator());
+        assert_eq!(own[1], property("punct", Some(Toggle::Checkmark(true))));
+        assert_eq!(
+            own[2],
+            MenuEntry {
+                kind: EntryKind::Submenu {
+                    id: "width".to_owned(),
+                    entries: vec![
+                        property("full", Some(Toggle::Radio(false))),
+                        property("half", Some(Toggle::Radio(true))),
+                    ],
+                },
+                ..property("width", None)
+            }
+        );
+        assert_eq!(own[3], MenuEntry::separator());
+        assert_eq!(
+            own[4],
+            MenuEntry {
+                icon: Some("view-refresh".to_owned()),
+                enabled: false,
+                ..property("deploy", None)
+            }
+        );
+        assert_eq!(own.len(), 5);
+
+        let deploy = own[4].properties();
+        let text = |properties: &Properties, name: &str| {
+            properties
+                .get(name)
+                .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
+        };
+        assert_eq!(text(&deploy, "icon-name").as_deref(), Some("view-refresh"));
+        assert!(deploy.contains_key("enabled"));
+        assert_eq!(
+            text(&own[1].properties(), "toggle-type").as_deref(),
+            Some("checkmark")
+        );
+        assert_eq!(
+            text(&own[2].properties(), "children-display").as_deref(),
+            Some("submenu")
+        );
+        // dbusmenu would underline the character after an underscore.
+        let entry = MenuEntry::item(MenuAction::Switch(None), "rime_ice".to_owned());
+        assert_eq!(
+            text(&entry.properties(), "label").as_deref(),
+            Some("rime__ice")
+        );
+    }
+
+    #[test]
+    fn menu_entries_keep_their_ids() {
+        let mut info = info(Some("sparkle"), Some("sparkle"));
+        info.properties = engine_menu();
+        let mut ids = Ids::default();
+        let before = ids.nodes(&info.menu(), &mut 0);
+        // Another input method comes first.
+        info.methods
+            .insert(0, method("fcitx5/rime", "Rime", "fcitx5", "Fcitx 5"));
+        let after = ids.nodes(&info.menu(), &mut 0);
+        assert_eq!(after.len(), before.len() + 1);
+        for (old, new) in before.iter().zip(&after[1..]) {
+            assert_eq!(old.id, new.id);
+        }
+        let half = after[8].children[1].id;
+        assert_eq!(
+            ids.actions.get(&half),
+            Some(&MenuAction::Property("half".to_owned()))
+        );
+        assert!(!after.iter().any(|node| node.id == ROOT));
+
+        // Layouts go as deep as asked.
+        let tree = Node {
+            id: ROOT,
+            properties: Properties::new(),
+            children: after,
+        };
+        let depth = |layout: &Layout| -> usize {
+            fn depth(layout: &Layout) -> usize {
+                layout
+                    .2
+                    .iter()
+                    .filter_map(|child| Layout::try_from(child.try_clone().ok()?).ok())
+                    .map(|child| 1 + depth(&child))
+                    .max()
+                    .unwrap_or(0)
+            }
+            depth(layout)
+        };
+        assert_eq!(depth(&tree.layout(-1, &[])), 2);
+        assert_eq!(depth(&tree.layout(1, &[])), 1);
+        assert_eq!(depth(&tree.layout(0, &[])), 0);
+        let width = tree.find(tree.children[8].id).expect("the submenu");
+        assert_eq!(width.layout(-1, &[]).2.len(), 2);
+        let labels = tree.layout(1, &["label".to_owned()]);
+        let first = Layout::try_from(labels.2[0].try_clone().unwrap()).unwrap();
+        assert_eq!(first.1.keys().collect::<Vec<_>>(), ["label"]);
     }
 }

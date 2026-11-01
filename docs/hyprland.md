@@ -125,8 +125,9 @@ omimed shows the input method in use in the tray of status bars (StatusNotifierI
 waybar's `tray` module, KDE's system tray and others. The tooltip names it, such as
 "双拼 (Fcitx 5)" for an input method inside Fcitx 5, and for Fcitx 5 and IBus the icon is
 theirs too. A click switches between direct input and the last engine, a middle click to
-the next input method, and the menu lists the input methods and direct input. To hide it, set
-this in `~/.config/oh-my-ime/config.toml` and run `omime reload`:
+the next input method, and the menu lists the input methods and direct input, then the
+switches of the engine in use (such as Chinese punctuation) and its settings. To hide it,
+set this in `~/.config/oh-my-ime/config.toml` and run `omime reload`:
 
 ```toml
 [tray]

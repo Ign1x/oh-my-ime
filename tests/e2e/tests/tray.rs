@@ -1,7 +1,7 @@
 //! End-to-end tests of omimed's tray item, shown by `omime-tray-host` as a status bar's
 //! tray would. See `typing.rs` for how to run them.
 
-use omime_e2e::harness::{TestEnv, echo_engine, hosted_engine};
+use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine, hosted_engine};
 
 /// "Direct input" as omimed names it, in English or Chinese after the locale.
 const DIRECT_INPUT: [&str; 2] = ["Direct input", "直接输入"];
@@ -77,5 +77,41 @@ fn the_tray_item_comes_and_goes_with_the_configuration() -> anyhow::Result<()> {
     env.configure("[tray]\nenabled = true\n")?;
     tray.wait_for("a new item", |l| l.starts_with("registered ") && l != first)?;
     tray.wait_for_latest("the engine in the tooltip", "tooltip ", |t| t == "echo")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_tray_menu_has_the_engines_own_menu() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[dummy_engine(&["--hidden", "--properties"])],
+        Some("dummy"),
+    )?;
+    let tray = env.tray_host()?;
+    let menu = tray.wait_for_latest("the engine's menu", "menu ", |m| {
+        m.contains("Chinese punctuation")
+    })?;
+    assert!(
+        menu.ends_with("|-|Chinese punctuation*|Width(Full width|Half width*)|Say hello"),
+        "{menu}"
+    );
+
+    tray.send("click Chinese punctuation")?;
+    env.wait_for_log("engine: activated punct")?;
+    tray.wait_for_latest("the switch to flip", "menu ", |m| {
+        m.contains("|Chinese punctuation|")
+    })?;
+    // An entry in a submenu.
+    tray.send("click Full width")?;
+    env.wait_for_log("engine: activated full")?;
+    tray.wait_for_latest("the other choice", "menu ", |m| {
+        m.contains("Width(Full width*|Half width)")
+    })?;
+
+    // Direct input has no menu of its own.
+    env.omime(&["switch", "direct"])?;
+    tray.wait_for_latest("a menu without the engine's", "menu ", |m| {
+        !m.contains("Chinese punctuation")
+    })?;
     Ok(())
 }

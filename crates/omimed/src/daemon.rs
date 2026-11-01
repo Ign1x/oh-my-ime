@@ -537,6 +537,7 @@ impl Daemon {
                     hosted: self.core.current_tray().cloned(),
                     methods: self.core.input_methods(),
                     method: self.core.current_method(),
+                    properties: self.core.properties(),
                 });
             }
             ControlRequest::Diagnose(reply) => {

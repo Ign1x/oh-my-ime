@@ -44,7 +44,8 @@ struct PassThrough {
     input_methods: Vec<omime_sdk::InputMethodInfo>,
     /// The one in use.
     current: String,
-    /// A menu (`--properties`): a switch, which clicks flip, and an action.
+    /// A menu (`--properties`): a switch, which clicks flip, a choice in a submenu and
+    /// an action.
     properties: Vec<omime_sdk::Property>,
 }
 
@@ -60,9 +61,18 @@ impl omime_sdk::Engine for PassThrough {
 
     fn activate_property(&mut self, host: &omime_sdk::Host, id: &str) {
         println!("activated {id}");
+        let Some(activated) = self.properties.iter().find(|p| p.id == id).cloned() else {
+            return;
+        };
         for property in &mut self.properties {
-            if property.id == id && property.kind == omime_sdk::PropertyKind::Toggle {
-                property.checked = !property.checked;
+            match activated.kind {
+                omime_sdk::PropertyKind::Toggle if property.id == id => {
+                    property.checked = !property.checked;
+                }
+                omime_sdk::PropertyKind::Radio if property.parent == activated.parent => {
+                    property.checked = property.id == id;
+                }
+                _ => {}
             }
         }
         host.set_properties(&self.properties);
@@ -345,6 +355,27 @@ fn main() -> anyhow::Result<()> {
                         id: "punct".into(),
                         kind: omime_sdk::PropertyKind::Toggle,
                         label: "Chinese punctuation".into(),
+                        checked: true,
+                        ..omime_sdk::Property::default()
+                    },
+                    omime_sdk::Property {
+                        id: "width".into(),
+                        kind: omime_sdk::PropertyKind::Menu,
+                        label: "Width".into(),
+                        ..omime_sdk::Property::default()
+                    },
+                    omime_sdk::Property {
+                        id: "full".into(),
+                        parent: "width".into(),
+                        kind: omime_sdk::PropertyKind::Radio,
+                        label: "Full width".into(),
+                        ..omime_sdk::Property::default()
+                    },
+                    omime_sdk::Property {
+                        id: "half".into(),
+                        parent: "width".into(),
+                        kind: omime_sdk::PropertyKind::Radio,
+                        label: "Half width".into(),
                         checked: true,
                         ..omime_sdk::Property::default()
                     },

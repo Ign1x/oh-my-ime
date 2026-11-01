@@ -108,7 +108,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 
 ## 托盘项
 
-omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。`[tray] enabled = false` 可以关掉它。
+omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。它们下面是当前引擎自己的菜单（开关显示为复选项，子菜单照样嵌套），有设置的引擎还有“配置 …”。菜单变化时，每一项保持自己的 id，因此在变化之前打开的菜单里点一项，执行的仍是这一项写着的操作。`[tray] enabled = false` 可以关掉它。
 
 ## 兼容层（计划中）
 
