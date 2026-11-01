@@ -219,3 +219,23 @@ fn the_engines_properties_are_ibuss_menu() -> anyhow::Result<()> {
     editor.wait_for_text("abc")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn ibus_engines_are_listed_before_it_ever_ran() -> anyhow::Result<()> {
+    if ibus().is_none() {
+        eprintln!("IBus is not installed; nothing to test");
+        return Ok(());
+    }
+    let env = TestEnv::start(&[], None)?;
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/engines/ibus");
+    env.omime(&["install", source])?;
+    // libpinyin's component lists its engines with a program, which omimed runs.
+    let list = wait_until("IBus's engines", || {
+        let list = env.omime(&["list", "--all"]).ok()?;
+        list.contains("ibus/libpinyin").then_some(list)
+    })?;
+    assert!(!list.contains("xkb:"), "{list}");
+    assert_eq!(env.count_in_log("engine launched"), 0, "IBus ran");
+    Ok(())
+}

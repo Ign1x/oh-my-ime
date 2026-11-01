@@ -62,7 +62,8 @@ All notable changes to this project are documented here. The format follows
   `protocol/io.github.ign1x.OhMyIme.Daemon1.xml`: `Engines` and `InputMethods` list
   every engine and every input method with descriptions, languages and state, enabled
   or not, including the input methods a framework has beyond what it is set up with
-  (kept in `~/.cache/oh-my-ime/catalog.toml`); `Config` and `Configure` read and set
+  (kept in `~/.cache/oh-my-ime/catalog.toml`, and read from the files Fcitx 5 and IBus
+  install while they have never run); `Config` and `Configure` read and set
   options of `config.toml`, which omimed writes itself, keeping comments; `Apps`,
   `SetAppInputMethod` and `ForgetApp` edit what `[apps] remember` keeps; the signals
   `InputMethodsChanged` and `ConfigChanged` say when to read again; `Version`. New

@@ -505,3 +505,24 @@ fn fcitx5s_switches_are_the_engines_menu() -> anyhow::Result<()> {
     editor.wait_for_text("，,")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn fcitx5s_input_methods_are_listed_before_it_ever_ran() -> anyhow::Result<()> {
+    if fcitx5().is_none() {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    }
+    let env = TestEnv::start(&[], None)?;
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/engines/fcitx5");
+    env.omime(&["install", source])?;
+    // From the files Fcitx 5 installs, with nothing cached.
+    let list = wait_until("Fcitx 5's input methods", || {
+        let list = env.omime(&["list", "--all"]).ok()?;
+        list.contains("fcitx5/shuangpin").then_some(list)
+    })?;
+    assert!(list.contains("fcitx5/pinyin"), "{list}");
+    assert!(!list.contains("keyboard-"), "{list}");
+    assert_eq!(env.count_in_log("engine launched"), 0, "Fcitx 5 ran");
+    Ok(())
+}

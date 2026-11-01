@@ -220,6 +220,7 @@ impl Daemon {
         core.set_state_listener(State::save);
         core.restore_catalog(&Catalog::load());
         core.set_catalog_listener(Catalog::save);
+        core.read_installed_catalogs();
         let service = control.clone();
         let tray_item = tray.clone();
         core.set_status_listener(move |current, method, status| {
@@ -632,6 +633,8 @@ impl Daemon {
             installed,
             &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
         );
+        // Frameworks installed since.
+        self.core.read_installed_catalogs();
         let wanted = self.config.tray.enabled && self.control.is_some();
         let shown = self.tray.borrow().is_some();
         if wanted && !shown {

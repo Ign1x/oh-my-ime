@@ -1206,7 +1206,6 @@ async fn terminate(child: &mut tokio::process::Child) -> std::io::Result<ExitSta
     child.wait().await
 }
 
-/// Where `program` is: itself if it is a path, or the first match in `$PATH`.
 /// The icons of the program at `path`: `share/icons` of its installation prefix, if it
 /// has one.
 fn icon_dir(path: &Path) -> Option<String> {
@@ -1219,6 +1218,29 @@ fn icon_dir(path: &Path) -> Option<String> {
     icons.is_dir().then(|| icons.to_string_lossy().into_owned())
 }
 
+/// Where the programs of an engine are installed: the prefixes (`/usr`, a Nix store
+/// path) of the program it runs and the programs it requires, found in `$PATH`, as
+/// linked there and with the links followed.
+pub fn install_prefixes(installed: &InstalledEngine) -> Vec<PathBuf> {
+    let engine = &installed.manifest.engine;
+    let mut prefixes: Vec<PathBuf> = Vec::new();
+    for program in engine.exec.first().into_iter().chain(&engine.requires) {
+        let Some(path) = find_program(program) else {
+            continue;
+        };
+        let real = std::fs::canonicalize(&path).ok();
+        for path in std::iter::once(path).chain(real) {
+            if let Some(prefix) = path.parent().and_then(Path::parent)
+                && !prefixes.iter().any(|known| known == prefix)
+            {
+                prefixes.push(prefix.to_path_buf());
+            }
+        }
+    }
+    prefixes
+}
+
+/// Where `program` is: itself if it is a path, or the first match in `$PATH`.
 fn find_program(program: &str) -> Option<PathBuf> {
     let executable = |path: &Path| {
         rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok() && path.is_file()

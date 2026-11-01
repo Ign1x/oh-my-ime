@@ -311,7 +311,7 @@ impl Framework {
 }
 
 /// Keyboard layouts are not input methods for omimed: its direct input is the layout.
-fn is_layout(id: &str) -> bool {
+pub(crate) fn is_layout(id: &str) -> bool {
     id.starts_with("keyboard-") || id.starts_with("xkb:")
 }
 

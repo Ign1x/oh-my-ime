@@ -308,8 +308,11 @@ omimed: the `omime` command line tool, status bars, and settings programs. The X
   every input method there is to choose from, enabled or not. What a framework has
   beyond what it is set up with (Fcitx 5's `AvailableInputMethods`, IBus's `Engines`,
   without keyboard layouts) is kept in `$XDG_CACHE_HOME/oh-my-ime/catalog.toml`, so it
-  is listed before the framework runs again. `InputMethodsChanged` says when to read
-  them again.
+  is listed before the framework runs again. Of a framework that never ran, the files
+  it installs say what it has: Fcitx 5's `share/fcitx5/inputmethod/*.conf` and the
+  engines of IBus's `share/ibus/component/*.xml`, running the programs that list them
+  as IBus does, in the installation prefixes of the programs its manifest runs and
+  requires. `InputMethodsChanged` says when to read them again.
 - **Configuration.** omimed is the one that writes `config.toml`: `Configure` sets
   options by dotted name (`apps.remember`, `engines`), checks that the file stays
   valid, keeps comments and everything else, writes it through a temporary file and

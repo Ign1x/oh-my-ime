@@ -84,6 +84,12 @@ pub enum CoreEvent {
         generation: u64,
         tray: Option<sni_watcher::HostedTray>,
     },
+    /// The input methods a hosted framework that never told omimed has, as the files it
+    /// installs say.
+    Installed {
+        engine: String,
+        methods: Vec<frameworks::InnerMethod>,
+    },
     /// The menu of a hosted engine's tray item changed, or went away.
     HostedMenu {
         engine: String,
@@ -381,6 +387,33 @@ impl Core {
             if let Some(slot) = self.engines.get_mut(engine) {
                 slot.available = available.clone();
             }
+        }
+    }
+
+    /// Reads in the background which input methods the hosted frameworks have that have
+    /// told omimed nothing yet, never having run, from the files they install.
+    pub fn read_installed_catalogs(&self) {
+        for id in self.engines.ids() {
+            let Some(slot) = self.engines.get(id) else {
+                continue;
+            };
+            if !slot.installed.manifest.is_hosted() || !slot.available.is_empty() {
+                continue;
+            }
+            let prefixes = engines::install_prefixes(&slot.installed);
+            let engine = id.to_owned();
+            let events = self.events.clone();
+            tokio::task::spawn_local(async move {
+                let methods = crate::catalog::installed(&prefixes).await;
+                debug!(
+                    engine,
+                    count = methods.len(),
+                    "input methods in the framework's files"
+                );
+                if !methods.is_empty() {
+                    let _ = events.send(CoreEvent::Installed { engine, methods });
+                }
+            });
         }
     }
 
@@ -1010,6 +1043,16 @@ impl Core {
                     self.status_changed();
                     // Its menu went with it.
                     self.properties_changed();
+                }
+            }
+            CoreEvent::Installed { engine, methods } => {
+                // What the framework itself said wins.
+                if let Some(slot) = self.engines.get_mut(&engine)
+                    && slot.available.is_empty()
+                {
+                    slot.available = methods;
+                    self.lists_changed();
+                    self.catalog_changed();
                 }
             }
             CoreEvent::HostedMenu {
