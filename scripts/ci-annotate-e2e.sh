@@ -9,17 +9,27 @@ awk '
 function flush() {
     if (name != "") {
         if (text == "") text = "failed"
+        # What omimed and the engines said that went wrong, from the log the test printed.
+        notes = n1 (n2 != "" ? " / " n2 : "") (n3 != "" ? " / " n3 : "")
+        if (notes != "") text = text " | log: " notes
         gsub(/%/, "%25", text)
-        printf "::error title=%s::%s\n", name, substr(text, 1, 500)
+        printf "::error title=%s::%s\n", name, substr(text, 1, 900)
         seen[name] = 1
     }
-    name = ""; text = ""; state = 0
+    name = ""; text = ""; n1 = ""; n2 = ""; n3 = ""; state = 0
 }
 /^---- .* stdout ----$/ { flush(); name = $2; next }
 /^failures:$/ { flush(); next }
 name == "" {
     # Tests that failed without a report of their own.
     if ($0 ~ /^test .* \.\.\. FAILED$/) failed[$2] = 1
+    next
+}
+# The last three of these lines before the error.
+state == 0 && (/ WARN / || / ERROR / || / INFO engine: /) {
+    line = $0
+    sub(/^[^ ]* +/, "", line)
+    n1 = n2; n2 = n3; n3 = substr(line, 1, 220)
     next
 }
 state == 0 && /^Error: / { text = $0; state = 1; next }
