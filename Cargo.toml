@@ -14,6 +14,7 @@ homepage = "https://github.com/Ign1x/oh-my-ime"
 [workspace.dependencies]
 omime-proto = { path = "crates/omime-proto", version = "0.3.0" }
 omime-sdk = { path = "crates/omime-sdk", version = "0.3.0" }
+omime-overlay = { path = "crates/omime-overlay", version = "0.3.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_ignored = "0.1.14"

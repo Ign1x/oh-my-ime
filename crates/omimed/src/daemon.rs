@@ -151,6 +151,8 @@ struct Daemon {
     control_tx: mpsc::UnboundedSender<ControlRequest>,
     /// The tray item, unless it is turned off.
     tray: SharedTray,
+    /// The switcher, unless it is turned off.
+    panel: Option<crate::panel::Panel>,
     context_ids: ContextIds,
     /// Applications using the Fcitx5 module; they outlive compositor connections.
     fcitx: FcitxFrontend,
@@ -214,6 +216,11 @@ impl Daemon {
             .display
             .clone()
             .or_else(|| std::env::var("WAYLAND_DISPLAY").ok());
+        let panel = config
+            .panel
+            .enabled
+            .then(|| crate::panel::start(host_display.clone()))
+            .flatten();
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
         let saved = State::load();
         core.restore(&saved);
@@ -242,6 +249,12 @@ impl Daemon {
             }
         });
         let service = control.clone();
+        core.set_switched_listener(move |input_method, reason| {
+            if let Some(service) = &service {
+                service.switched(input_method, reason);
+            }
+        });
+        let service = control.clone();
         let tray_item = tray.clone();
         core.set_properties_listener(move || {
             if let Some(service) = &service {
@@ -267,6 +280,7 @@ impl Daemon {
             control,
             control_tx,
             tray,
+            panel,
             context_ids,
             fcitx,
             fcitx_rx,
@@ -510,25 +524,24 @@ impl Daemon {
                     self.core.current_status().as_ref(),
                 ));
             }
-            ControlRequest::Switch(target, reply) => {
+            ControlRequest::Switch(target, reason, reply) => {
                 let _ = reply.send(result(self.core.switch_to(
                     target,
+                    reason,
                     &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
                 )));
             }
-            ControlRequest::Next(reply) => {
-                let _ = reply.send(result(self.core.next(&mut Outputs::new(
-                    frontend,
-                    &mut self.fcitx,
-                    self.xim.as_mut(),
-                ))));
+            ControlRequest::Next(reason, reply) => {
+                let _ = reply.send(result(self.core.next(
+                    reason,
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                )));
             }
-            ControlRequest::Toggle(reply) => {
-                let _ = reply.send(result(self.core.toggle(&mut Outputs::new(
-                    frontend,
-                    &mut self.fcitx,
-                    self.xim.as_mut(),
-                ))));
+            ControlRequest::Toggle(reason, reply) => {
+                let _ = reply.send(result(self.core.toggle(
+                    reason,
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                )));
             }
             ControlRequest::Tray(reply) => {
                 let _ = reply.send(TrayInfo {
@@ -647,6 +660,16 @@ impl Daemon {
         // Engines may have come or gone from the menu.
         if let Some(tray) = &*self.tray.borrow() {
             tray.changed();
+        }
+        if self.config.panel.enabled && self.panel.is_none() {
+            let display = self
+                .options
+                .display
+                .clone()
+                .or_else(|| std::env::var("WAYLAND_DISPLAY").ok());
+            self.panel = crate::panel::start(display);
+        } else if !self.config.panel.enabled && self.panel.take().is_some() {
+            info!("the switcher is off");
         }
         if result.is_ok()
             && let Some(control) = &self.control

@@ -59,6 +59,15 @@ pub fn menu_entry_id(menu: &str, label: &str) -> Option<String> {
     })
 }
 
+/// `config` with the switcher turned off, unless it says otherwise.
+fn with_panel_off(config: &str) -> String {
+    if config.contains("[panel]") {
+        config.to_owned()
+    } else {
+        format!("{config}\n[panel]\nenabled = false\n")
+    }
+}
+
 /// The directory with the workspace's binaries (`target/debug`).
 pub fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().expect("tests know their executable");
@@ -363,6 +372,10 @@ impl TestEnv {
         let bus_path = env.dir.join("bus");
         wait_until("the session bus", || bus_path.exists().then_some(()))?;
 
+        // No switcher unless a test asks for it (see `configure`).
+        let config = env.dir.join("config/oh-my-ime");
+        std::fs::create_dir_all(&config)?;
+        std::fs::write(config.join("config.toml"), with_panel_off(""))?;
         env.start_daemon(start_engine)?;
         Ok(env)
     }
@@ -741,11 +754,12 @@ impl TestEnv {
         })
     }
 
-    /// Writes `config.toml` and asks omimed to read it.
+    /// Writes `config.toml` and asks omimed to read it. The switcher stays off unless
+    /// `config` has a `[panel]` of its own: tests look at what it would cover.
     pub fn configure(&self, config: &str) -> anyhow::Result<()> {
         let dir = self.dir.join("config/oh-my-ime");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("config.toml"), config)?;
+        std::fs::write(dir.join("config.toml"), with_panel_off(config))?;
         self.omime(&["reload"])?;
         Ok(())
     }

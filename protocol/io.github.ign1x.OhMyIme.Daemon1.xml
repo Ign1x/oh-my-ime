@@ -72,6 +72,20 @@
       <arg name="engine" type="s"/>
     </signal>
 
+    <!--
+      Emitted when someone switched the input method: input_method is the one now in use
+      (empty for direct input), reason who switched: "hotkey" (omimed's hotkeys),
+      "command" (Switch, Next or Toggle of this API, as `omime switch` calls them),
+      "menu" (omimed's tray) or "engine" (an engine asked). Not emitted when the input
+      method follows the focus between applications ([apps] remember), nor when a
+      hosted framework switches with hotkeys of its own; CurrentChanged and
+      StatusChanged follow every change.
+    -->
+    <signal name="Switched">
+      <arg name="input_method" type="s"/>
+      <arg name="reason" type="s"/>
+    </signal>
+
     <!-- Emitted when what Status returns changes; carries the new status. -->
     <signal name="StatusChanged">
       <arg name="status" type="a{sv}"/>
@@ -91,8 +105,8 @@
     <!--
       The configuration in effect, by the dotted names of config.toml's options:
       "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
-      "apps.remember", "tray.enabled" (b), and "engines" (as) when config.toml lists
-      engines (otherwise every engine enabled by default is).
+      "apps.remember", "tray.enabled", "panel.enabled" (b), and "engines" (as) when
+      config.toml lists engines (otherwise every engine enabled by default is).
     -->
     <method name="Config">
       <arg name="config" type="a{sv}" direction="out"/>

@@ -1,0 +1,27 @@
+[package]
+name = "omime-panel"
+description = "The switcher of oh-my-ime: shows the input methods for a moment when the user switches between them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+omime-overlay.workspace = true
+anyhow.workspace = true
+futures-util = { version = "0.3", default-features = false }
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zbus = { workspace = true, features = ["tokio", "proxy"] }
+# Under Slint's royalty-free license, as omime-overlay.
+slint = { version = "1.16", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "renderer-software",
+] }
+
+[lints]
+workspace = true

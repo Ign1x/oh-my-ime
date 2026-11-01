@@ -127,6 +127,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
 | Tray item: the input method in use and a menu to switch | ✅ |
+| Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
+| Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Several seats, each with its own input method session | ✅ tested on sway |
 | Nix package with the systemd user unit | ✅ |
@@ -246,7 +248,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
 without any additional terms or conditions.
 
-The [Sparkle](engines/sparkle) demo engine uses [Slint](https://slint.dev) under the
-Slint Royalty-free License; the platform itself does not depend on Slint.
+The [Sparkle](engines/sparkle) demo engine and the switcher (`omime-panel`, with
+`omime-overlay`) use [Slint](https://slint.dev) under the Slint Royalty-free License;
+the daemon, the `omime` command line tool, the protocol crate and the SDK do not depend
+on Slint.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

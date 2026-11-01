@@ -23,10 +23,12 @@ let
   installed = [
     "omimed"
     "omime-cli"
+    "omime-panel"
     "omime-echo"
     "omime-sparkle"
   ];
-  # Libraries Sparkle's toolkit (winit, glutin, fontique) opens at runtime.
+  # Libraries Sparkle's toolkit (winit, glutin, fontique) opens at runtime; the
+  # switcher needs the Wayland and font ones.
   sparkleRuntimeLibs = [
     fontconfig
     freetype
@@ -60,6 +62,7 @@ rustPlatform.buildRustPackage {
     ++ [
       "omime-proto"
       "omime-sdk"
+      "omime-overlay"
     ]
   );
 
@@ -109,13 +112,21 @@ rustPlatform.buildRustPackage {
   postFixup = ''
     patchelf --add-rpath ${lib.makeLibraryPath sparkleRuntimeLibs} $out/bin/omime-sparkle
     addDriverRunpath $out/bin/omime-sparkle
+    patchelf --add-rpath ${
+      lib.makeLibraryPath [
+        fontconfig
+        freetype
+        wayland
+      ]
+    } $out/bin/omime-panel
   '';
 
   meta = {
     description = "A modern, Wayland-first, UI-agnostic input method platform for Linux";
     homepage = "https://github.com/Ign1x/oh-my-ime";
     changelog = "https://github.com/Ign1x/oh-my-ime/blob/main/CHANGELOG.md";
-    # The Sparkle engine also contains Slint, used under its royalty-free license.
+    # The Sparkle engine and the switcher also contain Slint, used under its
+    # royalty-free license.
     license = with lib.licenses; [
       mit
       asl20

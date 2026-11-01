@@ -1,0 +1,25 @@
+[package]
+name = "omime-overlay"
+description = "Slint user interfaces on a layer surface of the compositor, for oh-my-ime's switcher and engines' floating panels"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+wayland-client.workspace = true
+# Slint is used under its royalty-free license, as in Sparkle; only the software
+# renderer: no winit, no GPU.
+slint = { version = "1.16", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "renderer-software",
+] }
+smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }
+
+[lints]
+workspace = true

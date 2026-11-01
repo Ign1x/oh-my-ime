@@ -237,6 +237,32 @@ type ListsListener = Box<dyn Fn()>;
 type PropertiesListener = Box<dyn Fn()>;
 /// Callback for changes of the current engine or of the status it published.
 type StatusListener = Box<dyn Fn(Option<&str>, Option<&str>, Option<&Status>)>;
+type SwitchedListener = Box<dyn Fn(Option<&str>, SwitchReason)>;
+
+/// Who switched the input method, as the control API's `Switched` says: the switcher
+/// overlay shows after the user's own switches, not after a menu's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchReason {
+    /// omimed's hotkeys.
+    Hotkey,
+    /// `Switch`, `Next` or `Toggle` of the control API, as `omime switch` calls them.
+    Command,
+    /// omimed's tray item and its menu.
+    Menu,
+    /// An engine asked for it (`RequestSwitch`).
+    Engine,
+}
+
+impl SwitchReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hotkey => "hotkey",
+            Self::Command => "command",
+            Self::Menu => "menu",
+            Self::Engine => "engine",
+        }
+    }
+}
 
 /// One row of [`Core::engines`].
 #[derive(Debug, Clone)]
@@ -280,6 +306,7 @@ pub struct Core {
     /// Called whenever `current` changes.
     on_state: Option<StateListener>,
     on_status: Option<StatusListener>,
+    on_switched: Option<SwitchedListener>,
     on_catalog: Option<CatalogListener>,
     on_lists: Option<ListsListener>,
     on_properties: Option<PropertiesListener>,
@@ -325,6 +352,7 @@ impl Core {
             visible_engines: BTreeSet::new(),
             on_state: None,
             on_status: None,
+            on_switched: None,
             on_catalog: None,
             on_lists: None,
             on_properties: None,
@@ -467,6 +495,22 @@ impl Core {
         listener: impl Fn(Option<&str>, Option<&str>, Option<&Status>) + 'static,
     ) {
         self.on_status = Some(Box::new(listener));
+    }
+
+    /// Calls `listener` with the input method in use and the reason whenever someone
+    /// switched it: not when the focus moves between applications with `[apps]
+    /// remember`, nor when a hosted framework switches on its own.
+    pub fn set_switched_listener(
+        &mut self,
+        listener: impl Fn(Option<&str>, SwitchReason) + 'static,
+    ) {
+        self.on_switched = Some(Box::new(listener));
+    }
+
+    fn switched(&self, reason: SwitchReason) {
+        if let Some(listener) = &self.on_switched {
+            listener(self.current_method().as_deref(), reason);
+        }
     }
 
     fn status_changed(&self) {
@@ -1129,7 +1173,7 @@ impl Core {
             }
             HostCall::RequestSwitch(target) => {
                 let target = (!target.is_empty()).then_some(target);
-                if let Err(e) = self.switch_to(target, out) {
+                if let Err(e) = self.switch_to(target, SwitchReason::Engine, out) {
                     warn!(engine, "switch requested by engine failed: {e:#}");
                 }
             }
@@ -1289,8 +1333,8 @@ impl Core {
                 context.queue.pop_front();
                 out.finish_key(&key, true);
                 let result = match action {
-                    HotkeyAction::Toggle => self.toggle(out),
-                    HotkeyAction::Next => self.next(out),
+                    HotkeyAction::Toggle => self.toggle(SwitchReason::Hotkey, out),
+                    HotkeyAction::Next => self.next(SwitchReason::Hotkey, out),
                 };
                 if let Err(e) = result {
                     warn!("{e:#}");
@@ -1498,9 +1542,11 @@ impl Core {
     pub fn switch_to(
         &mut self,
         target: Option<String>,
+        reason: SwitchReason,
         out: &mut dyn Frontends,
     ) -> anyhow::Result<()> {
         self.set_current(target.clone(), out)?;
+        self.switched(reason);
         if self.remember_apps
             && let Some(app) = self.focused_app.clone()
             && self.app_engines.get(&app) != Some(&target)
@@ -1603,7 +1649,7 @@ impl Core {
     }
 
     /// Switches to the next input method (wrapping around to the first).
-    pub fn next(&mut self, out: &mut dyn Frontends) -> anyhow::Result<()> {
+    pub fn next(&mut self, reason: SwitchReason, out: &mut dyn Frontends) -> anyhow::Result<()> {
         let methods = self.input_methods();
         anyhow::ensure!(!methods.is_empty(), "no engines are enabled");
         let current = self.current_method();
@@ -1614,13 +1660,13 @@ impl Core {
             Some(i) => methods[(i + 1) % methods.len()].id.clone(),
             None => methods[0].id.clone(),
         };
-        self.switch_to(Some(next), out)
+        self.switch_to(Some(next), reason, out)
     }
 
     /// Switches between direct input and the last engine.
-    pub fn toggle(&mut self, out: &mut dyn Frontends) -> anyhow::Result<()> {
+    pub fn toggle(&mut self, reason: SwitchReason, out: &mut dyn Frontends) -> anyhow::Result<()> {
         if self.current.is_some() {
-            return self.switch_to(None, out);
+            return self.switch_to(None, reason, out);
         }
         let target = self
             .last_engine
@@ -1628,7 +1674,7 @@ impl Core {
             .filter(|e| self.is_enabled(split_target(e).0))
             .or_else(|| self.enabled.first().cloned());
         match target {
-            Some(engine) => self.switch_to(Some(engine), out),
+            Some(engine) => self.switch_to(Some(engine), reason, out),
             None => anyhow::bail!("no engines are enabled"),
         }
     }

@@ -130,6 +130,8 @@ flowchart LR
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
 | 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
+| 引擎菜单（中文标点、全角等）出现在托盘和命令行中，包括 Fcitx 5 与 IBus 的 | ✅ |
+| 切换浮层：用热键切换后，在屏幕下方显示输入法 | ✅ sway 与 Hyprland |
 | Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
 | 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
 | 附带 systemd 用户单元的 Nix 包 | ✅ |
@@ -233,6 +235,6 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 除非你另有明确声明，你有意提交并被本项目收录的任何贡献（依 Apache-2.0 许可证的定义），
 均按上述双许可证授权，不附加任何其他条款或条件。
 
-示例引擎 [Sparkle](engines/sparkle) 依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；平台本身不依赖 Slint。
+示例引擎 [Sparkle](engines/sparkle) 与切换浮层（`omime-panel`，以及 `omime-overlay`）依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；守护进程、`omime` 命令行工具、协议 crate 和 SDK 不依赖 Slint。
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

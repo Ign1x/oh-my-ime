@@ -26,7 +26,7 @@ use zbus::{OwnedVariant, Variant};
 
 use crate::control::ControlRequest;
 use crate::core::sni_watcher::{HostedTray, Pixmap};
-use crate::core::{EngineSummary, InputMethod};
+use crate::core::{EngineSummary, InputMethod, SwitchReason};
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
@@ -375,12 +375,16 @@ impl Item {
 
     /// A click: direct input ↔ the last engine.
     fn activate(&self, _x: i32, _y: i32) {
-        tell(&self.requests, ControlRequest::Toggle);
+        tell(&self.requests, |tx| {
+            ControlRequest::Toggle(SwitchReason::Menu, tx)
+        });
     }
 
     /// A middle click: the next engine.
     fn secondary_activate(&self, _x: i32, _y: i32) {
-        tell(&self.requests, ControlRequest::Next);
+        tell(&self.requests, |tx| {
+            ControlRequest::Next(SwitchReason::Menu, tx)
+        });
     }
 
     fn scroll(&self, _delta: i32, _orientation: String) {}
@@ -656,7 +660,9 @@ impl Menu {
             .cloned();
         match action {
             Some(MenuAction::Switch(target)) => {
-                tell(&self.requests, |tx| ControlRequest::Switch(target, tx));
+                tell(&self.requests, |tx| {
+                    ControlRequest::Switch(target, SwitchReason::Menu, tx)
+                });
             }
             Some(MenuAction::Settings(engine)) => {
                 tell(&self.requests, |tx| {

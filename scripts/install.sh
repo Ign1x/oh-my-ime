@@ -4,7 +4,7 @@
 #   scripts/install.sh            # installs into ~/.local
 #   PREFIX=/usr/local scripts/install.sh
 #
-# Installs omimed, omime and omime-ibus, the bundled engines (echo, sparkle) and their
+# Installs omimed, omime, omime-panel and omime-ibus, the bundled engines (echo, sparkle) and their
 # manifests, and the manifests of Fcitx 5 and IBus, which omimed offers where they are
 # installed.
 set -eu
@@ -19,6 +19,7 @@ cargo build --release --locked --workspace --bins
 install -Dm755 target/release/omimed "$BIN/omimed"
 install -Dm755 target/release/omime "$BIN/omime"
 install -Dm755 target/release/omime-ibus "$BIN/omime-ibus"
+install -Dm755 target/release/omime-panel "$BIN/omime-panel"
 for engine in echo sparkle; do
   install -Dm755 "target/release/omime-$engine" "$BIN/omime-$engine"
   install -Dm644 "engines/$engine/engine.toml" "$ENGINES/$engine/engine.toml"

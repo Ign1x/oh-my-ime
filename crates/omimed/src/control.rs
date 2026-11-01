@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 use zbus::object_server::SignalEmitter;
 use zbus::{OwnedVariant, Variant};
 
-use crate::core::{EngineSummary, InputMethod};
+use crate::core::{EngineSummary, InputMethod, SwitchReason};
 
 /// Every input method and whether it is enabled, and the one in use (`None` for direct
 /// input).
@@ -27,9 +27,13 @@ pub enum ControlRequest {
     AllInputMethods(oneshot::Sender<AllInputMethods>),
     Status(oneshot::Sender<Dict>),
     /// `None` selects direct input.
-    Switch(Option<String>, oneshot::Sender<Result<(), String>>),
-    Next(oneshot::Sender<Result<(), String>>),
-    Toggle(oneshot::Sender<Result<(), String>>),
+    Switch(
+        Option<String>,
+        SwitchReason,
+        oneshot::Sender<Result<(), String>>,
+    ),
+    Next(SwitchReason, oneshot::Sender<Result<(), String>>),
+    Toggle(SwitchReason, oneshot::Sender<Result<(), String>>),
     Reload(oneshot::Sender<Result<(), String>>),
     /// Opens the settings program of an engine.
     OpenSettings(String, oneshot::Sender<Result<(), String>>),
@@ -120,17 +124,26 @@ impl ControlObject {
     /// (`fcitx5/shuangpin`); an empty string selects direct input.
     async fn switch(&self, engine: String) -> zbus::fdo::Result<()> {
         let target = (!engine.is_empty()).then_some(engine);
-        failed(self.ask(|tx| ControlRequest::Switch(target, tx)).await?)
+        failed(
+            self.ask(|tx| ControlRequest::Switch(target, SwitchReason::Command, tx))
+                .await?,
+        )
     }
 
     /// Switches to the next enabled engine.
     async fn next(&self) -> zbus::fdo::Result<()> {
-        failed(self.ask(ControlRequest::Next).await?)
+        failed(
+            self.ask(|tx| ControlRequest::Next(SwitchReason::Command, tx))
+                .await?,
+        )
     }
 
     /// Switches between direct input and the last engine.
     async fn toggle(&self) -> zbus::fdo::Result<()> {
-        failed(self.ask(ControlRequest::Toggle).await?)
+        failed(
+            self.ask(|tx| ControlRequest::Toggle(SwitchReason::Command, tx))
+                .await?,
+        )
     }
 
     /// Reads the configuration again and looks for newly installed or removed engines.
@@ -166,8 +179,8 @@ impl ControlObject {
 
     /// The configuration in effect, by the dotted names of config.toml's options:
     /// "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
-    /// "apps.remember", "tray.enabled" (b), and "engines" (as) when config.toml lists
-    /// engines (otherwise every engine enabled by default is).
+    /// "apps.remember", "tray.enabled", "panel.enabled" (b), and "engines" (as) when
+    /// config.toml lists engines (otherwise every engine enabled by default is).
     async fn config(&self) -> zbus::fdo::Result<Dict> {
         let config = self.ask(ControlRequest::Config).await?;
         Ok(config_dict(&config))
@@ -238,6 +251,15 @@ impl ControlObject {
     #[zbus(signal)]
     async fn properties_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
+    /// Emitted when someone switched the input method (empty: direct input), and why:
+    /// "hotkey", "command" (this API), "menu" (the tray) or "engine".
+    #[zbus(signal)]
+    async fn switched(
+        emitter: &SignalEmitter<'_>,
+        input_method: &str,
+        reason: &str,
+    ) -> zbus::Result<()>;
+
     /// Emitted when the configuration in effect changed.
     #[zbus(signal)]
     async fn config_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
@@ -290,6 +312,7 @@ enum Signal {
     InputMethods,
     Config,
     Properties,
+    Switched(String, SwitchReason),
 }
 
 /// The running control service.
@@ -325,6 +348,12 @@ impl ControlService {
     /// Announces that the menu of the current engine may have changed.
     pub fn properties_changed(&self) {
         let _ = self.signals.send(Signal::Properties);
+    }
+
+    /// Announces that someone switched to `input_method` (`None`: direct input).
+    pub fn switched(&self, input_method: Option<&str>, reason: SwitchReason) {
+        let input_method = input_method.unwrap_or_default().to_owned();
+        let _ = self.signals.send(Signal::Switched(input_method, reason));
     }
 }
 
@@ -365,6 +394,9 @@ pub async fn start(
                 Signal::InputMethods => ControlObject::input_methods_changed(&emitter).await,
                 Signal::Config => ControlObject::config_changed(&emitter).await,
                 Signal::Properties => ControlObject::properties_changed(&emitter).await,
+                Signal::Switched(input_method, reason) => {
+                    ControlObject::switched(&emitter, &input_method, reason.as_str()).await
+                }
             };
         }
     });
@@ -401,6 +433,10 @@ fn config_dict(config: &omime_proto::config::Config) -> Dict {
             "tray.enabled".to_owned(),
             owned(Variant::from(config.tray.enabled)),
         ),
+        (
+            "panel.enabled".to_owned(),
+            owned(Variant::from(config.panel.enabled)),
+        ),
     ]);
     if let Some(engines) = &config.engines {
         dict.insert("engines".to_owned(), owned(Variant::from(engines)));
@@ -418,7 +454,7 @@ fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::V
         "hotkeys.toggle" | "hotkeys.next" => {
             Value::String(String::try_from(take()?).map_err(|_| wrong())?)
         }
-        "apps.remember" | "tray.enabled" => {
+        "apps.remember" | "tray.enabled" | "panel.enabled" => {
             Value::Bool(bool::try_from(take()?).map_err(|_| wrong())?)
         }
         "engine.key_timeout_ms" => Value::Integer(match &*value {

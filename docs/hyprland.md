@@ -134,6 +134,20 @@ set this in `~/.config/oh-my-ime/config.toml` and run `omime reload`:
 enabled = false
 ```
 
+### Switcher
+
+When you switch with the hotkeys, or with `omime switch`, `next` and `toggle` (from a key
+binding of your own, say), the input methods show for a moment at the bottom of the
+screen, the one now in use highlighted: the switcher, `omime-panel`, which omimed starts.
+Switches from the tray menu and those that follow you between applications with
+`[apps] remember` do not show it. It is a layer surface in the namespace
+`omime-switcher`, for compositor rules; to turn it off:
+
+```toml
+[panel]
+enabled = false
+```
+
 ### Waybar
 
 `omime status --watch --json` prints the status and then one line per change, in the

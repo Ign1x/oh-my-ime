@@ -21,6 +21,10 @@
 //! [tray]
 //! # Show the current engine in the tray of status bars.
 //! enabled = true
+//!
+//! [panel]
+//! # Show the input methods for a moment when switching with the hotkeys or `omime`.
+//! enabled = true
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +41,7 @@ pub struct Config {
     pub engine: EngineSettings,
     pub apps: AppSettings,
     pub tray: TraySettings,
+    pub panel: PanelSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +97,20 @@ impl Default for TraySettings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PanelSettings {
+    /// Show the switcher (`omime-panel`) when the user switches input methods with the
+    /// hotkeys or the command line.
+    pub enabled: bool,
+}
+
+impl Default for PanelSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 impl Config {
     /// Reads a configuration, and the keys in it that this version does not know
     /// (misspelt, or from a newer version), which it ignores.
@@ -110,13 +129,14 @@ pub enum Value {
 }
 
 /// The options [`edit`] can set, by dotted name.
-pub const KEYS: [&str; 6] = [
+pub const KEYS: [&str; 7] = [
     "engines",
     "hotkeys.toggle",
     "hotkeys.next",
     "engine.key_timeout_ms",
     "apps.remember",
     "tray.enabled",
+    "panel.enabled",
 ];
 
 /// Returns `text`, a config.toml, with the option `key` (one of [`KEYS`]) set to

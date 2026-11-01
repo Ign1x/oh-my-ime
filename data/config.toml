@@ -30,3 +30,8 @@ remember = false
 # Show the current engine in the tray of status bars (StatusNotifierItem), with a menu
 # to switch.
 enabled = true
+
+[panel]
+# Show the input methods for a moment, at the bottom of the screen, when you switch
+# with the hotkeys or `omime switch`/`next`/`toggle` (the switcher, omime-panel).
+enabled = true

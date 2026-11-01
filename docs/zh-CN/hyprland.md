@@ -111,6 +111,15 @@ omimed 在状态栏的托盘中显示正在使用的输入法（StatusNotifierIt
 enabled = false
 ```
 
+### 切换浮层
+
+用热键切换，或者用 `omime switch`、`next` 和 `toggle`（比如来自你自己的按键绑定）切换时，屏幕下方会短暂显示输入法，并高亮刚切换到的那个：这就是切换浮层 `omime-panel`，由 omimed 启动。从托盘菜单切换，以及启用 `[apps] remember` 后随应用切换时，不会显示它。它是命名空间为 `omime-switcher` 的图层表面，可用于合成器规则；要关掉它：
+
+```toml
+[panel]
+enabled = false
+```
+
 ### Waybar
 
 `omime status --watch --json` 先输出一次状态，之后每次变化输出一行，格式与 waybar 一致（`text`、`tooltip` 和 `class`），waybar 因此无需轮询：

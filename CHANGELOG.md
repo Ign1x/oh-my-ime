@@ -46,6 +46,14 @@ All notable changes to this project are documented here. The format follows
   has `Host::set_input_methods`, `Host::set_current_input_method`,
   `Engine::select_input_method` and `Engine::registered`, which runs on the engine's
   thread right after it registered, before any other call.
+- A switcher: when you switch with the hotkeys or `omime switch`/`next`/`toggle`, the
+  input methods show for a moment at the bottom of the screen, the one now in use
+  highlighted. It is a program of its own, `omime-panel`, which omimed starts and keeps
+  running (`[panel] enabled = false` turns it off), drawn with Slint on a layer surface
+  (namespace `omime-switcher`) by the new `omime-overlay` library. Switches from the
+  tray menu and those that follow you between applications do not show it.
+- The control API's new `Switched(input_method, reason)` signal says who switched:
+  omimed's hotkeys, a command, the tray menu or an engine.
 - Engines can have a menu (engine protocol 1.1): actions, switches and choices such as
   Chinese or English punctuation, announced with `SetProperties`
   (`Host::set_properties` in the SDK) and activated with `ActivateProperty`

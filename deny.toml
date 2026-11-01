@@ -6,8 +6,9 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# Unmaintained crates that only the Sparkle demo engine pulls in, through Slint 1.16
-# (the newest Slint release for our MSRV). [bans] below keeps them out of the platform.
+# Unmaintained crates that only the Sparkle demo engine pulls in, through Slint 1.16's
+# winit backend (the newest Slint release for our MSRV). [bans] below keeps them out of
+# the platform.
 ignore = [
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via Slint (demo engine only)" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via Slint (demo engine only)" },
@@ -35,9 +36,10 @@ allow = [
   "CC0-1.0",
 ]
 
-# Slint is licensed GPL-3.0 OR royalty-free OR commercial. The Sparkle demo engine uses
-# it under the royalty-free license (attribution in the README); nothing else may
-# depend on it (see [bans]).
+# Slint is licensed GPL-3.0 OR royalty-free OR commercial. The user interface programs
+# (the Sparkle demo engine, the switcher and its overlay library) use it under the
+# royalty-free license (attribution in the README); the daemon, the command line tool,
+# the protocol crate and the SDK may not depend on it (see [bans]).
 exceptions = [
   { crate = "slint", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
   { crate = "slint-macros", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
@@ -60,8 +62,9 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 deny = [
-  # Only the demo engine may use Slint; the platform and SDK stay MIT/Apache-2.0.
-  { crate = "slint", wrappers = ["omime-sparkle"] },
+  # Only user interface programs may use Slint; omimed, omime, omime-proto and the SDK
+  # stay MIT/Apache-2.0 only.
+  { crate = "slint", wrappers = ["omime-sparkle", "omime-overlay", "omime-panel"] },
   # The platform uses zbus 6; the old zbus only comes with Slint.
   { crate = "zbus:<6", wrappers = ["i-slint-backend-winit"] },
   { crate = "rustybuzz", wrappers = ["usvg"] },

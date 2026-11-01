@@ -341,6 +341,22 @@ menu, with its switches as check items and its submenus, and "Configure …" for
 engine with settings. An entry keeps its id while the menu changes, so a click on a menu
 shown before a change does what the entry said. `[tray] enabled = false` turns it off.
 
+## Switcher
+
+`omime-panel` shows the input methods for a moment, the one now in use highlighted,
+when the user switches with omimed's hotkeys or the control API's `Switch`, `Next` and
+`Toggle`. It is an ordinary client of the compositor: omimed starts it with
+`[panel] enabled`, restarts it when it stops, and stops it with itself. It learns of
+switches from the control API's `Switched(input_method, reason)` and shows itself for
+the reasons "hotkey" and "command"; switches from the tray ("menu"), from engines
+("engine") and those that follow the focus between applications are left alone.
+
+It draws with Slint through `omime-overlay`, a small library that makes a layer surface
+(`zwlr_layer_shell_v1`, smithay-client-toolkit) Slint's platform: Slint's software
+renderer draws into shared memory, the surface takes no input, and the application
+shows and hides it with the size it needs. Engines' floating panels are to use it too.
+Slint stays out of omimed, the command line tool, the protocol crate and the SDK.
+
 ## Compatibility layers (planned)
 
 - **Per-engine hosts:** an IBus engine host (private bus, component discovery, Factory/Engine

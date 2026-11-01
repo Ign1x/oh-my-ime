@@ -1022,7 +1022,7 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
 /// when it is killed: a child must not outlive the daemon, and nothing else would
 /// stop it.
 #[allow(unsafe_code)]
-pub(super) fn exit_with_omimed(command: &mut tokio::process::Command) {
+pub(crate) fn exit_with_omimed(command: &mut tokio::process::Command) {
     let parent = rustix::process::getpid();
     // SAFETY: the closure runs in the child between fork and exec. It makes three
     // system calls and allocates nothing (errors are plain error numbers).
