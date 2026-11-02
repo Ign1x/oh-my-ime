@@ -61,7 +61,7 @@ Bridge 是基于 [`wl-proxy`](https://crates.io/crates/wl-proxy) 构建的多路
 - **帧回调。** 引擎窗口的帧回调由 Bridge 自己应答：它向当前显示该窗口的 surface（弹窗或镜像）请求一帧，并在该 surface 的帧到达时应答引擎的回调。窗口在两者之间移动时，工具包不会卡住。
 - **输入路由。** 指针的 `enter`、`motion`、`button`、`axis` 和 `frame` 只送给指针进入其 surface 的那个引擎。`wl_surface.enter(output)` 之类的事件按所属者过滤。镜像上的指针事件会作为其自身 surface 上的事件送达引擎。
 - **清理。** 引擎断开或死亡时，按依赖顺序销毁它的合成器对象：先弹窗角色，再 surface 扩展、子 surface、surface、buffer 和 pool，最后是 seat 与 output 对象。若引擎自己销毁了 surface，则先销毁弹窗角色。
-- **故障处理。** 合成器视为致命、且容易检查的请求（shm pool 与 buffer、绑定版本、虚拟对象）会做校验，出错的引擎被单独断开。其他任何导致合成器关闭共享连接的情况，都会让守护进程重新连接、重新绑定输入法并重启引擎；端到端测试覆盖了这一点。
+- **故障处理。** 合成器视为致命、且容易检查的请求（shm pool 与 buffer、viewport 参数和归属、buffer 缩放与变换、绑定版本、虚拟对象）会做校验，出错的引擎被单独断开。已经发出销毁请求的 shm pool 在等待 `delete_id` 时不会再次销毁。上游协议错误导致共享连接关闭时，会在对象清理前记录错误对象所属引擎，并在重连前停用它，直到用户显式重新选择。断线可能早于错误事件，因此无法保证立即归因；此时使用有次数上限的重连策略，并让引擎自身的崩溃上限先于 daemon 的断线上限生效。
 
 ## X11 应用
 
@@ -77,7 +77,8 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 
 - `io.github.ign1x.OhMyIme.Engine1` 由引擎在 `/io/github/ign1x/OhMyIme/Engine` 导出。它包含 `Activate`、`Deactivate`、`UpdateContext`、`ProcessKey`、`Reset` 和 `Shutdown`。`ProcessKey` 返回 `(handled, actions)`，其中 `actions` 是一个有序列表，包含上屏、预编辑、删除周围文本和转发按键等操作。
 - `io.github.ign1x.OhMyIme.EngineHost1` 由守护进程在 `/io/github/ign1x/OhMyIme` 导出。它包含 `Register`、带外操作（例如在鼠标点击候选词之后上屏）、`SetPopupVisible`、`SetStatus` 和 `RequestSwitch`。除 `Register` 外，一切都是发后即忘。
-- 按键事件默认 200 ms 超时。超时后按键被转发给应用，迟到的回复被丢弃，随后发送 `Reset`。
+- 按键事件默认 200 ms 超时。超时后按键被转发给应用，后续按键绕过该上下文，直到旧请求完成、排队的 `Reset` 完成。若再经过两个超时间隔仍未完成请求，就重启该引擎。切换、失焦或进程退出后被放弃的回复只被丢弃，不修改当前上下文。
+- 组合状态属于 `ContextId`。多个上下文可同时存在，自带引擎按上下文分别保存状态。目前引擎选择与候选窗定位仍为全局状态，正式支持的 UI 使用流程是单 seat 会话。
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
 - 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。
 - 1.1 版还让引擎拥有菜单：`SetProperties` 以扁平列表公布动作、开关和选择（中文或英文标点、全角或半角），每一项写明自己所在的子菜单；某一项被点击时，守护进程调用 `ActivateProperty`。控制 API 提供的就是正在使用的引擎的菜单。
@@ -123,7 +124,7 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 
 ## 安全说明
 
-- 敏感字段完全绕过守护进程（不抓取）。
+- Wayland 明确标记的敏感字段不抓取键盘；Fcitx5 模块明确标记的敏感字段绕过引擎。XIM 不提供字段用途，无法据此识别敏感字段。
 - 默认不记录按键内容。
 - socket 位于 `0700` 目录中，对端用 `SO_PEERCRED` 校验。
 - 以同一用户身份运行的进程不构成安全边界。对引擎做沙箱隔离（例如使用 bubblewrap）属于后续工作。

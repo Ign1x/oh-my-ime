@@ -13,28 +13,42 @@ D-Bus protocol directly; see [Other languages](#other-languages).
 ## A complete engine
 
 ```rust
-use omime_sdk::{Context, Engine, KeyEvent, Preedit, modifiers};
+use std::collections::HashMap;
+use omime_sdk::{Context, ContextId, Engine, KeyEvent, Preedit, modifiers};
 
 #[derive(Default)]
 struct Echo {
-    word: String,
+    words: HashMap<ContextId, String>,
 }
 
 impl Engine for Echo {
+    fn activate(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
+    fn deactivate(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
+    fn reset(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
     fn process_key(&mut self, ctx: &mut Context<'_>, key: &KeyEvent) -> bool {
         // Leave releases and shortcuts to the application.
         if key.released || key.modifiers & (modifiers::CONTROL | modifiers::ALT) != 0 {
             return false;
         }
+        let word = self.words.entry(ctx.id()).or_default();
         match key.text.chars().next() {
             Some(c) if c.is_alphabetic() => {
-                self.word.push(c);
-                ctx.set_preedit(Preedit::with_cursor_at_end(self.word.clone()));
+                word.push(c);
+                ctx.set_preedit(Preedit::with_cursor_at_end(word.clone()));
                 true // consumed
             }
             _ => {
-                if !self.word.is_empty() {
-                    ctx.commit(std::mem::take(&mut self.word).to_uppercase());
+                if !word.is_empty() {
+                    ctx.commit(std::mem::take(word).to_uppercase());
                 }
                 false // the application gets the key too, after the commit
             }
@@ -49,6 +63,10 @@ fn main() -> Result<(), omime_sdk::Error> {
 
 This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth knowing:
 
+- Several contexts can be active at once. Key composition state by `ctx.id()`;
+  activation, deactivation and reset affect only that context. Engine selection and
+  popup placement currently remain shared across seats; the supported UI workflow
+  is a single-seat session.
 - `process_key` receives presses **and** releases. Return `true` to consume a key. A
   release is always routed like its press, whatever you return, so applications never
   see stuck keys.
@@ -57,11 +75,14 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   key reaches the application.
 - Offsets and lengths into text are UTF-8 bytes, as in Wayland's text-input protocol.
   `Preedit::with_cursor_at_end` does the counting for you.
-- Answer quickly. After 200 ms (configurable) the key is passed to the application and
-  your late answer is discarded, followed by a `reset`.
+- Answer quickly. After 200 ms (configurable) the key is passed to the application.
+  Further keys bypass the busy context until its late answer is discarded and a
+  queued `reset` finishes. A reply abandoned on switching or deactivation is simply
+  discarded and cannot reset the new session.
 - `activate`, `deactivate`, `update` and `reset` tell you about focus and the field
   (`ctx.info()` has its content type, the surrounding text and, while your window is
-  shown, the cursor rectangle). Password and PIN fields never reach engines.
+  shown, the cursor rectangle). Wayland/Fcitx5 fields explicitly marked as sensitive
+  bypass engines; XIM does not provide this information.
 - Some applications do not show the preedit (xterm and other XIM applications that
   leave drawing it to the input method): `ctx.info().client_preedit` is `false` then,
   and an engine with a window shows what is being composed there. `frontend` says how

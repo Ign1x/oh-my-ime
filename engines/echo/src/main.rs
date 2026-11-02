@@ -4,7 +4,9 @@
 //! not a letter commits the word in UPPERCASE and is then passed on to the application.
 //! Backspace edits the preedit and Escape cancels it.
 
-use omime_sdk::{Context, Engine, KeyEvent, Preedit, Status, modifiers};
+use std::collections::HashMap;
+
+use omime_sdk::{Context, ContextId, Engine, KeyEvent, Preedit, Status, modifiers};
 
 /// Keysyms used below (see xkbcommon-keysyms.h).
 mod keysym {
@@ -14,28 +16,28 @@ mod keysym {
 
 #[derive(Debug, Default)]
 struct Echo {
-    word: String,
+    words: HashMap<ContextId, String>,
 }
 
 impl Echo {
-    fn show(&self, ctx: &mut Context<'_>) {
-        if self.word.is_empty() {
+    fn show(word: &str, ctx: &mut Context<'_>) {
+        if word.is_empty() {
             ctx.clear_preedit();
         } else {
-            ctx.set_preedit(Preedit::with_cursor_at_end(self.word.clone()));
+            ctx.set_preedit(Preedit::with_cursor_at_end(word));
         }
     }
 
-    fn flush(&mut self, ctx: &mut Context<'_>) {
-        if !self.word.is_empty() {
-            ctx.commit(std::mem::take(&mut self.word).to_uppercase());
+    fn flush(word: &mut String, ctx: &mut Context<'_>) {
+        if !word.is_empty() {
+            ctx.commit(std::mem::take(word).to_uppercase());
         }
     }
 }
 
 impl Engine for Echo {
     fn activate(&mut self, ctx: &mut Context<'_>) {
-        self.word.clear();
+        self.words.remove(&ctx.id());
         ctx.host().set_status(Status {
             label: Some("ECHO".into()),
             icon: None,
@@ -43,18 +45,19 @@ impl Engine for Echo {
         });
     }
 
-    fn deactivate(&mut self, _ctx: &mut Context<'_>) {
-        self.word.clear();
+    fn deactivate(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
     }
 
-    fn reset(&mut self, _ctx: &mut Context<'_>) {
-        self.word.clear();
+    fn reset(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
     }
 
     fn process_key(&mut self, ctx: &mut Context<'_>, key: &KeyEvent) -> bool {
         if key.released {
             return false;
         }
+        let word = self.words.entry(ctx.id()).or_default();
         let shortcut = key.modifiers & (modifiers::CONTROL | modifiers::ALT | modifiers::SUPER);
         let letter = key
             .text
@@ -64,23 +67,23 @@ impl Engine for Echo {
 
         match (letter, key.keysym) {
             (Some(c), _) if shortcut == 0 => {
-                self.word.push(c);
-                self.show(ctx);
+                word.push(c);
+                Self::show(word, ctx);
                 true
             }
-            (_, keysym::BACKSPACE) if !self.word.is_empty() => {
-                self.word.pop();
-                self.show(ctx);
+            (_, keysym::BACKSPACE) if !word.is_empty() => {
+                word.pop();
+                Self::show(word, ctx);
                 true
             }
-            (_, keysym::ESCAPE) if !self.word.is_empty() => {
-                self.word.clear();
-                self.show(ctx);
+            (_, keysym::ESCAPE) if !word.is_empty() => {
+                word.clear();
+                Self::show(word, ctx);
                 true
             }
             _ => {
                 // Commit what we have, then let the application handle the key.
-                self.flush(ctx);
+                Self::flush(word, ctx);
                 false
             }
         }

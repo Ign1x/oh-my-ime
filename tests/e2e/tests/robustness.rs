@@ -3,7 +3,7 @@
 //!
 //! See `typing.rs` for how to run them.
 
-use omime_e2e::harness::{TIMEOUT, TestEnv, dummy_engine as dummy};
+use omime_e2e::harness::{TIMEOUT, TestEnv, dummy_engine as dummy, echo_engine, wait_until_within};
 
 fn wait_for_count(env: &TestEnv, needle: &str, count: usize) {
     let deadline = std::time::Instant::now() + TIMEOUT;
@@ -34,7 +34,7 @@ fn a_slow_engine_cannot_hold_up_typing() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
-fn omimed_reconnects_when_an_engine_breaks_the_connection() -> anyhow::Result<()> {
+fn invalid_viewport_only_disconnects_its_engine() -> anyhow::Result<()> {
     let marker = std::env::temp_dir().join(format!(
         "omime-e2e-misbehaved-{}-{}",
         std::process::id(),
@@ -43,8 +43,8 @@ fn omimed_reconnects_when_an_engine_breaks_the_connection() -> anyhow::Result<()
             .as_nanos()
     ));
     let marker_arg = marker.display().to_string();
-    // An invalid viewport size is forwarded to the compositor, which then closes
-    // omimed's connection. The restarted engine behaves.
+    // The bridge rejects the invalid viewport before it reaches the compositor.
+    // The restarted engine behaves; the daemon keeps its original connection.
     let env = TestEnv::start(
         &[dummy(&[
             "--misbehave",
@@ -54,13 +54,48 @@ fn omimed_reconnects_when_an_engine_breaks_the_connection() -> anyhow::Result<()
         ])],
         Some("dummy"),
     )?;
-    env.wait_for_log("lost the compositor connection")?;
-    wait_for_count(&env, "connected to the compositor", 2);
+    env.wait_for_log("invalid viewport destination")?;
     wait_for_count(&env, "engine ready", 2);
 
     let editor = env.editor(&[])?;
     env.type_text("still typing")?;
     editor.wait_for_text("still typing")?;
+    assert_eq!(env.count_in_log("lost the compositor connection"), 0);
     let _ = std::fs::remove_file(marker);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn an_upstream_protocol_fault_stops_its_engine_before_the_daemon() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[dummy(&["--misbehave", "subsurface"]), echo_engine()],
+        Some("dummy"),
+    )?;
+    // wl-proxy may observe HUP before the compositor's error message. In that
+    // case the process crash budget must still stop the engine before the global
+    // reconnect budget can end the daemon.
+    wait_until_within(
+        std::time::Duration::from_secs(45),
+        "the faulty engine to stop",
+        || {
+            let log = env.daemon_log();
+            (log.contains("quarantining an engine")
+                || log.contains("engine keeps crashing; giving up"))
+            .then_some(())
+        },
+    )?;
+    wait_for_count(&env, "connected to the compositor", 2);
+    let editor = env.editor(&[])?;
+    env.type_text("plain")?;
+    editor.wait_for_text("plain")?;
+    env.omime(&["switch", "echo"])?;
+    env.type_text("works ")?;
+    editor.wait_for_text("plainWORKS ")?;
+    assert!(env.count_in_log("engine launched engine=\"dummy\"") <= 6);
+    assert!(
+        !env.daemon_log()
+            .contains("the connection keeps failing; giving up")
+    );
     Ok(())
 }

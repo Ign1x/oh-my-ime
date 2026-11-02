@@ -9,28 +9,42 @@ oh-my-ime 引擎就是一个普通的程序。守护进程（`omimed`）启动�
 ## 一个完整的引擎
 
 ```rust
-use omime_sdk::{Context, Engine, KeyEvent, Preedit, modifiers};
+use std::collections::HashMap;
+use omime_sdk::{Context, ContextId, Engine, KeyEvent, Preedit, modifiers};
 
 #[derive(Default)]
 struct Echo {
-    word: String,
+    words: HashMap<ContextId, String>,
 }
 
 impl Engine for Echo {
+    fn activate(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
+    fn deactivate(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
+    fn reset(&mut self, ctx: &mut Context<'_>) {
+        self.words.remove(&ctx.id());
+    }
+
     fn process_key(&mut self, ctx: &mut Context<'_>, key: &KeyEvent) -> bool {
         // 把释放事件和快捷键留给应用。
         if key.released || key.modifiers & (modifiers::CONTROL | modifiers::ALT) != 0 {
             return false;
         }
+        let word = self.words.entry(ctx.id()).or_default();
         match key.text.chars().next() {
             Some(c) if c.is_alphabetic() => {
-                self.word.push(c);
-                ctx.set_preedit(Preedit::with_cursor_at_end(self.word.clone()));
+                word.push(c);
+                ctx.set_preedit(Preedit::with_cursor_at_end(word.clone()));
                 true // 已消费
             }
             _ => {
-                if !self.word.is_empty() {
-                    ctx.commit(std::mem::take(&mut self.word).to_uppercase());
+                if !word.is_empty() {
+                    ctx.commit(std::mem::take(word).to_uppercase());
                 }
                 false // 上屏之后，应用也会收到这个键
             }
@@ -45,11 +59,12 @@ fn main() -> Result<(), omime_sdk::Error> {
 
 这段代码大致就是 [`engines/echo`](../../engines/echo/src/main.rs)。需要知道的规则：
 
+- 多个上下文可能同时激活。组合状态须按 `ctx.id()` 保存；激活、失焦和重置只影响对应上下文。目前各 seat 仍共享引擎选择和候选窗定位，正式支持的 UI 使用流程是单 seat 会话。
 - `process_key` 同时收到按下**和**释放。返回 `true` 表示消费该键。无论你返回什么，释放事件总是按对应的按下事件来路由，因此应用不会看到卡住的键。
 - 通过 `Context` 请求的操作（`commit`、`set_preedit`、`clear_preedit`、`delete_surrounding`、`forward_key`）会**按顺序**在未被消费的按键到达应用**之前**执行。
 - 文本的偏移与长度以 UTF-8 字节计，与 Wayland 的 text-input 协议一致。`Preedit::with_cursor_at_end` 会替你计算。
-- 尽快回复。200 ms（可配置）之后，按键会被交给应用，迟到的回复被丢弃，随后执行 `reset`。
-- `activate`、`deactivate`、`update` 和 `reset` 告知你焦点与字段的情况（`ctx.info()` 包含内容类型、光标周围文本，以及窗口显示期间的光标矩形）。密码和 PIN 字段永远不会到达引擎。
+- 尽快回复。200 ms（可配置）之后，按键会被交给应用；后续按键绕过繁忙的上下文，直到迟到回复被丢弃、排队的 `reset` 完成。切换或失焦后被放弃的回复只会被丢弃，不能重置新会话。
+- `activate`、`deactivate`、`update` 和 `reset` 告知你焦点与字段的情况（`ctx.info()` 包含内容类型、光标周围文本，以及窗口显示期间的光标矩形）。Wayland/Fcitx5 明确标记的敏感字段绕过引擎；XIM 不提供此信息。
 - 有些应用不显示预编辑（xterm 等把绘制预编辑交给输入法的 XIM 应用）：这时 `ctx.info().client_preedit` 为 `false`，有窗口的引擎应在自己的窗口里显示正在组字的内容。`frontend` 说明应用经由哪条路径到达 omimed（`wayland`、`xim`、`fcitx`）。
 
 ## 安装引擎

@@ -427,6 +427,14 @@ fn destroy_upstream(object: &Rc<dyn Object>) {
     if object.server_id().is_none() {
         return;
     }
+    // libwayland can defer delete_id until the pool's buffers are released. Its
+    // server ID remains in wl-proxy meanwhile, but destroy must not be sent twice.
+    if object
+        .try_get_handler_ref::<BridgeShmPool>()
+        .is_ok_and(|pool| pool.destroyed)
+    {
+        return;
+    }
     macro_rules! destroy {
         ($ty:ty, $method:ident) => {
             if let Some(o) = object.try_downcast::<$ty>() {
@@ -486,14 +494,35 @@ fn same_client(a: &dyn Object, b: &dyn Object) -> bool {
     }
 }
 
+/// Identifies the engine responsible for an upstream protocol error while object
+/// ownership is still available, before wl-proxy tears down the connection.
+pub(super) fn engine_for_object(object: &Rc<dyn Object>) -> Option<EngineId> {
+    let client = object.client()?;
+    let display = client.display();
+    let handler = display.try_get_handler_ref::<BridgeDisplay>().ok()?;
+    Some(handler.engine.clone())
+}
+
 /// Kills a misbehaving engine connection without touching the shared connection.
 fn kill_client(object: &dyn Object, reason: &str) {
     let Some(client) = object.client() else {
         return;
     };
+    let shared = client
+        .display()
+        .try_get_handler_ref::<BridgeDisplay>()
+        .ok()
+        .map(|display| display.shared.clone());
     warn!("disconnecting a UI client: {reason}");
     destroy_client_objects(&client);
     client.disconnect();
+    // Explicit disconnect does not invoke BridgeClient::disconnected. Release a
+    // hosted socket too, so its process can observe the failure and exit.
+    if let Some(shared) = shared {
+        shared.borrow_mut().hosted_sockets.retain(|(owner, _)| {
+            owner.strong_count() > 0 && !owner.ptr_eq(&Rc::downgrade(&client))
+        });
+    }
 }
 
 struct BridgeDisplay {
@@ -765,6 +794,7 @@ impl WlShmHandler for BridgeShm {
         id.set_handler(BridgeShmPool {
             fd: fd.clone(),
             size,
+            destroyed: false,
         });
     }
 }
@@ -772,9 +802,15 @@ impl WlShmHandler for BridgeShm {
 struct BridgeShmPool {
     fd: Rc<std::os::fd::OwnedFd>,
     size: i32,
+    destroyed: bool,
 }
 
 impl WlShmPoolHandler for BridgeShmPool {
+    fn handle_destroy(&mut self, slf: &Rc<WlShmPool>) {
+        self.destroyed = true;
+        slf.send_destroy();
+    }
+
     fn handle_create_buffer(
         &mut self,
         slf: &Rc<WlShmPool>,
@@ -1024,6 +1060,8 @@ struct BridgeSurface {
     armed: Vec<Rc<WlCallback>>,
     /// The engine's fractional scale object for this surface.
     fractional_scale: Option<Weak<WpFractionalScaleV1>>,
+    /// Only one live viewport may be associated with a surface.
+    viewport: Option<Weak<WpViewport>>,
     /// Whether the engine last got a scale meant for the mirror.
     mirror_scale: bool,
     /// The mirror showing the window while an X11 application has focus.
@@ -1065,6 +1103,7 @@ impl BridgeSurface {
             frames: Vec::new(),
             armed: Vec::new(),
             fractional_scale: None,
+            viewport: None,
             mirror_scale: false,
             mirror: None,
             closed_for: None,
@@ -1508,11 +1547,17 @@ impl WlSurfaceHandler for BridgeSurface {
     }
 
     fn handle_set_buffer_transform(&mut self, slf: &Rc<WlSurface>, transform: WlOutputTransform) {
+        if transform.0 > 7 {
+            return kill_client(&**slf, "invalid buffer transform");
+        }
         self.pending_state.transform = Some(transform);
         slf.send_set_buffer_transform(transform);
     }
 
     fn handle_set_buffer_scale(&mut self, slf: &Rc<WlSurface>, scale: i32) {
+        if scale <= 0 {
+            return kill_client(&**slf, "invalid buffer scale");
+        }
         self.pending_state.scale = Some(scale);
         slf.send_set_buffer_scale(scale);
     }
@@ -1599,6 +1644,15 @@ impl WpViewporterHandler for BridgeViewporter {
         id: &Rc<WpViewport>,
         surface: &Rc<WlSurface>,
     ) {
+        let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() else {
+            return kill_client(&**slf, "viewport for an unknown surface");
+        };
+        if handler.viewport.as_ref().and_then(Weak::upgrade).is_some() {
+            drop(handler);
+            return kill_client(&**slf, "surface already has a viewport");
+        }
+        handler.viewport = Some(Rc::downgrade(id));
+        drop(handler);
         slf.send_get_viewport(id, surface);
         id.set_handler(BridgeViewport {
             surface: Rc::downgrade(surface),
@@ -1622,6 +1676,11 @@ impl BridgeViewport {
 
 impl WpViewportHandler for BridgeViewport {
     fn handle_destroy(&mut self, slf: &Rc<WpViewport>) {
+        if let Some(surface) = self.surface.upgrade()
+            && let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>()
+        {
+            handler.viewport = None;
+        }
         // The surface loses its viewport with its next commit.
         self.pending(|state| {
             state.source = Some(None);
@@ -1640,12 +1699,33 @@ impl WpViewportHandler for BridgeViewport {
     ) {
         let source = [x, y, width, height];
         let unset = source == [Fixed::from_i32_saturating(-1); 4];
+        if !self
+            .surface
+            .upgrade()
+            .is_some_and(|surface| surface.server_id().is_some())
+        {
+            return kill_client(&**slf, "viewport surface was destroyed");
+        }
+        let zero = Fixed::from_i32_saturating(0);
+        if !unset && (x < zero || y < zero || width <= zero || height <= zero) {
+            return kill_client(&**slf, "invalid viewport source");
+        }
         self.pending(|state| state.source = Some((!unset).then_some(source)));
         slf.send_set_source(x, y, width, height);
     }
 
     fn handle_set_destination(&mut self, slf: &Rc<WpViewport>, width: i32, height: i32) {
         let unset = (width, height) == (-1, -1);
+        if !self
+            .surface
+            .upgrade()
+            .is_some_and(|surface| surface.server_id().is_some())
+        {
+            return kill_client(&**slf, "viewport surface was destroyed");
+        }
+        if !unset && (width <= 0 || height <= 0) {
+            return kill_client(&**slf, "invalid viewport destination");
+        }
         self.pending(|state| state.destination = Some((!unset).then_some((width, height))));
         slf.send_set_destination(width, height);
     }

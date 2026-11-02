@@ -23,6 +23,13 @@ pub struct ModifierState {
     pub group: u32,
 }
 
+impl ModifierState {
+    /// X11 encodes the effective real modifiers and the layout group in one mask.
+    pub fn x11_bits(self) -> u32 {
+        self.depressed | self.latched | self.locked | ((self.group & 3) << 13)
+    }
+}
+
 /// Key repeat parameters from `zwp_input_method_keyboard_grab_v2.repeat_info`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepeatInfo {

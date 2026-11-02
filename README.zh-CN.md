@@ -22,9 +22,9 @@
 </p>
 
 > [!WARNING]
-> **oh-my-ime 仍处于早期开发阶段，目前还不能替代你正在使用的输入法。**
-> 本文介绍我们正在构建的架构；哪些功能已经可用，以[开发状态](#开发状态)表格为准。
-> 我们宁可少承诺，也不宣称自己并不具备的兼容性。
+> **oh-my-ime 仍处于早期开发阶段，目前面向单 seat 的 Hyprland 与 sway 会话。**
+> 安装后仍需配置桌面会话和应用输入模块。[开发状态](#开发状态)表格列出已实现的功能；
+> 协议测试通过不代表所有真实应用都已验证兼容。
 
 ## 为什么还要一个输入法框架？
 
@@ -52,7 +52,8 @@ Wayland 让这件事更难：
   Wayland 层面的繁琐工作由平台完成。
 - 🔌 **由一个守护进程持有合成器协议**：焦点、键盘抓取、按键回送、切换、每个 seat 的状态都由它处理，
   引擎无需关心。
-- 🛡️ **隔离**：引擎崩溃或卡死都不会影响正常打字。
+- 🛡️ **恢复**：原生引擎超时会将按键交还应用，持续崩溃会停用该引擎。
+  可归因的 UI 协议错误会在重连前停用故障引擎。
 - 🔁 **兼容层**：IBus 与 Fcitx5 生态的兼容宿主已列入路线图，并会明确标注为兼容运行。
 
 ## 工作原理
@@ -124,7 +125,7 @@ flowchart LR
 | Rust SDK（`omime-sdk`）与 `echo` 测试引擎 | ✅ |
 | 切换：热键、`omime` 命令行、D-Bus 控制接口，记住上次使用的引擎 | ✅ |
 | 配置：启用的引擎、热键、超时；`omime enable/disable/reload` | ✅ |
-| 密码与 PIN 输入框绕过引擎 | ✅ |
+| Wayland/Fcitx5 明确标记的密码与 PIN 输入框绕过引擎 | ✅；XIM 不提供字段用途 |
 | UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
@@ -133,8 +134,8 @@ flowchart LR
 | 引擎菜单（中文标点、全角等）出现在托盘和命令行中，包括 Fcitx 5 与 IBus 的 | ✅ |
 | 切换浮层：用热键切换后，在屏幕下方显示输入法 | ✅ sway 与 Hyprland |
 | Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
-| 多个 seat，各自拥有独立的输入法会话 | ✅ 已在 sway 上测试 |
-| 附带 systemd 用户单元的 Nix 包 | ✅ |
+| 多 seat 分别路由按键、保存组合输入 | 🚧 已在 sway 上测试；引擎选择和候选窗定位仍共享 |
+| Nix/源码安装附带 systemd 用户单元和会话模板 | ✅ |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
 | X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
 | 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5 与 IBus（≥ 1.5.32），已在 sway 上测试 · 🧩 兼容 |
@@ -181,7 +182,14 @@ hl.on("hyprland.start", function()
 end)
 ```
 
-如果使用旧版 `hyprland.conf`，写 `exec-once = omimed` 即可。之后在任意 Wayland 应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。
+如果使用旧版 `hyprland.conf`，写 `exec-once = omimed`。按[应用环境与模块指南](docs/zh-CN/hyprland.md)配置后，运行：
+
+```sh
+omime doctor
+omime switch sparkle
+```
+
+第一次启动默认直接输入，需要先选择引擎。在 foot 等支持 text-input-v3 的应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。
 
 | 操作 | 方式 |
 |---|---|
@@ -204,7 +212,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
    - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
    - M3：完整 UI Bridge + Slint 示例输入法 ✅
    - M4：管理功能与健壮性 ✅ → `v0.1.0`
-3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 验证；Nix 包；中文文档 ✅ → `v0.2.0`
+3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 按键路由测试；Nix 包；中文文档 ✅ → `v0.2.0`
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主

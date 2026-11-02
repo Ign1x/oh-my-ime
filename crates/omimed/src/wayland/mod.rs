@@ -206,6 +206,9 @@ pub struct Frontend {
     x11_cursor: Option<Rect>,
     outputs: Outputs,
     context_ids: ContextIds,
+    /// Saved directly in the error callback: dispatch may fail before its queued
+    /// events can be processed, and destroys the objects needed for attribution.
+    failed_engine: Rc<RefCell<Option<EngineId>>>,
 }
 
 impl std::fmt::Debug for Frontend {
@@ -229,8 +232,10 @@ impl Frontend {
             .map_err(|e| wl_error("failed to connect to the Wayland compositor", e))?;
 
         let queue = EventQueue::default();
+        let failed_engine = Rc::new(RefCell::new(None));
         state.set_handler(StateEvents {
             queue: queue.clone(),
+            failed_engine: failed_engine.clone(),
         });
 
         let display = state.display();
@@ -266,11 +271,16 @@ impl Frontend {
             x11_cursor: None,
             outputs: Outputs::default(),
             context_ids,
+            failed_engine,
         })
     }
 
     pub fn state(&self) -> &Rc<State> {
         &self.state
+    }
+
+    pub fn failed_engine(&self) -> Option<EngineId> {
+        self.failed_engine.borrow().clone()
     }
 
     /// Flushes outgoing messages. Must be called before waiting for the poll fd.
@@ -448,6 +458,12 @@ impl Frontend {
     pub fn finish_delegated(&mut self, key: &KeyRef) {
         if let Some(seat) = self.seats.get_mut(&key.seat) {
             seat.finish_delegated(key);
+        }
+    }
+
+    pub fn forward_key(&mut self, seat: SeatId, ctx: ContextId, key: &frontend::ForwardedKey) {
+        if let Some(seat) = self.seats.get_mut(&seat) {
+            seat.forward_key(ctx, key);
         }
     }
 
@@ -787,6 +803,7 @@ fn wl_error(context: &str, error: StateError) -> anyhow::Error {
 
 struct StateEvents {
     queue: EventQueue,
+    failed_engine: Rc<RefCell<Option<EngineId>>>,
 }
 
 impl StateHandler for StateEvents {
@@ -797,6 +814,7 @@ impl StateHandler for StateEvents {
         error: u32,
         msg: &str,
     ) {
+        *self.failed_engine.borrow_mut() = object.and_then(bridge::engine_for_object);
         let interface = object.map_or("<deleted>", |o| o.interface().name());
         let message = format!("protocol error {error} on {interface}#{server_id}: {msg}");
         error!("{message}");

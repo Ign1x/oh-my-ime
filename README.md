@@ -22,9 +22,10 @@ English · [简体中文](README.zh-CN.md)
 </p>
 
 > [!WARNING]
-> **oh-my-ime is in early development.** It cannot replace your current input method yet.
-> This README describes the architecture we are building, and the [status table](#status)
-> says what works today. We would rather under-promise than claim compatibility we don't have.
+> **oh-my-ime is in early development, targeting single-seat Hyprland and sway sessions.**
+> Installation still requires session configuration and application input modules.
+> The [status table](#status) describes implemented features; protocol tests do not
+> establish compatibility with every real application.
 
 ## Why another input method framework?
 
@@ -53,7 +54,8 @@ Wayland makes this harder:
   that follows the text cursor. The platform takes care of the Wayland plumbing.
 - 🔌 **One daemon owns the compositor protocols.** It handles focus, keyboard grabs, key
   forwarding, switching and per-seat state, so engines don't have to.
-- 🛡️ **Isolation.** An engine crash or hang never takes typing down with it.
+- 🛡️ **Recovery.** Native engine timeouts return keys to the application; repeated crashes
+  stop the engine. An attributed UI protocol fault quarantines its engine before reconnecting.
 - 🔁 **Compatibility hosts** for the existing IBus and Fcitx5 ecosystems are on the roadmap,
   clearly labelled as such.
 
@@ -121,7 +123,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
 | Switching: hotkeys, `omime` CLI, D-Bus control API, last engine remembered | ✅ |
 | Configuration: enabled engines, hotkeys, timeouts; `omime enable/disable/reload` | ✅ |
-| Password and PIN fields bypass engines | ✅ |
+| Password and PIN fields reported by Wayland/Fcitx5 bypass engines | ✅; XIM does not report field purpose |
 | UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
@@ -130,8 +132,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
 | Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
-| Several seats, each with its own input method session | ✅ tested on sway |
-| Nix package with the systemd user unit | ✅ |
+| Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
+| Nix/source installation with a systemd user unit and session templates | ✅ |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
 | Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
 | Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5 and IBus (≥ 1.5.32), tested on sway · 🧩 compat |
@@ -179,8 +181,16 @@ hl.on("hyprland.start", function()
 end)
 ```
 
-(or `exec-once = omimed` in a legacy `hyprland.conf`). Then type `:rocket` into any
-Wayland application and pick from Sparkle's deck.
+(or `exec-once = omimed` in a legacy `hyprland.conf`). Configure the
+[application environment and required modules](docs/hyprland.md), then run:
+
+```sh
+omime doctor
+omime switch sparkle
+```
+
+The first launch uses direct input until an engine is selected. In a text-input-v3
+application such as foot, type `:rocket` and pick from Sparkle's deck.
 
 | What | How |
 |---|---|
@@ -206,7 +216,7 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    - M3: complete UI Bridge + Slint demo engine ✅
    - M4: management and robustness ✅ → `v0.1.0`
 3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat
-   validation, Nix package, Chinese guides ✅ → `v0.2.0`
+   key-routing tests, Nix package, Chinese guides ✅ → `v0.2.0`
 4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅ →
    `v0.3.0`
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅

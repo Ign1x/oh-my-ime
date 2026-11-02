@@ -24,14 +24,14 @@ use anyhow::{Context as _, bail};
 use omime_e2e::{parse_color, shm_file};
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface,
+    wl_subcompositor, wl_subsurface, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_noop};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 const USAGE: &str = "\
-Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport]
+Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport|subsurface]
                       [--misbehave-once FILE] [--slow-ms N] [--hidden]
                       [--input-methods ID,ID...] [--properties]";
 
@@ -112,8 +112,10 @@ impl omime_sdk::Engine for PassThrough {
 enum Misbehave {
     /// wl_shm.create_pool with size 0 (the bridge is expected to catch this).
     Shm,
-    /// wp_viewport.set_destination(-5, -5) (forwarded; breaks the shared connection).
+    /// wp_viewport.set_destination(-5, -5) (the bridge must reject it).
     Viewport,
+    /// A surface cannot be its own subsurface parent; exercises upstream errors.
+    Subsurface,
 }
 
 #[derive(Default)]
@@ -123,6 +125,7 @@ struct Globals {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     seat: Option<wl_seat::WlSeat>,
     viewporter: Option<wp_viewporter::WpViewporter>,
+    subcompositor: Option<wl_subcompositor::WlSubcompositor>,
 }
 
 struct App {
@@ -183,6 +186,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
             match interface.as_str() {
                 "wl_compositor" => g.compositor = Some(registry.bind(name, version.min(4), qh, ())),
                 "wl_shm" => g.shm = Some(registry.bind(name, 1, qh, ())),
+                "wl_subcompositor" => g.subcompositor = Some(registry.bind(name, 1, qh, ())),
                 "xdg_wm_base" => g.wm_base = Some(registry.bind(name, version.min(5), qh, ())),
                 "wl_seat" => g.seat = Some(registry.bind(name, version.min(5), qh, ())),
                 "wp_viewporter" => g.viewporter = Some(registry.bind(name, 1, qh, ())),
@@ -318,6 +322,8 @@ delegate_noop!(App: wl_shm_pool::WlShmPool);
 delegate_noop!(App: ignore wl_callback::WlCallback);
 delegate_noop!(App: wp_viewporter::WpViewporter);
 delegate_noop!(App: wp_viewport::WpViewport);
+delegate_noop!(App: wl_subcompositor::WlSubcompositor);
+delegate_noop!(App: wl_subsurface::WlSubsurface);
 
 fn main() -> anyhow::Result<()> {
     let mut color = 0xffff_cc00;
@@ -343,6 +349,7 @@ fn main() -> anyhow::Result<()> {
                 misbehave = Some(match value()?.as_str() {
                     "shm" => Misbehave::Shm,
                     "viewport" => Misbehave::Viewport,
+                    "subsurface" => Misbehave::Subsurface,
                     other => bail!("unknown misbehaviour `{other}`"),
                 });
             }
@@ -470,6 +477,13 @@ fn main() -> anyhow::Result<()> {
                         viewporter
                             .get_viewport(surface, &qh, ())
                             .set_destination(-5, -5);
+                    }
+                }
+                Misbehave::Subsurface => {
+                    if let (Some(subcompositor), Some(surface)) =
+                        (&app.globals.subcompositor, &app.surface)
+                    {
+                        subcompositor.get_subsurface(surface, surface, &qh, ());
                     }
                 }
             }

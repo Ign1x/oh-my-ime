@@ -68,6 +68,9 @@ pub enum Error {
 /// An input method engine.
 ///
 /// All methods run on the SDK's thread, one at a time.
+/// Several text fields can be active together, for example on different seats.
+/// Keep composition state keyed by [`Context::id`]; activation, reset and
+/// deactivation apply only to that field. See the Echo engine for an example.
 pub trait Engine: Send + 'static {
     /// The platform knows the engine now. Announce what it has here, such as its input
     /// methods ([`Host::set_input_methods`]): this runs on the engine's thread before

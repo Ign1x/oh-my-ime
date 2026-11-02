@@ -884,6 +884,7 @@ impl ZwpVirtualKeyboardManagerV1Handler for VirtualKeyboardManager {
             engine: self.engine.clone(),
             seat,
             has_keymap: false,
+            modifiers: ModifierState::default(),
         });
     }
 }
@@ -895,6 +896,7 @@ struct VirtualKeyboard {
     engine: EngineId,
     seat: SeatId,
     has_keymap: bool,
+    modifiers: ModifierState,
 }
 
 impl ZwpVirtualKeyboardV1Handler for VirtualKeyboard {
@@ -909,7 +911,7 @@ impl ZwpVirtualKeyboardV1Handler for VirtualKeyboard {
         self.has_keymap = true;
     }
 
-    fn handle_key(&mut self, _slf: &Rc<ZwpVirtualKeyboardV1>, _time: u32, key: u32, state: u32) {
+    fn handle_key(&mut self, _slf: &Rc<ZwpVirtualKeyboardV1>, time: u32, key: u32, state: u32) {
         if !self.has_keymap {
             debug!(
                 engine = &*self.engine,
@@ -933,25 +935,32 @@ impl ZwpVirtualKeyboardV1Handler for VirtualKeyboard {
         let events = self.shared.borrow().events.clone();
         events
             .borrow_mut()
-            .push_back(Event::Hosted(HostedEvent::Actions {
+            .push_back(Event::Hosted(HostedEvent::ForwardKey {
                 engine: self.engine.clone(),
                 ctx,
-                actions: vec![Action::ForwardKey {
+                key: crate::frontend::ForwardedKey {
                     keycode: key,
+                    time,
                     pressed: state == KEY_STATE_PRESSED,
-                }],
+                    modifiers: self.modifiers,
+                },
             }));
     }
 
     fn handle_modifiers(
         &mut self,
         _slf: &Rc<ZwpVirtualKeyboardV1>,
-        _mods_depressed: u32,
-        _mods_latched: u32,
-        _mods_locked: u32,
-        _group: u32,
+        mods_depressed: u32,
+        mods_latched: u32,
+        mods_locked: u32,
+        group: u32,
     ) {
-        // omimed's virtual keyboard already passes the real modifiers on.
+        self.modifiers = ModifierState {
+            depressed: mods_depressed,
+            latched: mods_latched,
+            locked: mods_locked,
+            group,
+        };
     }
 
     fn handle_destroy(&mut self, slf: &Rc<ZwpVirtualKeyboardV1>) {

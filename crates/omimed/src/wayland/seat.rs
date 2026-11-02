@@ -520,7 +520,9 @@ impl SeatSession {
         let code = key.keycode;
         match (key.released, key.repeat, handled) {
             (true, ..) => match self.keys.release(code) {
-                ReleaseAction::Forward => self.send_key(key.time, code, KEY_STATE_RELEASED),
+                ReleaseAction::Forward => {
+                    self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
+                }
                 ReleaseAction::Swallow => {}
             },
             (false, false, true) => {
@@ -528,15 +530,15 @@ impl SeatSession {
                 self.start_repeat(code);
             }
             (false, false, false) => {
-                self.send_key(key.time, code, KEY_STATE_PRESSED);
+                self.send_key(key.time, code, KEY_STATE_PRESSED, key.modifiers);
                 self.keys.press_forwarded(code);
             }
             (false, true, true) => {}
             (false, true, false) => {
                 // The engine consumed the press but not this repeat (e.g. Backspace in
                 // an empty preedit): the application gets a full key stroke.
-                self.send_key(key.time, code, KEY_STATE_PRESSED);
-                self.send_key(key.time, code, KEY_STATE_RELEASED);
+                self.send_key(key.time, code, KEY_STATE_PRESSED, key.modifiers);
+                self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
             }
         }
     }
@@ -556,7 +558,7 @@ impl SeatSession {
             let held = self.keys.is_forwarded(code);
             self.keys.release(code);
             if held {
-                self.send_key(key.time, code, KEY_STATE_RELEASED);
+                self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
             }
         } else if !key.repeat {
             self.keys.press_consumed(code);
@@ -603,30 +605,44 @@ impl SeatSession {
                 Action::ForwardKey { keycode, pressed } => {
                     // Text before the key must reach the application first.
                     self.flush_batch(std::mem::take(&mut batch));
-                    if *pressed && !self.held.contains(keycode) {
-                        // The key went up before the press came back, which a busy
-                        // input method does: nothing would release it any more, so the
-                        // application gets a whole key stroke.
-                        self.send_key(now_ms(), *keycode, KEY_STATE_PRESSED);
-                        self.send_key(now_ms(), *keycode, KEY_STATE_RELEASED);
-                        continue;
-                    }
-                    let state = if *pressed {
-                        self.keys.press_forwarded(*keycode);
-                        KEY_STATE_PRESSED
-                    } else {
-                        // Released already when the key went up, or never pressed.
-                        if !self.keys.is_forwarded(*keycode) {
-                            continue;
-                        }
-                        self.keys.release(*keycode);
-                        KEY_STATE_RELEASED
-                    };
-                    self.send_key(now_ms(), *keycode, state);
+                    self.forward_key(
+                        ctx,
+                        &frontend::ForwardedKey {
+                            keycode: *keycode,
+                            time: now_ms(),
+                            pressed: *pressed,
+                            modifiers: self.keyboard.modifiers(),
+                        },
+                    );
                 }
             }
         }
         self.flush_batch(batch);
+    }
+
+    pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
+        if Some(ctx) != self.ctx {
+            return;
+        }
+        let code = key.keycode;
+        if key.pressed && !self.held.contains(&code) {
+            // A busy input method may forward the press after the real release.
+            // Complete the stroke now so the application cannot keep it held.
+            self.send_key(key.time, code, KEY_STATE_PRESSED, key.modifiers);
+            self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
+            return;
+        }
+        let state = if key.pressed {
+            self.keys.press_forwarded(code);
+            KEY_STATE_PRESSED
+        } else {
+            if !self.keys.is_forwarded(code) {
+                return;
+            }
+            self.keys.release(code);
+            KEY_STATE_RELEASED
+        };
+        self.send_key(key.time, code, state, key.modifiers);
     }
 
     /// Removes the preedit from the focused field `ctx`.
@@ -655,11 +671,31 @@ impl SeatSession {
         self.commit(self.ime.serial());
     }
 
-    fn send_key(&mut self, time: u32, key: u32, state: u32) {
+    fn send_key(&mut self, time: u32, key: u32, state: u32, modifiers: ModifierState) {
         if self.sync_vk_keymap()
             && let Some(vk) = &self.vk
         {
+            // Engine replies may arrive after later modifier events. Interpret this
+            // key with its original state, then restore what is physically held so
+            // the replay cannot leave a modifier stuck in the application.
+            let current = self.keyboard.modifiers();
+            if modifiers != current {
+                vk.send_modifiers(
+                    modifiers.depressed,
+                    modifiers.latched,
+                    modifiers.locked,
+                    modifiers.group,
+                );
+            }
             vk.send_key(time, key, state);
+            if modifiers != current {
+                vk.send_modifiers(
+                    current.depressed,
+                    current.latched,
+                    current.locked,
+                    current.group,
+                );
+            }
         } else {
             warn!(
                 seat = self.name,

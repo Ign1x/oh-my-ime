@@ -45,7 +45,7 @@ const TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
 const RESTART_MIN: Duration = Duration::from_millis(500);
 const RESTART_MAX: Duration = Duration::from_secs(30);
 /// More crashes than this within [`CRASH_WINDOW`] and we stop restarting.
-const MAX_CRASHES: usize = 5;
+pub const MAX_CRASHES: usize = 5;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
 
 #[zbus::proxy(
@@ -234,6 +234,8 @@ pub enum EngineState {
     Starting { deadline: Instant },
     /// Registered; requests can be sent.
     Ready,
+    /// The process is being terminated; no new requests may reach it.
+    Stopping,
     /// Crashed; restarts at `at`.
     Restarting { at: Instant },
     /// Crashed too often; not restarted until selected again.
@@ -246,6 +248,7 @@ impl EngineState {
             Self::Stopped => "stopped",
             Self::Starting { .. } => "starting",
             Self::Ready => "ready",
+            Self::Stopping => "stopping",
             Self::Restarting { .. } => "restarting",
             Self::Failed => "failed",
         }
@@ -659,6 +662,10 @@ impl EngineManager {
         let Some(slot) = self.slots.get_mut(id) else {
             return Ok(());
         };
+        anyhow::ensure!(
+            matches!(slot.state, EngineState::Starting { .. }),
+            "engine `{id}` is not waiting for registration"
+        );
         slot.proxy = Some(proxy);
         slot.api_minor = api_minor;
         slot.state = EngineState::Ready;
@@ -832,12 +839,18 @@ impl EngineManager {
         }
     }
 
-    pub fn exited(&mut self, id: &str, generation: u64, status: Option<ExitStatus>, needed: bool) {
+    pub fn exited(
+        &mut self,
+        id: &str,
+        generation: u64,
+        status: Option<ExitStatus>,
+        needed: bool,
+    ) -> bool {
         let Some(slot) = self.slots.get_mut(id) else {
-            return;
+            return false;
         };
         if generation != slot.generation {
-            return;
+            return false;
         }
         slot.proxy = None;
         slot.kill = None;
@@ -848,16 +861,20 @@ impl EngineManager {
         if slot.tray.take().is_some() {
             slot.status = Status::default();
         }
+        if slot.state == EngineState::Failed {
+            // A protocol fault quarantined this process before it exited.
+            return true;
+        }
         let now = Instant::now();
         if std::mem::take(&mut slot.reloading) {
             debug!(engine = id, "engine stopped to reload");
             slot.state = EngineState::Restarting { at: now };
-            return;
+            return true;
         }
         if !needed {
             slot.state = EngineState::Stopped;
             debug!(engine = id, ?status, "engine exited");
-            return;
+            return true;
         }
         slot.crashes
             .retain(|t| now.duration_since(*t) < CRASH_WINDOW);
@@ -865,11 +882,23 @@ impl EngineManager {
         if slot.crashes.len() > MAX_CRASHES {
             warn!(engine = id, ?status, "engine keeps crashing; giving up");
             slot.state = EngineState::Failed;
-            return;
+            return true;
         }
         let backoff = (RESTART_MIN * 2u32.pow(slot.crashes.len() as u32 - 1)).min(RESTART_MAX);
         warn!(engine = id, ?status, restart_in = ?backoff, "engine exited unexpectedly");
         slot.state = EngineState::Restarting { at: now + backoff };
+        true
+    }
+
+    /// Stops a process that broke the shared compositor connection. Only an
+    /// explicit user selection may retry it; reconnection must not revive it.
+    pub fn quarantine(&mut self, id: &str) {
+        self.stop(id, Stop::Now);
+        if let Some(slot) = self.slots.get_mut(id) {
+            slot.state = EngineState::Failed;
+            slot.proxy = None;
+            slot.reloading = false;
+        }
     }
 
     /// Kills the engine (it is restarted on demand).
@@ -965,6 +994,8 @@ impl EngineManager {
         if let Some(slot) = self.slots.get_mut(id)
             && let Some(kill) = slot.kill.take()
         {
+            slot.state = EngineState::Stopping;
+            slot.proxy = None;
             let _ = kill.send(how);
         }
     }

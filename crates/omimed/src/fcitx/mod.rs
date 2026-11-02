@@ -464,6 +464,9 @@ impl FcitxFrontend {
             return;
         };
         let Some(state) = self.ics.get(&pending.ic) else {
+            // Destroy may precede the core's final decision. Complete the original
+            // RPC even though its input context no longer has a signal destination.
+            let _ = pending.reply.send(KeyAnswer::default());
             return;
         };
         let (bus, dest, path) = (state.bus, state.owner.clone(), state.path.clone());
@@ -493,6 +496,26 @@ impl FcitxFrontend {
 
     /// Applies an engine's actions to the field `ctx`.
     pub fn apply_actions(&mut self, ctx: ContextId, actions: &[Action]) {
+        self.apply_actions_with_modifiers(ctx, actions, None);
+    }
+
+    pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
+        self.apply_actions_with_modifiers(
+            ctx,
+            &[Action::ForwardKey {
+                keycode: key.keycode,
+                pressed: key.pressed,
+            }],
+            Some(key.modifiers.x11_bits()),
+        );
+    }
+
+    fn apply_actions_with_modifiers(
+        &mut self,
+        ctx: ContextId,
+        actions: &[Action],
+        modifiers: Option<u32>,
+    ) {
         let Some((ic, state)) = self.ics.iter_mut().find(|(_, s)| s.ctx == Some(ctx)) else {
             return;
         };
@@ -528,7 +551,7 @@ impl FcitxFrontend {
                         // With the modifiers of the application's last key, as a virtual
                         // keyboard's keys reach Wayland applications: Ctrl+C an input
                         // method does not want must arrive as Ctrl+C, Shift+a as A.
-                        let mods = state.last_mods;
+                        let mods = modifiers.unwrap_or(state.last_mods);
                         let keyval = keysym(keymap, *keycode, mods);
                         signals.push(Signal::Forward(keyval, mods, !pressed));
                     }

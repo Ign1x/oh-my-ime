@@ -38,6 +38,8 @@ scripts/install.sh # 安装到 ~/.local；系统级安装请设 PREFIX=/usr/loca
 
 这需要 Rust 工具链，以及 wayland、libxkbcommon、dbus 和 fontconfig 的开发文件；并且 `~/.local/bin` 必须在 Hyprland 启动程序所用的 `PATH` 中。在 NixOS 上请使用 Nix 包：以这种方式构建的二进制在那里找不到图形库。
 
+安装脚本也会把配置示例与 Hyprland 片段安装到 `~/.local/share/oh-my-ime/`，把用户单元安装到 `~/.local/share/systemd/user/omimed.service`。单元和自带引擎使用绝对路径，自定义 `PREFIX` 同样适用。打包时可设置 `OMIME_INSTALL_BIN_DIR=/预构建程序的绝对目录`，直接安装已有二进制。
+
 ## 2. 停止其他输入法
 
 一个 Wayland seat 只能容纳一个输入法。如果 fcitx5 或 IBus 随会话启动，请把它从自启动中移除（或执行 `pkill fcitx5`、`ibus exit`）。seat 被占用时 omimed 会提示你：`another input method is active on this seat`。
@@ -72,9 +74,17 @@ env = XMODIFIERS,@im=fcitx
 bind = SUPER, space, exec, omime next
 ```
 
-这些变量把各类应用都引向 omimed。GTK 和 Qt 6.8 及更高版本（`QT_IM_MODULES`）使用合成器的 text-input；Qt 5 以及 X11 上的 Qt 应用（例如微信、WPS）使用 Fcitx5 模块（`QT_IM_MODULE=fcitx`），由 omimed 提供服务；其他 X11 应用使用 XIM（`XMODIFIERS`）。系统中的 Qt 应用需要 fcitx5-qt 插件才能使用该模块（在 NixOS 上为 `qt6Packages.fcitx5-qt` 和 `libsForQt5.fcitx5-qt`）；自带 Qt 的应用（如微信、WPS）会带上自己的插件。`omime doctor` 会检查这些变量。`bind` 让你在任何地方都能切换输入法，包括那些没有在输入、omimed 自己的热键够不到的应用。
+这些变量选择应用接入 omimed 的途径。GTK 和 Qt 6.8 及更高版本（`QT_IM_MODULES`）使用合成器的 text-input；Qt 5 以及 X11 上的 Qt 应用（例如微信、WPS）使用 Fcitx5 模块（`QT_IM_MODULE=fcitx`），由 omimed 提供服务；其他 X11 应用使用 XIM（`XMODIFIERS`）。系统中的 Qt 应用需要 fcitx5-qt 插件才能使用该模块（在 NixOS 上为 `qt6Packages.fcitx5-qt` 和 `libsForQt5.fcitx5-qt`）；自带 Qt 的应用还需确认其打包版本包含对应插件。`omime doctor` 会检查这些变量。`bind` 让你在任何地方都能切换输入法，包括那些没有在输入、omimed 自己的热键够不到的应用。
 
-这两段配置都在 [`data/hyprland`](../../data/hyprland) 中。如果你的会话使用 systemd（例如通过 UWSM），也可以把 [`data/omimed.service`](../../data/omimed.service) 安装到 `~/.config/systemd/user/`，然后运行 `systemctl --user enable --now omimed`。Nix 包已包含该单元。
+这两段配置都在 [`data/hyprland`](../../data/hyprland) 和安装后的 `share/oh-my-ime/hyprland/` 中。如果会话使用 systemd（例如通过 UWSM），可以使用已安装的用户单元自启动：
+
+```sh
+systemctl --user daemon-reload
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY PATH
+systemctl --user enable --now omimed
+```
+
+保留上面的应用环境设置，自启动方式选择用户单元或 Hyprland 的 `exec-once`/`hl.exec_cmd` 其中一种。自定义前缀不在 systemd 搜索路径内时，先运行 `systemctl --user link /你的前缀/share/systemd/user/omimed.service`。Nix 包也包含单元，NixOS 通过 `systemd.packages` 提供它。
 
 ## 4. 使用
 
@@ -95,7 +105,7 @@ bind = SUPER, space, exec, omime next
 | 引擎的菜单（标点等） | `omime properties`、`omime activate <id>` |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
-omimed 会以你上次使用的引擎启动。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
+首次启动使用直接输入，需要先选择引擎，例如 `omime switch sparkle`；之后会恢复上次使用的引擎。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
 
 ### 每个应用一个引擎
 
@@ -183,13 +193,15 @@ omime switch ibus
 
 oh-my-ime 通过合成器的 text-input 协议连接 Wayland 应用，通过 XIM 或 Fcitx5 的 GTK 与 Qt 模块连接 X11 应用：
 
-| 工具包 / 应用 | 状态 |
+下表说明接入途径。自动化测试覆盖协议客户端和托管的 Fcitx5/IBus，尚未完成整张真实应用矩阵的验收。应用验收需记录版本、Wayland/XWayland 模式、模块或启动参数和测试日期，覆盖组字、候选选择、快捷键、焦点、定位与重启；微信/WPS 以及 Flatpak/Snap 打包版本需要分别验证。
+
+| 工具包 / 应用 | 接入途径 / 条件 |
 |---|---|
-| GTK 3 和 4、Qt 6、foot、kitty、alacritty、wezterm（Wayland） | ✅ text-input-v3 |
-| Firefox（Wayland） | ✅ |
-| Chromium 与 Electron 应用（Wayland） | ✅ 旧版本需加 `--enable-wayland-ime --wayland-text-input-version=3` |
-| XWayland 下的 X11 应用，通过 XIM | ✅ `XMODIFIERS=@im=omime` |
-| XWayland 下的 GTK 与 Qt X11 应用，通过 Fcitx5 模块 | ✅ `GTK_IM_MODULE=fcitx`、`QT_IM_MODULE=fcitx` |
+| GTK 3/4、较新的 Qt 6 和 Wayland 终端 | 所安装版本支持的 text-input-v3 |
+| Firefox（Wayland） | GTK Wayland 后端的 text-input |
+| Chromium 与 Electron（Wayland） | 部分版本需加 `--enable-wayland-ime --wayland-text-input-version=3` |
+| XWayland 下的 X11 应用 | XIM，设置 `XMODIFIERS=@im=omime` |
+| 使用 Fcitx5 模块的 GTK/Qt 应用 | 安装对应插件，设置 `GTK_IM_MODULE=fcitx` / `QT_IM_MODULE=fcitx` |
 
 ### X11 应用
 

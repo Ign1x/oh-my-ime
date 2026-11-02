@@ -11,6 +11,7 @@
 mod compose;
 mod search;
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use compose::{Composer, Effects, PAGE, View};
@@ -140,12 +141,17 @@ slint::slint! {
 
 /// State shared by the engine thread and the UI thread.
 #[derive(Default)]
-struct Shared {
+struct Composition {
     composer: Composer,
-    /// The focused text field, while Sparkle is the active engine.
-    ctx: Option<ContextId>,
     /// The text cursor relative to the window: `(x, y, width, height)`.
     cursor: Option<(i32, i32, i32, i32)>,
+}
+
+#[derive(Default)]
+struct Shared {
+    contexts: BTreeMap<ContextId, Composition>,
+    /// The field whose composition the single popup is displaying.
+    ctx: Option<ContextId>,
     /// Whether we asked the platform to show the window.
     shown: bool,
 }
@@ -164,12 +170,15 @@ fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 
 /// Pushes the current state to the window and tells the platform whether to show it.
 fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
-    let view: View = shared.composer.view();
+    let composition = shared.ctx.and_then(|ctx| shared.contexts.get(&ctx));
+    let view: View = composition
+        .map(|c| c.composer.view())
+        .unwrap_or_else(|| Composer::default().view());
+    let cursor = composition.and_then(|c| c.cursor);
     if view.visible != shared.shown {
         shared.shown = view.visible;
         host.set_popup_visible(view.visible);
     }
-    let cursor = shared.cursor;
     let cards: Vec<(String, String)> = view
         .candidates
         .iter()
@@ -215,8 +224,13 @@ impl Engine for Sparkle {
     fn activate(&mut self, ctx: &mut Context<'_>) {
         let mut shared = lock(&self.shared);
         shared.ctx = Some(ctx.id());
-        shared.composer.reset();
-        shared.cursor = ctx.info().cursor_rect;
+        shared.contexts.insert(
+            ctx.id(),
+            Composition {
+                composer: Composer::default(),
+                cursor: ctx.info().cursor_rect,
+            },
+        );
         refresh(&mut shared, ctx.host(), &self.ui);
         ctx.host().set_status(omime_sdk::Status {
             label: Some("✨".into()),
@@ -227,26 +241,35 @@ impl Engine for Sparkle {
 
     fn deactivate(&mut self, ctx: &mut Context<'_>) {
         let mut shared = lock(&self.shared);
-        shared.ctx = None;
-        shared.composer.reset();
+        shared.contexts.remove(&ctx.id());
+        if shared.ctx == Some(ctx.id()) {
+            shared.ctx = None;
+        }
         refresh(&mut shared, ctx.host(), &self.ui);
     }
 
     fn update(&mut self, ctx: &mut Context<'_>) {
         let mut shared = lock(&self.shared);
-        shared.cursor = ctx.info().cursor_rect;
+        if let Some(composition) = shared.contexts.get_mut(&ctx.id()) {
+            composition.cursor = ctx.info().cursor_rect;
+        }
         refresh(&mut shared, ctx.host(), &self.ui);
     }
 
     fn reset(&mut self, ctx: &mut Context<'_>) {
         let mut shared = lock(&self.shared);
-        shared.composer.reset();
+        if let Some(composition) = shared.contexts.get_mut(&ctx.id()) {
+            composition.composer.reset();
+        }
         refresh(&mut shared, ctx.host(), &self.ui);
     }
 
     fn process_key(&mut self, ctx: &mut Context<'_>, key: &KeyEvent) -> bool {
         let mut shared = lock(&self.shared);
-        let effects = shared.composer.key(&self.index, key);
+        shared.ctx = Some(ctx.id());
+        let composition = shared.contexts.entry(ctx.id()).or_default();
+        composition.cursor = ctx.info().cursor_rect;
+        let effects = composition.composer.key(&self.index, key);
         let handled = Self::apply(ctx, effects);
         refresh(&mut shared, ctx.host(), &self.ui);
         handled
@@ -280,7 +303,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut shared = lock(&shared);
         let Some(ctx) = shared.ctx else { return };
         let Ok(i) = usize::try_from(i) else { return };
-        if let Some(effects) = shared.composer.pick(i)
+        let Some(composition) = shared.contexts.get_mut(&ctx) else {
+            return;
+        };
+        if let Some(effects) = composition.composer.pick(i)
             && let Some(text) = effects.commit
         {
             // A commit replaces the preedit, so the `:query` disappears with it.

@@ -136,10 +136,15 @@ compositor's point of view, the input method's own surfaces.
   pools, and finally seat and output objects. If an engine destroys a surface itself, the popup
   role is destroyed first.
 - **Failure handling.** Requests that compositors treat as fatal and that are easy to
-  check (shm pools and buffers, bind versions, virtual objects) are validated, and a
-  broken engine is disconnected on its own. Anything else that makes the compositor
-  close the shared connection makes the daemon reconnect, bind the input method again
-  and restart the engines; the end-to-end tests cover this.
+  check (shm pools and buffers, viewport parameters and ownership, buffer scales and
+  transforms, bind versions, virtual objects) are validated, and a broken engine is
+  disconnected on its own. Retired shm pools are not destroyed again while awaiting
+  `delete_id`. If an upstream protocol error closes the shared connection, the error
+  object's owner is recorded before teardown and quarantined before reconnection.
+  It remains failed until explicitly selected again. Errors that cannot be attributed
+  still use the daemon's bounded reconnect policy, which allows the process crash
+  budget to stop a repeatedly crashing engine before the daemon gives up. A hangup
+  can precede the error event, so immediate attribution is not always available.
 
 ## X11 applications
 
@@ -203,7 +208,13 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
   after a mouse click on a candidate), `SetPopupVisible`, `SetStatus` and `RequestSwitch`.
   Everything except `Register` is fire-and-forget.
 - Key events time out after 200 ms by default. On timeout the key is forwarded to the
-  application, and a late reply is discarded and followed by `Reset`.
+  application and later keys bypass that context until the request completes and a
+  queued `Reset` finishes. A call that still has not completed after two further
+  timeout intervals causes its engine to be restarted. Replies abandoned by switching,
+  deactivation or process exit are discarded without modifying the current context.
+- Composition belongs to a `ContextId`. Multiple contexts can coexist; the bundled
+  engines store separate state for each. Engine selection and popup placement remain
+  global, so the supported UI workflow is single-seat.
 - Engines must not hide their toolkit windows. They ask the platform with `SetPopupVisible`.
 - Version 1.1 lets an engine have input methods of its own, such as the schemas of a
   Rime engine: it announces them with `SetInputMethods` and the one in use with
@@ -378,7 +389,8 @@ Slint stays out of omimed, the command line tool, the protocol crate and the SDK
 
 ## Security notes
 
-- Sensitive fields bypass the daemon entirely (no grab).
+- Wayland fields marked sensitive are not grabbed; Fcitx5 fields marked sensitive
+  bypass engines. XIM does not report field purpose, so it cannot provide this bypass.
 - Key contents are never logged by default.
 - Sockets live in a `0700` directory and peers are checked with `SO_PEERCRED`.
 - Processes running as the same user are not a security boundary. Sandboxing engines (for

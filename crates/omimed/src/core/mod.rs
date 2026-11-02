@@ -197,6 +197,9 @@ struct InFlight {
     deadline: Instant,
     /// The key waiting for the answer, if the request was a key.
     key: Option<KeyRef>,
+    /// Its key has already been returned to the frontend. Until the reply and a
+    /// queued reset finish, subsequent keys bypass this engine.
+    timed_out: bool,
 }
 
 #[derive(Debug)]
@@ -295,7 +298,8 @@ pub struct Core {
     contexts: BTreeMap<ContextId, Context>,
     events: mpsc::UnboundedSender<CoreEvent>,
     next_token: u64,
-    /// Requests that timed out; their late answers are discarded.
+    /// Requests abandoned on switch, deactivation or engine exit. Their replies
+    /// must never touch a newer engine or composition, even on the same field.
     stale_tokens: HashSet<u64>,
     /// Consecutive timeouts per engine.
     timeouts: BTreeMap<String, u32>,
@@ -821,19 +825,33 @@ impl Core {
             let Some(context) = self.contexts.get_mut(&ctx) else {
                 continue;
             };
-            let Some(flight) = context.in_flight.take() else {
+            let Some(flight) = context.in_flight.as_mut() else {
                 continue;
             };
+            if flight.timed_out {
+                let engine = flight.engine.clone();
+                warn!(
+                    engine,
+                    "the engine did not recover after a timeout; restarting it"
+                );
+                self.engines.kill_unresponsive(&engine);
+                self.engine_unavailable(&engine, out);
+                continue;
+            }
             warn!(
                 engine = flight.engine,
                 method = flight.method,
                 ctx,
                 "the engine did not answer in time"
             );
-            self.stale_tokens.insert(flight.token);
-            if let Some(key) = flight.key {
+            flight.timed_out = true;
+            // Keep the request in flight: Reset must follow its completion, and
+            // must finish before any new composition reaches the engine.
+            flight.deadline = now + self.key_timeout * 2;
+            if let Some(key) = flight.key.take() {
                 out.finish_key(&key, false);
             }
+            out.clear_preedit(context.origin, ctx);
             let timeouts = self.timeouts.entry(flight.engine.clone()).or_default();
             *timeouts += 1;
             if *timeouts >= 3 {
@@ -896,6 +914,9 @@ impl Core {
                 if let Some(context) = self.contexts.remove(&ctx) {
                     if let Some(flight) = context.in_flight {
                         self.stale_tokens.insert(flight.token);
+                        if let Some(key) = flight.key {
+                            out.finish_key(&key, false);
+                        }
                     }
                     if context.activated {
                         Self::deactivate(&self.engines, context.engine.as_deref(), ctx, out);
@@ -1014,6 +1035,13 @@ impl Core {
                     out.apply_actions(context.origin, ctx, &actions);
                 }
             }
+            HostedEvent::ForwardKey { engine, ctx, key } => {
+                if let Some(context) = self.contexts.get(&ctx)
+                    && context.engine.as_deref() == Some(&*engine)
+                {
+                    out.forward_key(context.origin, ctx, &key);
+                }
+            }
         }
     }
 
@@ -1079,7 +1107,9 @@ impl Core {
                         .engines
                         .get(&engine)
                         .is_some_and(|s| !matches!(s.state, EngineState::Stopped));
-                self.engines.exited(&engine, generation, status, needed);
+                if !self.engines.exited(&engine, generation, status, needed) {
+                    return;
+                }
                 // A new process has to ask for its window again.
                 self.set_engine_visible(&engine, false, out);
                 self.engine_unavailable(&engine, out);
@@ -1229,22 +1259,7 @@ impl Core {
 
     fn on_reply(&mut self, ctx: ContextId, token: u64, reply: Reply, out: &mut dyn Frontends) {
         if self.stale_tokens.remove(&token) {
-            // The answer came too late; the key already went to the application. Make
-            // the engine forget whatever it did with it.
-            if let Some(context) = self.contexts.get(&ctx) {
-                debug!(ctx, "discarding a late answer");
-                let proxy = context
-                    .engine
-                    .as_deref()
-                    .and_then(|id| self.engines.get(id))
-                    .and_then(|slot| slot.proxy.clone());
-                if let Some(proxy) = proxy {
-                    tokio::task::spawn_local(async move {
-                        let _ = proxy.reset(ctx).await;
-                    });
-                }
-                out.clear_preedit(context.origin, ctx);
-            }
+            debug!(ctx, "discarding a late answer");
             return;
         }
         let Some(context) = self.contexts.get_mut(&ctx) else {
@@ -1253,6 +1268,21 @@ impl Core {
         let Some(flight) = context.in_flight.take_if(|f| f.token == token) else {
             return;
         };
+        if flight.method == "Reset" && matches!(&reply, Reply::Actions(Err(_))) {
+            let engine = flight.engine.clone();
+            warn!(engine, ctx, "the engine could not reset; restarting it");
+            self.engines.kill_unresponsive(&engine);
+            self.engine_unavailable(&engine, out);
+            return;
+        }
+        if flight.timed_out {
+            debug!(ctx, "discarding a late answer");
+            if flight.method != "Reset" {
+                context.queue.push_front(Request::Reset);
+            }
+            self.pump(ctx, out);
+            return;
+        }
         self.timeouts.remove(&flight.engine);
         let origin = context.origin;
         let (handled, actions) = match reply {
@@ -1312,16 +1342,42 @@ impl Core {
         }
     }
 
+    pub fn quarantine_engine(&mut self, engine: &str, out: &mut dyn Frontends) {
+        warn!(
+            engine,
+            "quarantining an engine after a compositor protocol error"
+        );
+        self.engines.quarantine(engine);
+        self.set_engine_visible(engine, false, out);
+        self.engine_unavailable(engine, out);
+        self.status_changed();
+        self.lists_changed();
+    }
+
     /// Sends queued requests of `ctx` while nothing is in flight.
     fn pump(&mut self, ctx: ContextId, out: &mut dyn Frontends) {
         loop {
             let Some(context) = self.contexts.get_mut(&ctx) else {
                 return;
             };
-            if context.in_flight.is_some() {
+            if context.in_flight.as_ref().is_some_and(|f| !f.timed_out) {
                 return;
             }
-            let Some(request) = context.queue.front() else {
+            let index = if context.in_flight.is_some() {
+                // Keep context updates queued for recovery, while still finding
+                // every key that needs an immediate answer.
+                let Some(index) = context
+                    .queue
+                    .iter()
+                    .position(|r| matches!(r, Request::Key(..)))
+                else {
+                    return;
+                };
+                index
+            } else {
+                0
+            };
+            let Some(request) = context.queue.get(index) else {
                 return;
             };
 
@@ -1330,7 +1386,7 @@ impl Core {
                 && let Some(action) = match_hotkey(&self.hotkeys, event)
             {
                 let key = *key;
-                context.queue.pop_front();
+                context.queue.remove(index);
                 out.finish_key(&key, true);
                 let result = match action {
                     HotkeyAction::Toggle => self.toggle(SwitchReason::Hotkey, out),
@@ -1338,6 +1394,15 @@ impl Core {
                 };
                 if let Err(e) = result {
                     warn!("{e:#}");
+                }
+                continue;
+            }
+
+            if context.in_flight.is_some() {
+                // A timed-out call is still running. Keep typing responsive without
+                // starting a composition that its eventual cleanup could erase.
+                if let Some(Request::Key(key, _)) = context.queue.remove(index) {
+                    out.finish_key(&key, false);
                 }
                 continue;
             }
@@ -1534,6 +1599,7 @@ impl Core {
             method,
             deadline: Instant::now() + self.key_timeout,
             key: key_ref,
+            timed_out: false,
         });
     }
 

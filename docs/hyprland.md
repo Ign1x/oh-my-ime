@@ -42,6 +42,12 @@ development files, and `~/.local/bin` must be in the `PATH` Hyprland starts prog
 with. On NixOS use the Nix package: binaries built this way do not find the graphics
 libraries there.
 
+The installer also puts the configuration example and Hyprland snippets under
+`~/.local/share/oh-my-ime/`, and a user unit in
+`~/.local/share/systemd/user/omimed.service`. Its executable and bundled engine paths
+are absolute, including with a custom `PREFIX`. Packagers can set
+`OMIME_INSTALL_BIN_DIR=/absolute/path/to/bin` to install prebuilt binaries.
+
 ## 2. Stop other input methods
 
 A Wayland seat has room for one input method. If fcitx5 or IBus starts with your session,
@@ -78,19 +84,29 @@ env = XMODIFIERS,@im=fcitx
 bind = SUPER, space, exec, omime next
 ```
 
-The variables lead every kind of application to omimed. GTK, and Qt 6.8 and later
+These variables select the available routes to omimed. GTK, and Qt 6.8 and later
 (`QT_IM_MODULES`), use the compositor's text-input; Qt 5 and Qt applications on X11,
 such as WeChat and WPS, use the Fcitx5 module (`QT_IM_MODULE=fcitx`), which omimed
 serves; other X11 applications use XIM (`XMODIFIERS`). System Qt applications need the
 fcitx5-qt plugins for the module (on NixOS, `qt6Packages.fcitx5-qt` and
-`libsForQt5.fcitx5-qt`); applications that bundle Qt, as WeChat and WPS do, bring their
-own. `omime doctor` checks these variables. The `bind` switches input methods anywhere,
+`libsForQt5.fcitx5-qt`); for applications bundling Qt, verify that the particular build
+includes its input module. `omime doctor` checks these variables. The `bind` switches input methods anywhere,
 also in applications that are not typing, where omimed's own hotkeys cannot reach.
 
-Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses systemd
-(for example through UWSM), you can instead install
-[`data/omimed.service`](../data/omimed.service) into `~/.config/systemd/user/` and run
-`systemctl --user enable --now omimed`. The Nix package already contains the unit.
+Both snippets are in [`data/hyprland`](../data/hyprland) and the installed
+`share/oh-my-ime/hyprland/` directory. If your session uses systemd (for example
+through UWSM), use the installed user unit as the autostart method:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY PATH
+systemctl --user enable --now omimed
+```
+
+Keep the application environment settings above. Configure either the unit or the
+Hyprland `exec-once`/`hl.exec_cmd` autostart. For a custom prefix outside systemd's
+search paths, first run `systemctl --user link /your/prefix/share/systemd/user/omimed.service`.
+The Nix package also contains its unit; NixOS makes it available through `systemd.packages`.
 
 ## 4. Use it
 
@@ -111,7 +127,8 @@ Both snippets are in [`data/hyprland`](../data/hyprland). If your session uses s
 | The engine's menu (punctuation and the like) | `omime properties`, `omime activate <id>` |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
-omimed starts with the engine you used last. The hotkeys and the key timeout live in
+The first launch uses direct input; select an engine, for example `omime switch sparkle`.
+Later launches restore the engine you used last. The hotkeys and the key timeout live in
 `~/.config/oh-my-ime/config.toml`; [`data/config.toml`](../data/config.toml) documents
 every option. If the file has a mistake, `omime reload` says what it is and omimed keeps
 the configuration it had; options it does not know (misspelt, or from a newer version)
@@ -262,18 +279,24 @@ before IBus sees it. The switches of the IBus engine in use, such as libpinyin's
 Chinese or English mode and full or half width, are in the tray menu and in
 `omime properties`.
 
-## Which applications work
+## Application routes and verification
 
 oh-my-ime reaches Wayland applications through the compositor's text-input protocol, and
 X11 applications through XIM or the Fcitx5 GTK and Qt modules:
 
-| Toolkit / application | Status |
+The table describes integration routes. Automated tests exercise protocol clients
+and hosted Fcitx5/IBus, rather than this entire application matrix. Application
+acceptance still needs a version, Wayland/XWayland mode, module/launch options and
+test date, covering composition, candidate selection, shortcuts, focus, positioning
+and restart. WeChat/WPS and sandboxed Flatpak/Snap builds need their own runs.
+
+| Toolkit / application | Route / requirements |
 |---|---|
-| GTK 3 and 4, Qt 6, foot, kitty, alacritty, wezterm (Wayland) | ✅ text-input-v3 |
-| Firefox (Wayland) | ✅ |
-| Chromium and Electron apps (Wayland) | ✅ with `--enable-wayland-ime --wayland-text-input-version=3` on older versions |
-| X11 applications under XWayland, through XIM | ✅ `XMODIFIERS=@im=omime` |
-| X11 GTK and Qt applications under XWayland, through the Fcitx5 modules | ✅ `GTK_IM_MODULE=fcitx`, `QT_IM_MODULE=fcitx` |
+| GTK 3/4, recent Qt 6 and Wayland terminals | text-input-v3, when supported by the installed build |
+| Firefox (Wayland) | text-input via the GTK Wayland backend |
+| Chromium and Electron (Wayland) | Some versions need `--enable-wayland-ime --wayland-text-input-version=3` |
+| X11 applications under XWayland | XIM with `XMODIFIERS=@im=omime` |
+| GTK/Qt applications using Fcitx5 modules | Installed GTK/Qt plugins, `GTK_IM_MODULE=fcitx` / `QT_IM_MODULE=fcitx` |
 
 ### X11 applications
 

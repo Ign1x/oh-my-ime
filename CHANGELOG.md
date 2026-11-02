@@ -131,7 +131,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Updated the transitive Markdown parser to `pulldown-cmark 0.13.6`, fixing
+  RUSTSEC-2026-0433.
+- Delayed native and hosted key forwarding preserves the modifiers of the original
+  event and restores the physical state afterwards.
+- Replies abandoned by a switch, focus change or process exit cannot reset a newer
+  composition. Timeout recovery queues its reset before accepting more engine keys.
+- Deactivation completes in-flight Fcitx5 key calls, including batch calls and input
+  contexts destroyed or changed to sensitive fields while an engine is busy.
+- Invalid viewport parameters, duplicate viewports, buffer scales and transforms
+  are rejected before reaching the compositor. Cleanup does not destroy a retired
+  shm pool twice; attributed upstream faults quarantine their engine before reconnecting.
+- Echo and Sparkle keep separate compositions for each context. Multi-seat engine
+  selection and popup placement remain shared and are documented as incomplete.
 - `scripts/install.sh` installs `omime-ibus`, which hosting IBus needs.
+- Source installation includes the systemd user unit and session templates, with
+  absolute paths for the daemon and bundled engines under the selected prefix.
 - Names with an underscore show it in the tray menu, instead of underlining the
   character after it.
 - A key that a hosted input method sends back only after it was released no longer

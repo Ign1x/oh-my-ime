@@ -328,8 +328,15 @@ impl Daemon {
                     error!("lost the compositor connection: {e:#}");
                     let now = Instant::now();
                     recent_failures.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-                    recent_failures.push(now);
-                    if recent_failures.len() > 5 {
+                    // A known faulty engine was quarantined before teardown. Its
+                    // failure cannot recur on reconnect and is not a daemon fault.
+                    if frontend.failed_engine().is_none() {
+                        recent_failures.push(now);
+                    }
+                    // Some compositors close before wl-proxy can read the error
+                    // object. Allow the last crashing engine's exit to be handled
+                    // after reconnect, so its own crash budget stops it first.
+                    if recent_failures.len() > crate::core::engines::MAX_CRASHES + 1 {
                         self.core.shutdown();
                         return Err(e.context("the connection keeps failing; giving up"));
                     }
@@ -446,6 +453,14 @@ impl Daemon {
 
         if matches!(end, SessionEnd::Shutdown) {
             info!("shutting down");
+        }
+        if matches!(end, SessionEnd::Lost(_))
+            && let Some(engine) = frontend.failed_engine()
+        {
+            self.core.quarantine_engine(
+                &engine,
+                &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+            );
         }
         frontend.shutdown();
         // Best effort: the connection may already be gone.
@@ -785,6 +800,18 @@ impl Frontends for Outputs<'_> {
             Origin::Xim => {
                 if let Some(xim) = &mut self.xim {
                     xim.clear_preedit(ctx);
+                }
+            }
+        }
+    }
+
+    fn forward_key(&mut self, origin: Origin, ctx: ContextId, key: &crate::frontend::ForwardedKey) {
+        match origin {
+            Origin::Wayland(seat) => self.wayland.forward_key(seat, ctx, key),
+            Origin::Fcitx => self.fcitx.forward_key(ctx, key),
+            Origin::Xim => {
+                if let Some(xim) = &mut self.xim {
+                    xim.forward_key(ctx, key);
                 }
             }
         }

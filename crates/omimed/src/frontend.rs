@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use omime_proto::engine::{Action, ContextId, ContextInfo, KeyEvent, Rect};
 
+use crate::keyboard::ModifierState;
 use crate::wayland::{self, EngineId, SeatId};
 use crate::{fcitx, xim};
 
@@ -85,6 +86,20 @@ pub enum HostedEvent {
         ctx: ContextId,
         actions: Vec<Action>,
     },
+    /// A virtual keyboard key, including the modifier state the engine sent with it.
+    ForwardKey {
+        engine: EngineId,
+        ctx: ContextId,
+        key: ForwardedKey,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ForwardedKey {
+    pub keycode: u32,
+    pub time: u32,
+    pub pressed: bool,
+    pub modifiers: ModifierState,
 }
 
 /// Whether a hosted engine took a key.
@@ -107,6 +122,8 @@ pub trait Frontends {
 
     /// Applies an engine's actions to the text field `ctx`.
     fn apply_actions(&mut self, origin: Origin, ctx: ContextId, actions: &[Action]);
+
+    fn forward_key(&mut self, origin: Origin, ctx: ContextId, key: &ForwardedKey);
 
     /// Removes any preedit from the text field `ctx`.
     fn clear_preedit(&mut self, origin: Origin, ctx: ContextId);

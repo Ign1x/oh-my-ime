@@ -633,6 +633,26 @@ impl XimFrontend {
 
     /// Applies an engine's actions to the field `ctx`.
     pub fn apply_actions(&mut self, ctx: ContextId, actions: &[Action]) {
+        self.apply_actions_with_key(ctx, actions, None);
+    }
+
+    pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
+        self.apply_actions_with_key(
+            ctx,
+            &[Action::ForwardKey {
+                keycode: key.keycode,
+                pressed: key.pressed,
+            }],
+            Some(key),
+        );
+    }
+
+    fn apply_actions_with_key(
+        &mut self,
+        ctx: ContextId,
+        actions: &[Action],
+        forwarded: Option<&frontend::ForwardedKey>,
+    ) {
         let Some(key) = self.find(ctx) else {
             return;
         };
@@ -677,7 +697,11 @@ impl XimFrontend {
                     // sent last, as a virtual keyboard's keys reach Wayland applications
                     // with the modifiers held: Ctrl+C an input method does not want
                     // must arrive as Ctrl+C, not as a c.
-                    if let (Some(template), Some(detail)) = (template, detail) {
+                    if let (Some(mut template), Some(detail)) = (template, detail) {
+                        if let Some(forwarded) = forwarded {
+                            template.state = forwarded.modifiers.x11_bits() as u16;
+                            template.time = forwarded.time;
+                        }
                         let xev = XEvent {
                             response_type: if *pressed { KEY_PRESS } else { KEY_RELEASE },
                             detail,
