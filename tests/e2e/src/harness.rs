@@ -154,6 +154,8 @@ pub struct TestEnv {
     env: Vec<(String, String)>,
     children: Vec<Child>,
     daemon: Option<Child>,
+    /// A daemon launched by the setup CLI on this test's private bus.
+    setup_daemon: Option<rustix::process::Pid>,
     daemon_log: PathBuf,
 }
 
@@ -176,7 +178,7 @@ impl TestEnv {
         start_engine: Option<&str>,
         extra_seats: &[&str],
     ) -> anyhow::Result<Self> {
-        Self::start_with(engines, start_engine, extra_seats, false)
+        Self::start_with(engines, start_engine, extra_seats, false, true)
     }
 
     /// Like [`Self::start`], with an X server: sway runs XWayland, and everything
@@ -186,7 +188,36 @@ impl TestEnv {
         engines: &[TestEngine],
         start_engine: Option<&str>,
     ) -> anyhow::Result<Self> {
-        Self::start_with(engines, start_engine, &[], true)
+        Self::start_with(engines, start_engine, &[], true, true)
+    }
+
+    /// Prepares the private compositor and bus without starting omimed, for first-run tests.
+    pub fn prepare(engines: &[TestEngine]) -> anyhow::Result<Self> {
+        Self::start_with(engines, None, &[], false, false)
+    }
+
+    pub fn launch_daemon(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.daemon.is_none() && self.setup_daemon.is_none(),
+            "the test already has a daemon"
+        );
+        self.start_daemon(None)
+    }
+
+    /// Tracks a process discovered on the private session bus, so cleanup also
+    /// stops daemons started by `omime setup --start`.
+    pub fn adopt_setup_daemon(&mut self, pid: u32) -> anyhow::Result<()> {
+        let pid = rustix::process::Pid::from_raw(pid.try_into()?).context("invalid daemon pid")?;
+        if self.setup_daemon == Some(pid) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            self.daemon.is_none() && self.setup_daemon.is_none(),
+            "the test already has a daemon"
+        );
+        self.setup_daemon = Some(pid);
+        self.daemon_log = self.dir.join("state/oh-my-ime/omimed.log");
+        Ok(())
     }
 
     fn start_with(
@@ -194,6 +225,7 @@ impl TestEnv {
         start_engine: Option<&str>,
         extra_seats: &[&str],
         x11: bool,
+        start: bool,
     ) -> anyhow::Result<Self> {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
@@ -292,6 +324,7 @@ impl TestEnv {
                 ),
             ],
             daemon_log: dir.join("omimed.log"),
+            setup_daemon: None,
             dir,
             children: Vec::new(),
             daemon: None,
@@ -386,7 +419,9 @@ impl TestEnv {
         let config = env.dir.join("config/oh-my-ime");
         std::fs::create_dir_all(&config)?;
         std::fs::write(config.join("config.toml"), with_panel_off(""))?;
-        env.start_daemon(start_engine)?;
+        if start {
+            env.start_daemon(start_engine)?;
+        }
         Ok(env)
     }
 
@@ -490,6 +525,8 @@ impl TestEnv {
             .env_remove("GTK_IM_MODULE")
             .env_remove("QT_IM_MODULE")
             .env_remove("XMODIFIERS")
+            .env_remove("IBUS_ADDRESS")
+            .env_remove("IBUS_ADDRESS_FILE")
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null());
         command
@@ -910,6 +947,9 @@ impl TestEnv {
 impl Drop for TestEnv {
     fn drop(&mut self) {
         // omimed first, so it can release the keyboard; the compositor last.
+        if let Some(pid) = self.setup_daemon.take() {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
         if let Some(mut daemon) = self.daemon.take() {
             let _ = daemon.kill();
             let _ = daemon.wait();
@@ -919,10 +959,10 @@ impl Drop for TestEnv {
             let _ = child.wait();
         }
         // The test harness only shows this output for failing tests.
-        for log in ["omimed.log", "sway.log"] {
-            if let Ok(text) = std::fs::read_to_string(self.dir.join(log)) {
+        for log in [self.daemon_log.clone(), self.dir.join("sway.log")] {
+            if let Ok(text) = std::fs::read_to_string(&log) {
                 let tail: Vec<&str> = text.lines().rev().take(80).collect();
-                eprintln!("----- {log} (last {} lines)", tail.len());
+                eprintln!("----- {} (last {} lines)", log.display(), tail.len());
                 for line in tail.iter().rev() {
                     eprintln!("{line}");
                 }

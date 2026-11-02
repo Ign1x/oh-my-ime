@@ -2,6 +2,15 @@
 
 [English](../hyprland.md) | 简体中文
 
+对于普通可写的 Hyprland 配置文件，按下文安装平台后，可用 [`omime setup`](setup.md) 配置应用输入环境与自启动：
+
+```sh
+omime setup --engine sparkle --take-over --dry-run
+omime setup --engine sparkle --take-over --start
+```
+
+安装 Fcitx5 拼音插件后可改用 `--engine fcitx5/pinyin`；安装 IBus 与 libpinyin 后可用 `--engine ibus/libpinyin`。配置后注销并重新登录，再运行 `omime doctor`。下文的手动配置也适用于 Nix/Home Manager 声明式文件和 systemd 管理的会话。
+
 ## 1. 安装
 
 ### 使用 Nix
@@ -105,7 +114,7 @@ systemctl --user enable --now omimed
 | 引擎的菜单（标点等） | `omime properties`、`omime activate <id>` |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
-首次启动使用直接输入，需要先选择引擎，例如 `omime switch sparkle`；之后会恢复上次使用的引擎。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
+首次启动采用 `omime setup --engine ID` 设置的 `initial_input_method`，未设置时使用直接输入；之后会恢复上次选择，包括直接输入。即时切换可用 `omime switch sparkle`。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
 
 ### 每个应用一个引擎
 

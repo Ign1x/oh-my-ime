@@ -161,7 +161,7 @@ fn remove_path(path: &Path) -> io::Result<()> {
 }
 
 /// Finds the executable `name` in `$PATH`.
-fn find_in_path(name: &str) -> Option<PathBuf> {
+pub(super) fn find_in_path(name: &str) -> Option<PathBuf> {
     env::split_paths(&env::var_os("PATH")?)
         .map(|dir| dir.join(name))
         .find(|path| fs::metadata(path).is_ok_and(|m| is_executable(&m)))

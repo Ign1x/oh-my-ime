@@ -9,6 +9,11 @@
 # `omime enable <id>` and `omime disable <id>` edit it for you.
 # engines = ["fcitx5/shuangpin", "sparkle", "echo"]
 
+# The first login's input method, before a saved choice exists. It must be enabled.
+# Later logins restore your last choice, including direct input. `omime setup
+# --engine ID` configures this and enables the method; `omime switch ID` switches now.
+# initial_input_method = "fcitx5/shuangpin"
+
 [hotkeys]
 # Switch between direct input and the last used engine. Empty disables it.
 toggle = "Control+space"

@@ -17,7 +17,10 @@ omime-proto.workspace = true
 anyhow.workspace = true
 futures-core = "0.3"
 toml_edit.workspace = true
-tokio = { workspace = true, features = ["rt", "macros"] }
+toml.workspace = true
+serde.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+tokio = { workspace = true, features = ["rt", "macros", "process"] }
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }
 
 [lints]

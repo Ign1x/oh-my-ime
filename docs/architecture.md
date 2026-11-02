@@ -338,11 +338,14 @@ omimed: the `omime` command line tool, status bars, and settings programs. The X
   engines of IBus's `share/ibus/component/*.xml`, running the programs that list them
   as IBus does, in the installation prefixes of the programs its manifest runs and
   requires. `InputMethodsChanged` says when to read them again.
-- **Configuration.** omimed is the one that writes `config.toml`: `Configure` sets
+- **Configuration.** omimed writes `config.toml` for `Configure`, which sets
   options by dotted name (`apps.remember`, `engines`), checks that the file stays
   valid, keeps comments and everything else, writes it through a temporary file and
   reloads. `omime enable`, `disable` and `config` use it; only `omime install` and
-  `uninstall`, which work without omimed, write the file themselves.
+  `uninstall` and `setup`, which work without omimed, write the file themselves.
+  `setup` also manages Hyprland includes and startup lines, recording original and
+  installed contents for conflict-aware undo. `initial_input_method` supplies a
+  first-login choice; saved state takes precedence on later logins.
   `ConfigChanged` follows every reload.
 - **Applications.** `Apps`, `SetAppInputMethod` and `ForgetApp` read and edit what
   `[apps] remember` keeps for each application.

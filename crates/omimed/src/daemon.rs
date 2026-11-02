@@ -222,7 +222,9 @@ impl Daemon {
             .then(|| crate::panel::start(host_display.clone()))
             .flatten();
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
-        let saved = State::load();
+        let loaded = State::load();
+        let has_saved_choice = loaded.is_some();
+        let saved = loaded.unwrap_or_default();
         core.restore(&saved);
         core.set_state_listener(State::save);
         core.restore_catalog(&Catalog::load());
@@ -264,10 +266,18 @@ impl Daemon {
                 tray.changed();
             }
         });
-        // Without --engine, start where the user left off.
+        // Once a choice was saved, even direct input wins over the first-run default.
         let mut options = options;
         if options.engine.is_none() {
-            options.engine = saved.current.filter(|e| core.is_enabled(e));
+            options.engine = if has_saved_choice {
+                saved.current
+            } else {
+                config
+                    .initial_input_method
+                    .clone()
+                    .filter(|id| id != "direct")
+            }
+            .filter(|id| core.is_enabled(crate::core::split_target(id).0));
         }
         Ok(Self {
             options,
@@ -588,6 +598,8 @@ impl Daemon {
                     &display,
                     frontend.seat_states(),
                     frontend.reports_focused_app(),
+                    self.core.input_method_configured(),
+                    self.core.input_method_error(),
                 ));
             }
             ControlRequest::Reload(reply) => {

@@ -136,6 +136,7 @@ flowchart LR
 | Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
 | 多 seat 分别路由按键、保存组合输入 | 🚧 已在 sway 上测试；引擎选择和候选窗定位仍共享 |
 | Nix/源码安装附带 systemd 用户单元和会话模板 | ✅ |
+| Hyprland 首次配置、预览、会话接管与撤销（`omime setup`） | ✅ Lua 与 `.conf`；[使用指南](docs/zh-CN/setup.md) |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
 | X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
 | 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5 与 IBus（≥ 1.5.32），已在 sway 上测试 · 🧩 兼容 |
@@ -173,23 +174,16 @@ scripts/install.sh
 
 NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)。
 
-先停止其他输入法（fcitx5、IBus），再让 omimed 随 Hyprland 启动：
-
-```lua
--- ~/.config/hypr/hyprland.lua
-hl.on("hyprland.start", function()
-    hl.exec_cmd("omimed")
-end)
-```
-
-如果使用旧版 `hyprland.conf`，写 `exec-once = omimed`。按[应用环境与模块指南](docs/zh-CN/hyprland.md)配置后，运行：
+配置 Hyprland，并试用自带的 Sparkle 表情输入法：
 
 ```sh
-omime doctor
-omime switch sparkle
+omime setup --engine sparkle --take-over --dry-run
+omime setup --engine sparkle --take-over --start
 ```
 
-第一次启动默认直接输入，需要先选择引擎。在 foot 等支持 text-input-v3 的应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。
+注销并重新登录，让应用继承输入环境，再运行 `omime doctor`。在 foot 等支持 text-input-v3 的应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。中文输入可先安装 Fcitx5 及拼音插件，再改用 `--engine fcitx5/pinyin`；Qt 应用还需要 Fcitx5 Qt 输入模块。
+
+支持 Lua 和旧版 `.conf`，保留其他配置，可通过 `omime setup --undo` 撤销。选项与恢复方式见[首次配置指南](docs/zh-CN/setup.md)；使用 Nix/Home Manager 或 systemd 管理会话时，参照[手动配置](docs/zh-CN/hyprland.md)。
 
 | 操作 | 方式 |
 |---|---|

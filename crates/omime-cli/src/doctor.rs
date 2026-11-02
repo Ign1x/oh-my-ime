@@ -10,7 +10,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use omime_proto::config::{CONFIG_FILE, Config, HotkeySpec};
+use omime_proto::config::{CONFIG_FILE, Config, HotkeySpec, valid_input_method};
 use omime_proto::manifest::discover;
 use omime_proto::names::DAEMON_BUS_NAME;
 use omime_proto::paths;
@@ -260,9 +260,32 @@ pub fn config_findings(
         )));
     }
     for id in config.engines.iter().flatten() {
-        if !installed.iter().any(|known| known == id) {
+        let engine = id.split('/').next().unwrap_or(id);
+        if !installed.iter().any(|known| known == engine) {
             findings.push(Finding::warning(format!(
                 "config.toml: engine `{id}` is in `engines` but not installed; omimed leaves it out"
+            )));
+        }
+    }
+    if let Some(id) = &config.initial_input_method {
+        let engine = id.split('/').next().unwrap_or(id);
+        if !valid_input_method(id) {
+            findings.push(Finding::problem(format!(
+                "config.toml: initial_input_method `{id}` must be an engine id, engine/method, or direct"
+            )));
+        } else if id != "direct" && !installed.iter().any(|known| known == engine) {
+            findings.push(Finding::problem(format!(
+                "config.toml: initial_input_method `{id}` needs engine `{engine}`, which is not installed"
+            )));
+        } else if id != "direct"
+            && config.engines.as_ref().is_some_and(|enabled| {
+                !enabled
+                    .iter()
+                    .any(|entry| entry.split('/').next() == Some(engine))
+            })
+        {
+            findings.push(Finding::warning(format!(
+                "config.toml: initial_input_method `{id}` is disabled; enable it before the first login"
             )));
         }
     }
@@ -441,7 +464,13 @@ async fn daemon_check(others: &[OtherIm]) -> Vec<Finding> {
             ))];
         }
     };
-    daemon_findings(Some(&Daemon { diagnosis, engines }), others)
+    let mut findings = daemon_findings(Some(&Daemon { diagnosis, engines }), others);
+    if let Some(error) = crate::string(&reply, "input-method-error") {
+        findings.push(Finding::problem(format!(
+            "input method selection failed: {error}"
+        )));
+    }
+    findings
 }
 
 /// Turns the reply of `Diagnose` into plain values.
@@ -547,6 +576,16 @@ fn processes() -> anyhow::Result<Vec<(u32, String)>> {
             continue;
         }
         if let Ok(comm) = std::fs::read_to_string(path.join("comm")) {
+            // Hosted frameworks carry their engine id in the initial environment.
+            // They belong to omimed, rather than competing for the session's seat.
+            if OTHER_INPUT_METHODS.contains(&comm.trim_end())
+                && std::fs::read(path.join("environ")).is_ok_and(|env| {
+                    env.split(|b| *b == 0)
+                        .any(|entry| entry.starts_with(b"OMIME_ENGINE_ID="))
+                })
+            {
+                continue;
+            }
             processes.push((pid, comm.trim_end().to_owned()));
         }
     }
@@ -783,6 +822,26 @@ mod tests {
         );
         assert!(findings[1].text.contains("`gone`"));
         assert!(findings[2].text.contains("hotkey `toggle` = `Hyper+a`"));
+    }
+
+    #[test]
+    fn hosted_methods_and_first_login_choices_are_checked_by_engine() {
+        let installed = ["fcitx5".to_owned()];
+        let text = "engines = [\"fcitx5/pinyin\"]\ninitial_input_method = \"fcitx5/pinyin\"\n";
+        assert_eq!(
+            levels(&config_findings("config.toml", Ok(Some(text)), &installed)),
+            [Level::Ok]
+        );
+        for (choice, expected) in [
+            ("direct", Level::Ok),
+            ("fcitx5/pinyin", Level::Warning),
+            ("missing/pinyin", Level::Problem),
+            ("direct/pinyin", Level::Problem),
+        ] {
+            let text = format!("engines = []\ninitial_input_method = {choice:?}\n");
+            let findings = config_findings("config.toml", Ok(Some(&text)), &installed);
+            assert_eq!(findings.last().unwrap().level, expected, "{findings:?}");
+        }
     }
 
     #[test]

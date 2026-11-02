@@ -134,6 +134,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
 | Nix/source installation with a systemd user unit and session templates | ✅ |
+| Hyprland first-run setup, preview, session takeover and undo (`omime setup`) | ✅ Lua and `.conf`; [guide](docs/setup.md) |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
 | Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
 | Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5 and IBus (≥ 1.5.32), tested on sway · 🧩 compat |
@@ -172,25 +173,23 @@ scripts/install.sh
 
 A NixOS configuration snippet is in [docs/hyprland.md](docs/hyprland.md#1-install).
 
-Stop any other input method (fcitx5, IBus), then start omimed with Hyprland:
-
-```lua
--- ~/.config/hypr/hyprland.lua
-hl.on("hyprland.start", function()
-    hl.exec_cmd("omimed")
-end)
-```
-
-(or `exec-once = omimed` in a legacy `hyprland.conf`). Configure the
-[application environment and required modules](docs/hyprland.md), then run:
+Configure Hyprland and try the bundled Sparkle engine:
 
 ```sh
-omime doctor
-omime switch sparkle
+omime setup --engine sparkle --take-over --dry-run
+omime setup --engine sparkle --take-over --start
 ```
 
-The first launch uses direct input until an engine is selected. In a text-input-v3
-application such as foot, type `:rocket` and pick from Sparkle's deck.
+Log out and back in so applications inherit the input environment, then run
+`omime doctor`. In a text-input-v3 application such as foot, type `:rocket` and
+pick from Sparkle's deck. For Chinese input, install Fcitx5 with its Pinyin addon
+and use `--engine fcitx5/pinyin` instead; Qt applications also need the Fcitx5 Qt
+input module.
+
+Setup supports Lua and legacy `.conf`, preserves unrelated settings and can be
+undone with `omime setup --undo`. See the [setup guide](docs/setup.md) for options
+and recovery, or [manual configuration](docs/hyprland.md) for Nix/Home Manager
+and systemd session management.
 
 | What | How |
 |---|---|

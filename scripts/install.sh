@@ -80,4 +80,5 @@ chmod 644 "$UNIT"
 
 printf 'Installed into %s. Add %s to the session PATH.\n' "$PREFIX" "$BIN"
 printf 'Session templates: %s/share/oh-my-ime/hyprland/\nUser service: %s\n' "$PREFIX" "$UNIT"
-printf '%s\n' 'Configure the session using docs/hyprland.md, run omime doctor, then omime switch sparkle.'
+printf '%s\n' 'Preview Hyprland setup: omime setup --engine sparkle --take-over --dry-run'
+printf '%s\n' 'Apply with --start in place of --dry-run. See docs/setup.md or docs/hyprland.md for manual configuration.'

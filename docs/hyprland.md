@@ -2,6 +2,19 @@
 
 English | [简体中文](zh-CN/hyprland.md)
 
+For a regular writable Hyprland configuration, install the platform below, then
+use [`omime setup`](setup.md) to configure the input environment and autostart:
+
+```sh
+omime setup --engine sparkle --take-over --dry-run
+omime setup --engine sparkle --take-over --start
+```
+
+Use `--engine fcitx5/pinyin` with Fcitx5's Pinyin addon installed, or
+`--engine ibus/libpinyin` with IBus and libpinyin. Log out and back in after setup,
+then run `omime doctor`. The manual instructions below also cover declarative
+Nix/Home Manager files and sessions managed through systemd.
+
 ## 1. Install
 
 ### With Nix
@@ -127,8 +140,9 @@ The Nix package also contains its unit; NixOS makes it available through `system
 | The engine's menu (punctuation and the like) | `omime properties`, `omime activate <id>` |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
-The first launch uses direct input; select an engine, for example `omime switch sparkle`.
-Later launches restore the engine you used last. The hotkeys and the key timeout live in
+The first launch uses `initial_input_method` when configured by `omime setup
+--engine ID`, otherwise direct input. Later launches restore the last choice,
+including direct input. To switch now, use `omime switch sparkle`. The hotkeys and the key timeout live in
 `~/.config/oh-my-ime/config.toml`; [`data/config.toml`](../data/config.toml) documents
 every option. If the file has a mistake, `omime reload` says what it is and omimed keeps
 the configuration it had; options it does not know (misspelt, or from a newer version)

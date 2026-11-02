@@ -179,6 +179,7 @@ impl ControlObject {
 
     /// The configuration in effect, by the dotted names of config.toml's options:
     /// "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
+    /// "initial_input_method" (s, when set; used only before any saved choice),
     /// "apps.remember", "tray.enabled", "panel.enabled" (b), and "engines" (as) when
     /// config.toml lists engines (otherwise every engine enabled by default is).
     async fn config(&self) -> zbus::fdo::Result<Dict> {
@@ -288,7 +289,9 @@ impl ControlObject {
     /// What `omime doctor` checks: "display" (s, the compositor), "seats" (a(sb): every
     /// seat's name and whether omimed is its input method; another input method holds
     /// the others) and "focused-app" (b: whether the compositor reports the focused
-    /// window, which per-application engines need).
+    /// window, which per-application engines need). "input-method-configured" (b)
+    /// says the engine accepted the selection; activation may still await focus.
+    /// "input-method-error" (s) reports selection failure, empty when none.
     async fn diagnose(&self) -> zbus::fdo::Result<Dict> {
         self.ask(ControlRequest::Diagnose).await
     }
@@ -441,6 +444,12 @@ fn config_dict(config: &omime_proto::config::Config) -> Dict {
     if let Some(engines) = &config.engines {
         dict.insert("engines".to_owned(), owned(Variant::from(engines)));
     }
+    if let Some(method) = &config.initial_input_method {
+        dict.insert(
+            "initial_input_method".to_owned(),
+            owned(Variant::from(method.as_str())),
+        );
+    }
     dict
 }
 
@@ -451,7 +460,7 @@ fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::V
     let take = || value.try_clone().map_err(|_| wrong());
     Ok(match key {
         "engines" => Value::List(Vec::<String>::try_from(take()?).map_err(|_| wrong())?),
-        "hotkeys.toggle" | "hotkeys.next" => {
+        "hotkeys.toggle" | "hotkeys.next" | "initial_input_method" => {
             Value::String(String::try_from(take()?).map_err(|_| wrong())?)
         }
         "apps.remember" | "tray.enabled" | "panel.enabled" => {
@@ -530,12 +539,26 @@ fn input_method_dict(method: &InputMethod, enabled: bool, in_use: bool) -> Dict 
 }
 
 /// Builds the reply of `Diagnose`.
-pub fn diagnosis(display: &str, seats: Vec<(String, bool)>, focused_app: bool) -> Dict {
+pub fn diagnosis(
+    display: &str,
+    seats: Vec<(String, bool)>,
+    focused_app: bool,
+    input_method_configured: bool,
+    input_method_error: Option<&str>,
+) -> Dict {
     let owned = |value: Variant<'_>| OwnedVariant::try_from(value).expect("no file descriptors");
     Dict::from([
         ("display".to_owned(), owned(Variant::from(display))),
         ("seats".to_owned(), owned(Variant::from(seats))),
         ("focused-app".to_owned(), owned(Variant::from(focused_app))),
+        (
+            "input-method-configured".to_owned(),
+            owned(Variant::from(input_method_configured)),
+        ),
+        (
+            "input-method-error".to_owned(),
+            owned(Variant::from(input_method_error.unwrap_or_default())),
+        ),
     ])
 }
 

@@ -37,6 +37,11 @@ follow X11 text cursors, and that clicks on them reach the engine; it reads pixe
 omimed's tray item with `omime-tray-host`, which plays a status bar's tray: it prints what
 the item shows and clicks it and its menu.
 
+`setup.rs` starts from an empty configuration to test preview, application and undo,
+first-login choices, takeover of real Fcitx5/IBus processes, and Chinese input from
+the first keystroke. It also validates both generated formats with Hyprland's
+`--verify-config`.
+
 ```sh
 cargo build --workspace
 cargo test -p omime-e2e -- --ignored

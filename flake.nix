@@ -41,6 +41,8 @@
               # End-to-end tests: a headless compositor, its X server, a virtual
               # keyboard and screenshots.
               sway
+              # Validates both generated Hyprland setup formats without starting a desktop.
+              hyprland
               xwayland
               wtype
               grim
@@ -79,7 +81,6 @@
           with pkgs;
           [
             cargo-deny
-            hyprland
             foot
             grim
             wlrctl

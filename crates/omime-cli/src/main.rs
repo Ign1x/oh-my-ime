@@ -2,6 +2,7 @@
 
 mod doctor;
 mod install;
+mod setup;
 mod watch;
 
 use std::collections::HashMap;
@@ -42,10 +43,14 @@ Commands:
   uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
   doctor           Explain what is wrong with the setup (fails on problems)
+  setup [--engine ID] [--config PATH] [--dry-run] [--start] [--take-over]
+                   Configure Hyprland; --start also starts input in this session
+  setup --undo [--dry-run]
+                   Undo the managed setup, preserving other configuration changes
   help             Print this help
 
 The other commands talk to a running `omimed` over the session bus; `install`,
-`uninstall` and `doctor` also work without it, and `status --watch` keeps watching
+`uninstall`, `setup` and `doctor` also work without it, and `status --watch` keeps watching
 for it.";
 
 #[zbus::proxy(
@@ -92,6 +97,7 @@ enum Command {
     },
     /// Checks the setup; needs neither omimed nor a session bus.
     Doctor,
+    Setup(setup::Options),
 }
 
 enum DaemonCommand {
@@ -120,6 +126,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     Ok(Some(match args.as_slice() {
         [] | ["help" | "-h" | "--help"] => return Ok(None),
+        ["setup", "-h" | "--help"] => return Ok(None),
         ["install", dir] if *dir != "--force" => Command::Install {
             dir: PathBuf::from(*dir),
             force: false,
@@ -130,6 +137,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
         },
         ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
         ["doctor"] => Command::Doctor,
+        ["setup", rest @ ..] => Command::Setup(setup::Options::parse(rest)?),
         ["status", "--watch"] => Command::Watch { json: false },
         ["status", "--json", "--watch"] | ["status", "--watch", "--json"] => {
             Command::Watch { json: true }
@@ -242,6 +250,7 @@ async fn run(command: Command) -> anyhow::Result<ExitCode> {
         Command::Install { dir, force } => install_engine(&dir, force).await?,
         Command::Uninstall(engine) => uninstall_engine(&engine).await?,
         Command::Watch { json } => watch::run(json).await?,
+        Command::Setup(options) => setup::run(options).await?,
         Command::Daemon(command) => run_daemon(command).await?,
         Command::Doctor => {
             let clean = doctor::run().await?;

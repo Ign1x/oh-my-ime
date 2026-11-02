@@ -31,16 +31,17 @@ fn path() -> Option<PathBuf> {
 }
 
 impl State {
-    pub fn load() -> Self {
-        let Some(path) = path() else {
-            return Self::default();
-        };
+    pub fn load() -> Option<Self> {
+        let path = path()?;
         match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                warn!("ignoring {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
+            Ok(text) => match toml::from_str(&text) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    warn!("ignoring {}: {e}", path.display());
+                    None
+                }
+            },
+            Err(_) => None,
         }
     }
 

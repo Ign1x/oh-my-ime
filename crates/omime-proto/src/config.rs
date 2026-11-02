@@ -37,6 +37,9 @@ pub const CONFIG_FILE: &str = "config.toml";
 pub struct Config {
     /// Enabled engine ids in switching order; `None` enables everything installed.
     pub engines: Option<Vec<String>>,
+    /// Used only before a saved input-method choice exists. Later logins restore
+    /// the user's choice, including direct input.
+    pub initial_input_method: Option<String>,
     pub hotkeys: Hotkeys,
     pub engine: EngineSettings,
     pub apps: AppSettings,
@@ -129,8 +132,9 @@ pub enum Value {
 }
 
 /// The options [`edit`] can set, by dotted name.
-pub const KEYS: [&str; 7] = [
+pub const KEYS: [&str; 8] = [
     "engines",
+    "initial_input_method",
     "hotkeys.toggle",
     "hotkeys.next",
     "engine.key_timeout_ms",
@@ -175,7 +179,19 @@ pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
     if config.engine.key_timeout_ms == 0 {
         return Err("`engine.key_timeout_ms` must be at least 1".into());
     }
+    if let Some(id) = &config.initial_input_method
+        && !valid_input_method(id)
+    {
+        return Err("`initial_input_method` must be an engine id, engine/method, or direct".into());
+    }
     Ok(edited)
+}
+
+pub fn valid_input_method(id: &str) -> bool {
+    let (engine, inner) = id.split_once('/').map_or((id, None), |(e, i)| (e, Some(i)));
+    crate::manifest::is_valid_engine_id(engine)
+        && inner.is_none_or(|i| !i.is_empty() && !i.chars().any(char::is_control))
+        && (engine != "direct" || inner.is_none())
 }
 
 /// A hotkey such as `Control+Shift+space`: modifier names and a keysym name.

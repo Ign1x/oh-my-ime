@@ -24,7 +24,10 @@ use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
     ENV_HOST_WAYLAND_DISPLAY,
 };
-use omime_proto::{ApiVersion, engine::Status};
+use omime_proto::{
+    ApiVersion,
+    engine::{ContextId, Status},
+};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -286,6 +289,11 @@ pub struct EngineSlot {
     /// selected when the adapter runs, and again once the framework reports an input
     /// method in use: Fcitx 5 ignores a selection while no field is focused.
     pub wanted_inner: Option<String>,
+    /// Last completed selection command. Completion can precede activation in a
+    /// focused field, which is reported separately through `inner`.
+    pub selection: Option<(String, Result<(), String>)>,
+    /// IBus creates its input context after grabbing the Wayland keyboard.
+    pub needs_focus: bool,
     /// Whether `wanted_inner` was selected again after the framework reported another
     /// input method, so that a selection that does not take is not repeated forever.
     wanted_retried: bool,
@@ -365,6 +373,8 @@ impl EngineManager {
             menu_clicks: None,
             inner: None,
             wanted_inner: None,
+            selection: None,
+            needs_focus: false,
             wanted_retried: false,
             framework: None,
             generation: 0,
@@ -774,13 +784,18 @@ impl EngineManager {
             return false;
         }
         match update {
-            FrameworkUpdate::Connected(commands) => {
+            FrameworkUpdate::Connected {
+                commands,
+                needs_focus,
+            } => {
                 if let Some(wanted) = &slot.wanted_inner {
                     let _ = commands.send(FrameworkCommand::Select(wanted.clone()));
                 }
                 slot.framework = Some(commands);
-                false
+                slot.needs_focus = needs_focus;
+                true
             }
+            FrameworkUpdate::Focused(_) => true,
             FrameworkUpdate::Methods(methods) => {
                 let changed = slot.methods != methods;
                 slot.methods = methods;
@@ -791,6 +806,10 @@ impl EngineManager {
                 slot.available = available;
                 changed
             }
+            FrameworkUpdate::Selected { id, result } => {
+                slot.selection = Some((id, result));
+                true
+            }
             FrameworkUpdate::Current(inner) => {
                 debug!(
                     engine = id,
@@ -799,6 +818,7 @@ impl EngineManager {
                     retried = slot.wanted_retried,
                     "the framework's input method in use"
                 );
+                let was_pending = slot.wanted_inner.is_some();
                 if let (Some(wanted), Some(now)) = (&slot.wanted_inner, &inner) {
                     if wanted == now || slot.wanted_retried {
                         slot.wanted_inner = None;
@@ -809,7 +829,7 @@ impl EngineManager {
                         slot.wanted_retried = true;
                     }
                 }
-                let changed = slot.inner != inner;
+                let changed = slot.inner != inner || was_pending != slot.wanted_inner.is_some();
                 slot.inner = inner;
                 changed
             }
@@ -829,6 +849,7 @@ impl EngineManager {
             None => Self::select_native(slot, inner.clone()),
         }
         slot.wanted_inner = Some(inner);
+        slot.selection = None;
         slot.wanted_retried = false;
     }
 
@@ -837,6 +858,17 @@ impl EngineManager {
         if let Some(commands) = self.slots.get(id).and_then(|s| s.framework.as_ref()) {
             let _ = commands.send(FrameworkCommand::Refresh);
         }
+    }
+
+    /// Whether this field must wait for the framework's input context.
+    pub fn focus_inner(&self, id: &str, ctx: ContextId) -> bool {
+        self.slots.get(id).is_some_and(|slot| {
+            slot.needs_focus
+                && slot
+                    .framework
+                    .as_ref()
+                    .is_some_and(|commands| commands.send(FrameworkCommand::Focus(ctx)).is_ok())
+        })
     }
 
     pub fn exited(
@@ -855,6 +887,8 @@ impl EngineManager {
         slot.proxy = None;
         slot.kill = None;
         slot.framework = None;
+        slot.selection = None;
+        slot.needs_focus = false;
         slot.properties.clear();
         slot.menu_clicks = None;
         // The status of a hosted engine came from its tray item, which is gone.

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `omime setup` configures Hyprland's input environment and autostart in Lua or
+  legacy `.conf`, with a read-only preview and a journal for undo that preserves
+  unrelated edits. `--engine` sets the first-login method, `--start` activates the
+  current session, and `--take-over` requests an existing Fcitx5/IBus to exit.
+  Subsequent logins restore the user's saved choice, including direct input.
 - Unmodified Wayland input methods run as engines. A manifest with
   `protocol = "input-method-v2"` (and no `api`) starts a program such as `fcitx5` on a
   private session bus, gives it a virtual `zwp_input_method_v2` and
@@ -131,6 +136,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- First keys wait for a hosted framework to finish selecting its input method.
+  IBus also waits for panel initialization and input-context focus, preventing
+  its default layout or asynchronous startup from passing the first letters through.
+  Setup checks selection acknowledgement and reports missing input-method addons.
+- `omime doctor` recognizes `engine/method` configuration entries, checks the
+  first-login method, and excludes omimed's hosted frameworks from competing processes.
 - Updated the transitive Markdown parser to `pulldown-cmark 0.13.6`, fixing
   RUSTSEC-2026-0433.
 - Delayed native and hosted key forwarding preserves the modifiers of the original

@@ -36,8 +36,8 @@ use crate::wayland::EngineId;
 use engines::{EngineManager, EngineState, HostCall, UiConnection};
 use frameworks::InnerMethod;
 
-/// How long keys wait for a hosted input method to start, or to grab the keyboard
-/// once it was activated, before they pass through.
+/// How long keys wait for a hosted input method to start, select its method and
+/// grab the keyboard once activated, before they pass through.
 const HOSTED_WAIT: Duration = Duration::from_secs(1);
 /// How often to look whether a hosted input method reads the keys it was given, and
 /// for how long it may read nothing before it counts as hung. Keys handed to a hung
@@ -217,6 +217,8 @@ struct Context {
     waiting_since: Instant,
     /// Keys wait until then for a hosted engine to take them.
     hold_until: Option<Instant>,
+    /// Whether an asynchronous hosted input context has acknowledged focus.
+    framework_ready: bool,
 }
 
 impl Context {
@@ -756,6 +758,30 @@ impl Core {
         })
     }
 
+    /// Whether the selected method has been configured. Hosted frameworks may
+    /// still wait for focus before activating it; keys wait for that confirmation.
+    pub fn input_method_configured(&self) -> bool {
+        let Some(slot) = self.current.as_deref().and_then(|id| self.engines.get(id)) else {
+            return true;
+        };
+        slot.wanted_inner.as_ref().is_none_or(|wanted| {
+            slot.selection
+                .as_ref()
+                .is_some_and(|(id, result)| id == wanted && result.is_ok())
+        })
+    }
+
+    pub fn input_method_error(&self) -> Option<&str> {
+        let slot = self
+            .current
+            .as_deref()
+            .and_then(|id| self.engines.get(id))?;
+        let (id, result) = slot.selection.as_ref()?;
+        (slot.wanted_inner.as_ref() == Some(id))
+            .then(|| result.as_ref().err().map(String::as_str))
+            .flatten()
+    }
+
     /// All installed engines, enabled ones first in switching order.
     pub fn engines(&self) -> Vec<EngineSummary> {
         let locale = std::env::var("LC_ALL")
@@ -884,6 +910,7 @@ impl Core {
                     in_flight: None,
                     waiting_since: Instant::now(),
                     hold_until: None,
+                    framework_ready: true,
                 };
                 if context.engine.is_some() {
                     context.queue.push_back(Request::Activate);
@@ -1160,7 +1187,23 @@ impl Core {
             } => {
                 let catalog = matches!(update, frameworks::FrameworkUpdate::Available(_));
                 let methods = matches!(update, frameworks::FrameworkUpdate::Methods(_));
+                let needs_focus = matches!(
+                    update,
+                    frameworks::FrameworkUpdate::Connected {
+                        needs_focus: true,
+                        ..
+                    }
+                );
+                let focused = match update {
+                    frameworks::FrameworkUpdate::Focused(ctx) => Some(ctx),
+                    _ => None,
+                };
                 if self.engines.framework_update(&engine, generation, update) {
+                    if let Some(context) = focused.and_then(|ctx| self.contexts.get_mut(&ctx))
+                        && context.engine.as_deref() == Some(&engine)
+                    {
+                        context.framework_ready = true;
+                    }
                     if catalog {
                         self.catalog_changed();
                     } else {
@@ -1169,6 +1212,27 @@ impl Core {
                     }
                     if catalog || methods {
                         self.lists_changed();
+                    }
+                    // A hosted framework can grab the keyboard before it has
+                    // selected the requested input method. Release the first keys
+                    // as soon as that selection is confirmed.
+                    let waiting: Vec<ContextId> = self
+                        .contexts
+                        .iter()
+                        .filter(|(_, c)| c.engine.as_deref() == Some(&engine))
+                        .map(|(id, _)| *id)
+                        .collect();
+                    for ctx in waiting {
+                        if needs_focus && let Some(context) = self.contexts.get_mut(&ctx) {
+                            // Detection may finish after the first activation. Give
+                            // the adapter a fresh focus transition to observe.
+                            if context.activated {
+                                out.hosted_deactivate(&EngineId::from(engine.as_str()), ctx);
+                                context.activated = false;
+                                context.queue.push_front(Request::Activate);
+                            }
+                        }
+                        self.pump(ctx, out);
                     }
                 }
             }
@@ -1508,6 +1572,7 @@ impl Core {
         };
         match request {
             Request::Activate => {
+                context.framework_ready = !self.engines.focus_inner(&engine, ctx);
                 context.activated =
                     out.hosted_activate(&engine, context.origin, ctx, &context.info);
                 context.waiting_since = Instant::now();
@@ -1522,29 +1587,44 @@ impl Core {
                     out.hosted_update(&engine, ctx, &context.info, reset);
                 }
             }
-            Request::Key(key, event) => match out.hosted_key(&engine, &key, &event) {
-                KeyDelivery::Delivered => {
-                    context.hold_until = None;
-                    let now = Instant::now();
-                    self.hosted_watch
-                        .entry(engine.to_string())
-                        .or_insert(HostedWatch {
-                            since: now,
-                            next_check: now + HOSTED_CHECK,
-                            unread: 0,
-                        });
-                }
-                KeyDelivery::NotReady => {
-                    // The input method grabs the keyboard once it learns about the
-                    // field; until then, keys wait a moment rather than slip past it.
+            Request::Key(key, event) => {
+                if !context.framework_ready
+                    || self
+                        .engines
+                        .get(&engine)
+                        .is_some_and(|slot| slot.wanted_inner.is_some())
+                {
                     if context.hold_key() {
                         context.queue.push_front(Request::Key(key, event));
                         return false;
                     }
                     out.finish_key(&key, false);
+                    return true;
                 }
-                KeyDelivery::Refused => out.finish_key(&key, false),
-            },
+                match out.hosted_key(&engine, &key, &event) {
+                    KeyDelivery::Delivered => {
+                        context.hold_until = None;
+                        let now = Instant::now();
+                        self.hosted_watch
+                            .entry(engine.to_string())
+                            .or_insert(HostedWatch {
+                                since: now,
+                                next_check: now + HOSTED_CHECK,
+                                unread: 0,
+                            });
+                    }
+                    KeyDelivery::NotReady => {
+                        // The input method grabs the keyboard once it learns about the
+                        // field; until then, keys wait a moment rather than slip past it.
+                        if context.hold_key() {
+                            context.queue.push_front(Request::Key(key, event));
+                            return false;
+                        }
+                        out.finish_key(&key, false);
+                    }
+                    KeyDelivery::Refused => out.finish_key(&key, false),
+                }
+            }
         }
         true
     }
@@ -1659,6 +1739,11 @@ impl Core {
             self.engines.ensure_started(id, true)?;
             if let Some(inner) = inner {
                 self.engines.select_inner(id, inner);
+                for context in self.contexts.values_mut() {
+                    if context.engine.as_deref() == Some(id) {
+                        context.waiting_since = Instant::now();
+                    }
+                }
                 self.state_changed();
                 if target.as_deref() == self.current.as_deref() {
                     self.status_changed();

@@ -105,6 +105,7 @@
     <!--
       The configuration in effect, by the dotted names of config.toml's options:
       "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
+      "initial_input_method" (s, when set; used only before any saved choice),
       "apps.remember", "tray.enabled", "panel.enabled" (b), and "engines" (as) when
       config.toml lists engines (otherwise every engine enabled by default is).
     -->
@@ -182,7 +183,9 @@
     <!--
       What `omime doctor` checks: "display" (s, the compositor), "seats" (a(sb): each
       seat's name and whether omimed is its input method), "focused-app" (b: whether
-      the compositor reports the focused window).
+      the compositor reports the focused window), "input-method-configured" (b:
+      the engine accepted the selection; activation may still await field focus),
+      "input-method-error" (s: selection failure, empty when none).
     -->
     <method name="Diagnose">
       <arg name="diagnosis" type="a{sv}" direction="out"/>

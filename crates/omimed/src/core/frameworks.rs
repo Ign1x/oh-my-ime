@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
+use omime_proto::engine::ContextId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
@@ -60,18 +61,31 @@ pub enum FrameworkCommand {
     Select(String),
     /// Something may have changed (the framework's tray item did): look again.
     Refresh,
+    /// The next focus notification belongs to this field.
+    Focus(ContextId),
 }
 
 /// What an adapter reports.
 #[derive(Debug)]
 pub enum FrameworkUpdate {
     /// The adapter found the framework and takes commands.
-    Connected(mpsc::UnboundedSender<FrameworkCommand>),
+    Connected {
+        commands: mpsc::UnboundedSender<FrameworkCommand>,
+        needs_focus: bool,
+    },
+    /// The framework has created and focused its input context for this field.
+    Focused(ContextId),
     /// The input methods the user set up in the framework.
     Methods(Vec<InnerMethod>),
     /// The input method in use; `None` when the framework passes keys on (Fcitx 5's
     /// keyboard layouts, IBus's `xkb:` engines).
     Current(Option<String>),
+    /// A selection command finished. Fcitx 5 may still wait for a focused field
+    /// before reporting that method as current.
+    Selected {
+        id: String,
+        result: Result<(), String>,
+    },
     /// Every input method the framework has, set up or not, without keyboard layouts.
     Available(Vec<InnerMethod>),
 }
@@ -189,7 +203,15 @@ impl Framework {
 
     async fn serve(self, report: &impl Fn(FrameworkUpdate)) -> zbus::Result<()> {
         let (commands, mut pending) = mpsc::unbounded_channel();
-        report(FrameworkUpdate::Connected(commands));
+        let mut focus = match &self {
+            Self::Ibus(ibus) => Some(ibus_focus(ibus).await?),
+            _ => None,
+        };
+        let mut focused_context = None;
+        report(FrameworkUpdate::Connected {
+            commands,
+            needs_focus: focus.is_some(),
+        });
         let mut methods = self.methods(&[]).await?;
         report(FrameworkUpdate::Methods(methods.clone()));
         let mut current = self.current().await?;
@@ -211,21 +233,40 @@ impl Framework {
         let mut gone = self.proxy().receive_owner_changed().await?;
         loop {
             let refresh_methods = tokio::select! {
+                biased;
+                command = pending.recv() => match command {
+                    None => break,
+                    Some(FrameworkCommand::Select(id)) => {
+                        let result = self.select(&id).await.map_err(|e| e.to_string());
+                        report(FrameworkUpdate::Selected { id, result });
+                        // Selecting may have added it to the list (Fcitx 5's group).
+                        true
+                    }
+                    Some(FrameworkCommand::Refresh) => false,
+                    Some(FrameworkCommand::Focus(ctx)) => {
+                        focused_context = Some(ctx);
+                        continue;
+                    }
+                },
+                ready = async {
+                    match &mut focus {
+                        Some(stream) => stream.next().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let Some(ready) = ready else { break };
+                    ready?;
+                    if let Some(ctx) = focused_context.take() {
+                        report(FrameworkUpdate::Focused(ctx));
+                    }
+                    false
+                }
                 change = changes.next() => {
                     if change.is_none() {
                         break;
                     }
                     true
                 }
-                command = pending.recv() => match command {
-                    None => break,
-                    Some(FrameworkCommand::Select(id)) => {
-                        self.select(&id).await?;
-                        // Selecting may have added it to the list (Fcitx 5's group).
-                        true
-                    }
-                    Some(FrameworkCommand::Refresh) => false,
-                },
                 owner = gone.next() => {
                     if !matches!(owner, Some(Some(_))) {
                         break;
@@ -310,6 +351,49 @@ impl Framework {
     }
 }
 
+/// IBus grabs its Wayland keyboard before asynchronously creating its input
+/// context. Observe the panel's FocusIn on the private IBus bus so first keys wait
+/// for that context. A panel round trip also waits for load_settings(), which can
+/// otherwise override a selection with its default keyboard layout.
+async fn ibus_focus(ibus: &zbus::Proxy<'_>) -> zbus::Result<zbus::MessageStream> {
+    let conn = ibus.connection();
+    let dbus = zbus::fdo::DBusProxy::new(conn).await?;
+    let deadline = tokio::time::Instant::now() + DETECT_TIMEOUT;
+    while !dbus
+        .name_has_owner("org.freedesktop.IBus.Panel".try_into()?)
+        .await?
+    {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(zbus::fdo::Error::Failed("IBus panel did not start".into()).into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let panel = proxy(
+        conn,
+        "org.freedesktop.IBus.Panel",
+        "/org/freedesktop/IBus/Panel",
+        "org.freedesktop.IBus.Panel",
+    )
+    .await?;
+    // Peer.Ping is answered by GDBus's worker thread, even while the panel is
+    // still initializing. StateChanged runs on the GTK thread after settings load.
+    panel.call::<_, _, ()>("StateChanged", &()).await?;
+    let owner = dbus
+        .get_name_owner("org.freedesktop.IBus.Panel".try_into()?)
+        .await?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::MethodCall)
+        .sender(owner)
+        .interface("org.freedesktop.IBus.InputContext")
+        .member("FocusIn")
+        .build()?;
+    let stream = zbus::MessageStream::for_match_rule(rule.clone(), conn, None).await?;
+    // zbus automatically registers signal rules; method-call observation needs an
+    // explicit rule. The connection lives only for this private framework adapter.
+    dbus.add_match_rule(rule).await?;
+    Ok(stream)
+}
+
 /// Keyboard layouts are not input methods for omimed: its direct input is the layout.
 pub(crate) fn is_layout(id: &str) -> bool {
     id.starts_with("keyboard-") || id.starts_with("xkb:")
@@ -327,6 +411,13 @@ fn chinese_locale() -> bool {
 /// it: Fcitx 5 only switches to input methods of its current group. Fcitx 5 saves the
 /// group in its profile, as its own configuration tool would.
 async fn fcitx_add_to_group(controller: &zbus::Proxy<'_>, id: &str) -> zbus::Result<()> {
+    let available: Vec<FcitxMethod> = controller.call("AvailableInputMethods", &()).await?;
+    if !available.iter().any(|method| method.0 == id) {
+        return Err(zbus::fdo::Error::InvalidArgs(format!(
+            "Fcitx 5 input method `{id}` is not installed"
+        ))
+        .into());
+    }
     let group: String = controller.call("CurrentInputMethodGroup", &()).await?;
     let (layout, mut items): (String, Vec<(String, String)>) = controller
         .call("InputMethodGroupInfo", &(group.as_str(),))
