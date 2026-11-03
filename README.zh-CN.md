@@ -175,7 +175,7 @@ cd oh-my-ime
 scripts/install.sh
 ```
 
-NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)。
+NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 NixOS 与 Home Manager 模块（[docs/nix.md](docs/nix.md)，英文）。`nix profile install github:Ign1x/oh-my-ime#rime` 会加上 [Rime 引擎](engines/rime)。
 
 配置 Hyprland，并试用自带的 Sparkle 表情输入法：
 

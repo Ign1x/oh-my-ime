@@ -42,6 +42,9 @@ in
 }
 ```
 
+The flake also exports NixOS and Home Manager modules that do the steps below; see
+[NixOS and Home Manager modules](nix.md).
+
 ### From source
 
 ```sh

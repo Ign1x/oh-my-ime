@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format follows
   the control API: it follows omimed as it stops and starts, and omimed writes
   config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
   end of the tray menu and the desktop entry "oh-my-ime Settings".
+- NixOS and Home Manager modules (`nixosModules.default`, `homeManagerModules.default`,
+  [docs/nix.md](docs/nix.md)): `programs.oh-my-ime` installs the package and its user
+  unit, sets the session variables and the Qt input modules, and hosts Fcitx 5 with
+  addons, IBus with engines and the Rime engine (`fcitx5`, `ibus`, `rime`). The
+  frameworks are only on the unit's `PATH`, so they cannot start as the desktop's
+  input method. Home Manager's `settings` writes `config.toml`. `nix flake check`
+  evaluates both.
 - A Rime engine, `omime-rime` (`engines/rime`): Rime's schemas are its input methods,
   Xiaohe shuangpin (`rime/double_pinyin_flypy`) first and then pinyin, with simplified
   characters and Shift switching between Chinese and English letters, which it sets up

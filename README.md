@@ -174,7 +174,9 @@ cd oh-my-ime
 scripts/install.sh
 ```
 
-A NixOS configuration snippet is in [docs/hyprland.md](docs/hyprland.md#1-install).
+NixOS and Home Manager users can import the flake's modules instead
+([docs/nix.md](docs/nix.md)); `nix profile install github:Ign1x/oh-my-ime#rime` adds
+the [Rime engine](engines/rime).
 
 Configure Hyprland and try the bundled Sparkle engine:
 

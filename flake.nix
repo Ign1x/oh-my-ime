@@ -93,10 +93,121 @@
         oh-my-ime = final.callPackage ./nix/package.nix { };
       };
 
-      checks = forAllSystems (pkgs: {
-        package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-        rime = self.packages.${pkgs.stdenv.hostPlatform.system}.rime;
-      });
+      nixosModules.default = ./nix/nixos.nix;
+      homeManagerModules.default = ./nix/home-manager.nix;
+
+      checks = forAllSystems (
+        pkgs:
+        let
+          lib = pkgs.lib;
+          system = pkgs.stdenv.hostPlatform.system;
+
+          # The module's options and values; building the system itself is not the
+          # check, so only its derivation is written.
+          nixos = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                # A container keeps the evaluation away from hardware options.
+                boot.isContainer = true;
+                system.stateVersion = "24.05";
+                programs.oh-my-ime = {
+                  enable = true;
+                  fcitx5 = {
+                    enable = true;
+                    addons = [ pkgs.qt6Packages.fcitx5-chinese-addons ];
+                  };
+                  ibus = {
+                    enable = true;
+                    engines = [ pkgs.ibus-engines.libpinyin ];
+                  };
+                  rime.enable = true;
+                };
+              }
+            ];
+          };
+
+          # Home Manager is not an input of this flake, so the module is evaluated
+          # against the options it uses rather than a whole Home Manager.
+          home = lib.evalModules {
+            specialArgs = { inherit pkgs; };
+            modules = [
+              self.homeManagerModules.default
+              {
+                programs.oh-my-ime = {
+                  enable = true;
+                  fcitx5 = {
+                    enable = true;
+                    addons = [ pkgs.qt6Packages.fcitx5-chinese-addons ];
+                  };
+                  ibus = {
+                    enable = true;
+                    engines = [ pkgs.ibus-engines.libpinyin ];
+                  };
+                  settings = {
+                    engines = [
+                      "fcitx5/shuangpin"
+                      "sparkle"
+                    ];
+                    initial_input_method = "fcitx5/shuangpin";
+                  };
+                };
+              }
+              {
+                options.home.packages = lib.mkOption { type = lib.types.anything; };
+                options.home.sessionVariables = lib.mkOption { type = lib.types.anything; };
+                options.xdg.configFile = lib.mkOption { type = lib.types.anything; };
+                options.systemd.user.services = lib.mkOption { type = lib.types.anything; };
+              }
+            ];
+          };
+        in
+        {
+          package = self.packages.${system}.default;
+          rime = self.packages.${system}.rime;
+
+          nixos-module = pkgs.runCommand "check-nixos-module" { } ''
+            # The system is not built: its derivation path is only written. Dropping the
+            # string's context keeps this runCommand from depending on the system.
+            echo ${builtins.unsafeDiscardStringContext nixos.config.system.build.toplevel.drvPath} > $out
+            echo ${builtins.unsafeDiscardStringContext (lib.concatStringsSep "," nixos.config.systemd.user.services.omimed.wantedBy)} >> $out
+            echo ${builtins.unsafeDiscardStringContext nixos.config.systemd.user.services.omimed.environment.PATH} >> $out
+            echo ${builtins.unsafeDiscardStringContext nixos.config.systemd.user.services.omimed.environment.OMIME_ENGINE_PATH} >> $out
+            echo "${nixos.config.environment.sessionVariables.QT_IM_MODULES}" >> $out
+            # The unit starts with the session, and the frameworks sit on its PATH.
+            grep -qx 'graphical-session.target' $out
+            grep -q 'fcitx5-with-addons' $out
+            grep -q 'ibus-with-plugins' $out
+            # The user's profiles stay on it, for engines' programs.
+            grep -q '%h/.nix-profile/bin' $out
+            grep -q 'oh-my-ime-rime.*/share/oh-my-ime/engines' $out
+            grep -qx 'wayland;fcitx' $out
+          '';
+
+          home-manager-module = pkgs.runCommand "check-home-manager-module" { } ''
+            cat > $out <<'EOF'
+            ExecStart=${builtins.unsafeDiscardStringContext home.config.systemd.user.services.omimed.Service.ExecStart}
+            config=${home.config.xdg.configFile."oh-my-ime/config.toml".source}
+            packages=${toString (builtins.length home.config.home.packages)}
+            QT_IM_MODULES=${home.config.home.sessionVariables.QT_IM_MODULES}
+            EOF
+            # The settings become omimed's configuration, and the unit is the one from
+            # data/omimed.service, with the package's absolute paths.
+            grep -qxF 'initial_input_method = "fcitx5/shuangpin"' ${
+              home.config.xdg.configFile."oh-my-ime/config.toml".source
+            }
+            grep -qxF 'engines = ["fcitx5/shuangpin", "sparkle"]' ${
+              home.config.xdg.configFile."oh-my-ime/config.toml".source
+            }
+            # Only the platform: the frameworks are on the unit's PATH, not in the
+            # profile.
+            grep -qx 'packages=1' $out
+            grep -q 'fcitx5-with-addons' <<< '${builtins.unsafeDiscardStringContext (toString home.config.systemd.user.services.omimed.Service.Environment)}'
+            grep -qx 'QT_IM_MODULES=wayland;fcitx' $out
+          '';
+        }
+      );
 
       devShells = forAllSystems (pkgs: {
         # Everything for development, including Hyprland for manual testing.
