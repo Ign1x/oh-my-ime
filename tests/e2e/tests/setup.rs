@@ -161,6 +161,7 @@ fn fcitx5() -> anyhow::Result<TestEngine> {
         id: "fcitx5",
         program: program("fcitx5")?,
         args: Vec::new(),
+        env: Vec::new(),
         hosted: true,
     })
 }
@@ -178,6 +179,7 @@ fn ibus() -> anyhow::Result<TestEngine> {
         id: "ibus",
         program: program_dir().join("omime-ibus"),
         args: Vec::new(),
+        env: Vec::new(),
         hosted: true,
     })
 }

@@ -98,6 +98,8 @@ pub struct TestEngine {
     pub id: &'static str,
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// Environment variables for the engine, set through `env` in its exec.
+    pub env: Vec<(String, String)>,
     /// Whether the engine is a Wayland input method that omimed hosts.
     pub hosted: bool,
 }
@@ -108,6 +110,7 @@ pub fn sparkle_engine() -> TestEngine {
         id: "sparkle",
         program: program_dir().join("omime-sparkle"),
         args: Vec::new(),
+        env: Vec::new(),
         hosted: false,
     }
 }
@@ -118,6 +121,7 @@ pub fn echo_engine() -> TestEngine {
         id: "echo",
         program: program_dir().join("omime-echo"),
         args: Vec::new(),
+        env: Vec::new(),
         hosted: false,
     }
 }
@@ -128,6 +132,7 @@ pub fn dummy_engine(args: &[&str]) -> TestEngine {
         id: "dummy",
         program: target_dir().join("omime-dummy-ui"),
         args: args.iter().map(|a| (*a).to_owned()).collect(),
+        env: Vec::new(),
         hosted: false,
     }
 }
@@ -144,6 +149,7 @@ pub fn hosted_engine(args: &[&str]) -> TestEngine {
         id: "hosted",
         program: target_dir().join("omime-im-client"),
         args: all,
+        env: Vec::new(),
         hosted: true,
     }
 }
@@ -241,15 +247,25 @@ impl TestEnv {
         for engine in engines {
             let path = engine_dir.join(engine.id);
             std::fs::create_dir_all(&path)?;
-            let mut exec = Vec::new();
+            let mut env = Vec::new();
             // An installed omimed runs without the dev shell's library path, which the
             // test programs built in it need: they get it back through `env`.
             if std::env::var_os(INSTALL_DIR_ENV).is_some()
                 && engine.program.starts_with(target_dir())
                 && let Ok(path) = std::env::var("LD_LIBRARY_PATH")
             {
+                env.push(format!("LD_LIBRARY_PATH={path}"));
+            }
+            env.extend(
+                engine
+                    .env
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}")),
+            );
+            let mut exec = Vec::new();
+            if !env.is_empty() {
                 exec.push("env".to_owned());
-                exec.push(format!("LD_LIBRARY_PATH={path}"));
+                exec.extend(env);
             }
             exec.push(engine.program.display().to_string());
             exec.extend(engine.args.iter().cloned());

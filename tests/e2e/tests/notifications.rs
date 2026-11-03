@@ -80,6 +80,7 @@ fn an_engine_that_does_not_start_is_told_and_the_click_opens_the_settings() -> a
         id: "sleepy",
         program: PathBuf::from("sleep"),
         args: vec!["60".to_owned()],
+        env: Vec::new(),
         hosted: false,
     };
     let env = TestEnv::start(&[sleepy, echo_engine()], None)?;

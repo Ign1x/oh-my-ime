@@ -215,4 +215,4 @@ impl omime_sdk::Engine for MyEngine {
 3. 在 `/io/github/ign1x/OhMyIme`（`io.github.ign1x.OhMyIme.EngineHost1`）上调用 `Register($OMIME_ENGINE_ID, 1, 1, {})`；既没有自己的多个输入法、也没有菜单的引擎用次版本号 0 也可以，
 4. 应答调用，直到连接关闭或收到 `Shutdown`。
 
-GLib（`g_dbus_connection_new_for_address`）、Qt（`QDBusConnection::connectToPeer`）、sd-bus 和 zbus 都支持点对点连接。
+GLib（`g_dbus_connection_new_for_address`）、Qt（`QDBusConnection::connectToPeer`）、sd-bus 和 zbus 都支持点对点连接。[`examples/python-gtk4`](../../examples/python-gtk4) 是一个用 Python 和 PyGObject 写成、不依赖 SDK 的完整引擎，它的 GTK 4 窗口和其他引擎的窗口一样成为弹窗。

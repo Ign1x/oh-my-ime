@@ -288,3 +288,5 @@ An engine:
 
 GLib (`g_dbus_connection_new_for_address`), Qt (`QDBusConnection::connectToPeer`),
 sd-bus and zbus all support peer-to-peer connections.
+[`examples/python-gtk4`](../examples/python-gtk4) is a whole engine in Python with
+PyGObject, without the SDK, whose GTK 4 window becomes the popup like any other.

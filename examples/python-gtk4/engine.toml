@@ -1,0 +1,11 @@
+[engine]
+id = "shout"
+name = "Shout"
+description = "Composes words in a GTK 4 window and commits them in UPPERCASE."
+languages = ["en"]
+exec = ["./shout.py"]
+api = "1.0"
+
+[engine.i18n.zh-CN]
+name = "喊叫"
+description = "在 GTK 4 窗口中组词，并以大写形式上屏。"

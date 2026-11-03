@@ -20,6 +20,7 @@ fn fcitx5() -> Option<TestEngine> {
         id: "fcitx5",
         program,
         args: Vec::new(),
+        env: Vec::new(),
         hosted: true,
     })
 }

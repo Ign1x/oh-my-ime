@@ -17,6 +17,7 @@ fn ibus() -> Option<TestEngine> {
         id: "ibus",
         program: program_dir().join("omime-ibus"),
         args: Vec::new(),
+        env: Vec::new(),
         hosted: true,
     })
 }

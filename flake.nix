@@ -32,6 +32,22 @@
             vulkan-loader
             wayland
           ];
+          # GTK 4 finds its own typelibs in the gtk4 output, and the namespaces they
+          # import in the outputs of their libraries.
+          giTypelibs = pkgs.lib.makeSearchPath "lib/girepository-1.0" (
+            map pkgs.lib.getLib (
+              with pkgs;
+              [
+                gtk4
+                glib
+                gdk-pixbuf
+                pango
+                graphene
+                harfbuzz
+                gobject-introspection
+              ]
+            )
+          );
         in
         pkgs.mkShell {
           packages =
@@ -53,6 +69,7 @@
             ++ extraPackages;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+          GI_TYPELIB_PATH = giTypelibs;
 
           shellHook = ''
             # The host session may point GTK/Qt at fcitx; test sessions must use
@@ -87,8 +104,12 @@
             jq
           ]
         );
-        # Just enough to build and run the end-to-end tests (used by CI).
-        e2e = shell pkgs [ ];
+        # Just enough to build and run the end-to-end tests (used by CI). The Python
+        # engine example needs Python with PyGObject and GTK 4.
+        e2e = shell pkgs [
+          (pkgs.python3.withPackages (ps: [ ps.pygobject3 ]))
+          pkgs.gtk4
+        ];
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);

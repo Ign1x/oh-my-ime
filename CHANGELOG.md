@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format follows
   the control API: it follows omimed as it stops and starts, and omimed writes
   config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
   end of the tray menu and the desktop entry "oh-my-ime Settings".
+- An example engine in Python, `examples/python-gtk4`: it speaks the engine protocol
+  with PyGObject's D-Bus, without the SDK, and draws a GTK 4 window, which becomes the
+  popup at the text cursor like any engine's. An end-to-end test types, clicks and looks
+  at the window's pixels; the end-to-end shell has Python, PyGObject and GTK 4 for it.
 - Engines' floating panels: windows on the desktop rather than at the text cursor, such
   as a status bar or a palette. `omime-overlay` gives Slint components a layer surface
   that takes the pointer but not the keyboard (`Pointer::Take`), the SDK names the
