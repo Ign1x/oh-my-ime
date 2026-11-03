@@ -1,0 +1,198 @@
+// oh-my-ime's settings window: a sidebar with the pages, the page, and the list of input
+// methods to add over it when it is open.
+
+import { ScrollView } from "std-widgets.slint";
+import { Backend, Texts, Tr, View } from "backend.slint";
+import { Theme } from "theme.slint";
+import { IconButton, NavItem } from "widgets.slint";
+import { AddDialog, InputMethodsPage } from "pages/input-methods.slint";
+import { HotkeysPage } from "pages/hotkeys.slint";
+import { AppsPage } from "pages/apps.slint";
+import { GeneralPage } from "pages/general.slint";
+import { AboutPage } from "pages/about.slint";
+
+export { Backend, Texts, Tr, View }
+export { AppRow, CatalogEntry, Check, InputMethodRow } from "backend.slint";
+
+// What failed, over the page until dismissed.
+component ErrorBanner inherits Rectangle {
+    in property <string> text;
+    background: Theme.danger-background;
+    border-radius: 8px;
+    HorizontalLayout {
+        padding: 8px;
+        padding-left: 14px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/alert.svg");
+                colorize: Theme.danger;
+                width: 18px;
+                height: 18px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                label: Tr.text("Dismiss");
+                clicked => {
+                    Backend.dismiss-error();
+                }
+            }
+        }
+    }
+}
+
+// What the window shows while omimed does not run.
+component NotRunning inherits VerticalLayout {
+    alignment: center;
+    spacing: 10px;
+    padding: 48px;
+    HorizontalLayout {
+        alignment: center;
+        Image {
+            source: @image-url("icons/alert.svg");
+            colorize: Theme.tertiary;
+            width: 48px;
+            height: 48px;
+        }
+    }
+
+    Text {
+        text: Backend.loaded ? Tr.text("oh-my-ime is not running") : Tr.text("Connecting to oh-my-ime…");
+        font-size: 20px;
+        font-weight: 600;
+        color: Theme.text;
+        horizontal-alignment: center;
+    }
+
+    if Backend.loaded: Text {
+        text: Tr.text("Start it with “systemctl --user start omimed”, or run omimed. The settings show here as soon as it runs.");
+        color: Theme.secondary;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
+export component SettingsWindow inherits Window {
+    title: Tr.text("oh-my-ime Settings");
+    preferred-width: 920px;
+    preferred-height: 660px;
+    min-width: 720px;
+    min-height: 480px;
+    background: Theme.window;
+    default-font-size: 14px;
+
+    HorizontalLayout {
+        // The pages.
+        VerticalLayout {
+            width: 232px;
+            padding: 12px;
+            padding-top: 20px;
+            spacing: 2px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-bottom: 18px;
+                Text {
+                    text: "oh-my-ime";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text;
+                }
+            }
+
+            NavItem {
+                icon: @image-url("icons/keyboard.svg");
+                text: Tr.text("Input methods");
+                selected: View.page == 0;
+                clicked => {
+                    View.page = 0;
+                }
+            }
+
+            NavItem {
+                icon: @image-url("icons/command.svg");
+                text: Tr.text("Hotkeys");
+                selected: View.page == 1;
+                clicked => {
+                    View.page = 1;
+                }
+            }
+
+            NavItem {
+                icon: @image-url("icons/apps.svg");
+                text: Tr.text("Applications");
+                selected: View.page == 2;
+                clicked => {
+                    View.page = 2;
+                }
+            }
+
+            NavItem {
+                icon: @image-url("icons/sliders.svg");
+                text: Tr.text("General");
+                selected: View.page == 3;
+                clicked => {
+                    View.page = 3;
+                }
+            }
+
+            NavItem {
+                icon: @image-url("icons/info.svg");
+                text: Tr.text("About");
+                selected: View.page == 4;
+                clicked => {
+                    View.page = 4;
+                }
+            }
+
+            Rectangle { }
+        }
+
+        // The page.
+        VerticalLayout {
+            horizontal-stretch: 1;
+            if !Backend.connected: NotRunning { }
+            if Backend.connected && Backend.error != "": HorizontalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 16px;
+                ErrorBanner {
+                    text: Backend.error;
+                }
+            }
+            if Backend.connected: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    // Pages take the height they need, at the top.
+                    alignment: start;
+                    padding-left: 28px;
+                    padding-right: 28px;
+                    padding-top: 24px;
+                    padding-bottom: 28px;
+                    if View.page == 0: InputMethodsPage { }
+                    if View.page == 1: HotkeysPage { }
+                    if View.page == 2: AppsPage { }
+                    if View.page == 3: GeneralPage { }
+                    if View.page == 4: AboutPage { }
+                }
+            }
+        }
+    }
+
+    if Backend.connected && View.adding: AddDialog {
+        width: root.width;
+        height: root.height;
+    }
+}

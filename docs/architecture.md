@@ -365,8 +365,8 @@ manifest icon, else `input-keyboard`; the tooltip is "engine · status". A click
 direct input, a middle click switches to the next input method, and the menu holds the
 input methods and direct input as radio items; for an input method inside a framework
 the tooltip is "input method (framework)". Below them come the current engine's own
-menu, with its switches as check items and its submenus, and "Configure …" for an
-engine with settings. An entry keeps its id while the menu changes, so a click on a menu
+menu, with its switches as check items and its submenus, "Configure …" for an
+engine with settings, and "Settings…", which opens `omime-settings`. An entry keeps its id while the menu changes, so a click on a menu
 shown before a change does what the entry said. `[tray] enabled = false` turns it off.
 
 ## Switcher
@@ -384,6 +384,22 @@ It draws with Slint through `omime-overlay`, a small library that makes a layer 
 renderer draws into shared memory, the surface takes no input, and the application
 shows and hides it with the size it needs. Engines' floating panels are to use it too.
 Slint stays out of omimed, the command line tool, the protocol crate and the SDK.
+
+## Settings
+
+`omime-settings` is oh-my-ime's settings window: the input methods and their order,
+with a list of what can be added grouped by language; the hotkeys, recorded by pressing
+them; the input method of each application; the options of `config.toml`; and what
+`Diagnose` reports. It is an ordinary Wayland application (Slint with winit, which
+follows the desktop's light or dark preference through the settings portal) and keeps
+nothing of its own: it reads everything from the control API, again after
+`InputMethodsChanged`, `ConfigChanged` and `StatusChanged`, follows omimed's bus name
+as omimed stops and starts, and changes things with `Configure`, `OpenSettings`,
+`SetAppInputMethod` and `ForgetApp`, so omimed remains the only writer of
+`config.toml`. Its texts are English in the user interface and translated from the
+gettext catalogs in `crates/omime-settings/po`, which are built in. `omime settings`
+and "Settings…" in the tray menu open it, and the desktop entry
+`io.github.ign1x.OhMyIme.Settings` (also its application id) puts it in launchers.
 
 ## Compatibility layers (planned)
 

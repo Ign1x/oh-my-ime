@@ -37,12 +37,14 @@ allow = [
 ]
 
 # Slint is licensed GPL-3.0 OR royalty-free OR commercial. The user interface programs
-# (the Sparkle demo engine, the switcher and its overlay library) use it under the
-# royalty-free license (attribution in the README); the daemon, the command line tool,
-# the protocol crate and the SDK may not depend on it (see [bans]).
+# (the Sparkle demo engine, the switcher and its overlay library, the settings) use it
+# under the royalty-free license (attribution in the README); the daemon, the command
+# line tool, the protocol crate and the SDK may not depend on it (see [bans]). The
+# settings' tests also use Slint's testing backend.
 exceptions = [
   { crate = "slint", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
   { crate = "slint-macros", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
+  { crate = "i-slint-backend-testing", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
   { crate = "i-slint-backend-selector", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
   { crate = "i-slint-backend-winit", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
   { crate = "i-slint-common", allow = ["LicenseRef-Slint-Royalty-free-2.0"] },
@@ -64,7 +66,8 @@ allow-wildcard-paths = true
 deny = [
   # Only user interface programs may use Slint; omimed, omime, omime-proto and the SDK
   # stay MIT/Apache-2.0 only.
-  { crate = "slint", wrappers = ["omime-sparkle", "omime-overlay", "omime-panel"] },
+  { crate = "slint", wrappers = ["omime-sparkle", "omime-overlay", "omime-panel", "omime-settings"] },
+  { crate = "i-slint-backend-testing", wrappers = ["omime-settings"] },
   # The platform uses zbus 6; the old zbus only comes with Slint.
   { crate = "zbus:<6", wrappers = ["i-slint-backend-winit"] },
   { crate = "rustybuzz", wrappers = ["usvg"] },

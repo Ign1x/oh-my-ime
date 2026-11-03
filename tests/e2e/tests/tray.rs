@@ -6,6 +6,15 @@ use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine, hosted_engine};
 /// "Direct input" as omimed names it, in English or Chinese after the locale.
 const DIRECT_INPUT: [&str; 2] = ["Direct input", "直接输入"];
 
+/// The menu without its last entries, the settings of oh-my-ime, which it has when
+/// `omime-settings` is installed next to omimed (see settings.rs).
+fn without_settings(menu: &str) -> &str {
+    ["|-|Settings…", "|-|设置…"]
+        .iter()
+        .find_map(|entry| menu.strip_suffix(entry))
+        .unwrap_or(menu)
+}
+
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
@@ -18,7 +27,7 @@ fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
     let menu = tray.wait_for_latest("the menu", "menu ", |m| m.starts_with("echo*|"))?;
     let direct = DIRECT_INPUT
         .into_iter()
-        .find(|d| menu.ends_with(d))
+        .find(|d| without_settings(&menu).ends_with(d))
         .ok_or_else(|| anyhow::anyhow!("no direct input in the menu {menu:?}"))?;
     assert_eq!(
         tray.latest("icon "),
@@ -31,7 +40,7 @@ fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
     env.wait_for_status("direct input")?;
     tray.wait_for_latest("direct input in the tooltip", "tooltip ", |t| t == direct)?;
     tray.wait_for_latest("direct input checked", "menu ", |m| {
-        m.starts_with("echo|") && m.ends_with(&format!("|{direct}*"))
+        m.starts_with("echo|") && without_settings(m).ends_with(&format!("|{direct}*"))
     })?;
 
     // A click goes back to the last engine.
@@ -92,7 +101,8 @@ fn the_tray_menu_has_the_engines_own_menu() -> anyhow::Result<()> {
         m.contains("Chinese punctuation")
     })?;
     assert!(
-        menu.ends_with("|-|Chinese punctuation*|Width(Full width|Half width*)|Say hello"),
+        without_settings(&menu)
+            .ends_with("|-|Chinese punctuation*|Width(Full width|Half width*)|Say hello"),
         "{menu}"
     );
 

@@ -1,0 +1,183 @@
+// What omimed has, as the window shows it, and what the user can do with it: the Rust
+// side (src/ui.rs) sets the properties and answers the callbacks.
+
+// The window's texts in the user's language, from po/<language>.po (src/tr.rs).
+export global Tr {
+    pure callback text(string) -> string;
+    // With `{}` replaced by the argument.
+    pure callback text1(string, string) -> string;
+    pure callback text2(string, string, string) -> string;
+}
+
+// An enabled input method, in switching order.
+export struct InputMethodRow {
+    id: string,
+    name: string,
+    // The engine it belongs to, when its name says something the input method's does not.
+    engine-name: string,
+    // Its language group (see Texts.language), empty when unknown.
+    language: string,
+    // What its badge shows, such as "双" or "S".
+    label: string,
+    in-use: bool,
+    // The engine, and whether it has settings to open.
+    engine: string,
+    settings: bool,
+}
+
+// An entry of the list of input methods to add: a heading, the name of a language
+// group, when `id` is empty.
+export struct CatalogEntry {
+    id: string,
+    name: string,
+    engine-name: string,
+    label: string,
+    heading: string,
+}
+
+// An application and the input method remembered for it.
+export struct AppRow {
+    app: string,
+    // An index into Backend.app-choices.
+    choice: int,
+}
+
+// A line of the status on the About page.
+export struct Check {
+    // What was checked: "display", "seat", "seat-taken", "focus", "no-focus" or "error".
+    kind: string,
+    // What it is about: the compositor, a seat, an error message.
+    subject: string,
+    ok: bool,
+}
+
+export global Backend {
+    // Whether omimed answers on the session bus; without it the window says so.
+    in property <bool> connected;
+    // Whether the window has heard from omimed at all.
+    in property <bool> loaded;
+    // Why the last change failed, for people; empty when nothing failed.
+    in property <string> error;
+    callback dismiss-error();
+
+    // Input methods.
+    in property <[InputMethodRow]> input-methods;
+    // What can be added, narrowed down by `search`.
+    in property <[CatalogEntry]> catalog;
+    in property <bool> catalog-empty;
+    callback search(string);
+    callback move-input-method(int, int);
+    callback remove-input-method(int);
+    callback add-input-method(string);
+    callback open-settings(string);
+
+    // Hotkeys: the keys of each, such as ["Ctrl", "Space"]; none when it is off.
+    in property <[string]> toggle-keys;
+    in property <[string]> next-keys;
+    // A key pressed while recording the hotkey `which` ("toggle" or "next"), with the
+    // modifiers control, alt, shift and meta: true when the recording is over (a key
+    // that is not a modifier, or Escape).
+    callback record-key(string, string, bool, bool, bool, bool) -> bool;
+    callback clear-hotkey(string);
+
+    // Applications.
+    in-out property <bool> remember-apps;
+    callback set-remember-apps(bool);
+    // Direct input, then the input methods.
+    in property <[string]> app-choices;
+    in property <[AppRow]> apps;
+    callback set-app-input-method(string, int);
+    callback forget-app(string);
+
+    // General.
+    in-out property <bool> tray;
+    callback set-tray(bool);
+    in-out property <bool> switcher;
+    callback set-switcher(bool);
+    in property <[string]> timeouts;
+    in property <int> timeout-index;
+    callback set-timeout(int);
+
+    // About.
+    in property <string> daemon-version;
+    in property <string> version;
+    in property <[Check]> checks;
+}
+
+// What the window shows; the Rust side may choose the page.
+export global View {
+    // 0 input methods, 1 hotkeys, 2 applications, 3 general, 4 about.
+    in-out property <int> page;
+    // Whether the list of input methods to add is open.
+    in-out property <bool> adding;
+    // The hotkey being recorded ("toggle" or "next"), empty when none is.
+    in-out property <string> recording;
+}
+
+// Texts made from what the Rust side reports, in the user's language.
+export global Texts {
+    // Typing as the keyboard types, without an input method.
+    out property <string> direct-input: Tr.text("Direct input");
+
+    // The name of a language group (`zh-Hans`, `ja`, … as src/model.rs makes them).
+    public pure function language(code: string) -> string {
+        if (code == "zh-Hans") {
+            return Tr.text("Chinese (Simplified)");
+        }
+        if (code == "zh-Hant") {
+            return Tr.text("Chinese (Traditional)");
+        }
+        if (code == "zh") {
+            return Tr.text("Chinese");
+        }
+        if (code == "ja") {
+            return Tr.text("Japanese");
+        }
+        if (code == "ko") {
+            return Tr.text("Korean");
+        }
+        if (code == "en") {
+            return Tr.text("English");
+        }
+        if (code == "vi") {
+            return Tr.text("Vietnamese");
+        }
+        if (code == "th") {
+            return Tr.text("Thai");
+        }
+        if (code == "") {
+            return Tr.text("Other");
+        }
+        return code;
+    }
+
+    // "Fcitx 5 · Chinese (Simplified)": what an input method belongs to.
+    public pure function detail(engine-name: string, language: string) -> string {
+        if (engine-name == "") {
+            return language == "" ? "" : self.language(language);
+        }
+        return language == "" ? engine-name : engine-name + " · " + self.language(language);
+    }
+
+    public pure function check(check: Check) -> string {
+        if (check.kind == "display") {
+            return Tr.text1("Connected to the compositor at {}", check.subject);
+        }
+        if (check.kind == "seat") {
+            return Tr.text1("oh-my-ime is the input method of seat {}", check.subject);
+        }
+        if (check.kind == "seat-taken") {
+            return Tr.text1("Another input method holds seat {}", check.subject);
+        }
+        if (check.kind == "focus") {
+            return Tr.text("The compositor reports which application has focus");
+        }
+        if (check.kind == "no-focus") {
+            return Tr.text("The compositor does not report which application has focus, so applications cannot keep their input method");
+        }
+        if (check.kind == "error") {
+            return Tr.text1("The input method could not be selected: {}", check.subject);
+        }
+        return check.subject;
+    }
+}

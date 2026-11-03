@@ -133,6 +133,7 @@ flowchart LR
 | 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
 | 引擎菜单（中文标点、全角等）出现在托盘和命令行中，包括 Fcitx 5 与 IBus 的 | ✅ |
 | 切换浮层：用热键切换后，在屏幕下方显示输入法 | ✅ sway 与 Hyprland |
+| 设置程序（`omime-settings`）：输入法及其顺序、热键、应用、选项；中英双语，浅色与深色 | ✅ |
 | Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
 | 多 seat 分别路由按键、保存组合输入 | 🚧 已在 sway 上测试；引擎选择和候选窗定位仍共享 |
 | Nix/源码安装附带 systemd 用户单元和会话模板 | ✅ |
@@ -190,6 +191,7 @@ omime setup --engine sparkle --take-over --start
 | 在直接输入与上一个引擎之间切换 | `Ctrl+Space` |
 | 下一个输入法 | `Ctrl+Shift+Space` 或 `omime next` |
 | 指定输入法 | `omime list`，然后 `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`；或使用托盘菜单 |
+| 设置 | `omime settings`、托盘菜单里的“设置…”，或启动器里的“oh-my-ime 设置” |
 | 管理引擎 | `omime engines`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 状态栏 | 托盘项（StatusNotifierItem）；`omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 
@@ -210,7 +212,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
-7. **阶段 5**：原生 Rime 引擎、设置界面、更多合成器、C ABI SDK（托盘项已完成）
+7. **阶段 5**：原生 Rime 引擎、更多合成器、C ABI SDK（托盘项与设置程序已完成）
 
 ## 常见问题
 
@@ -237,6 +239,6 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 除非你另有明确声明，你有意提交并被本项目收录的任何贡献（依 Apache-2.0 许可证的定义），
 均按上述双许可证授权，不附加任何其他条款或条件。
 
-示例引擎 [Sparkle](engines/sparkle) 与切换浮层（`omime-panel`，以及 `omime-overlay`）依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；守护进程、`omime` 命令行工具、协议 crate 和 SDK 不依赖 Slint。
+示例引擎 [Sparkle](engines/sparkle)、切换浮层（`omime-panel`，以及 `omime-overlay`）和设置程序（`omime-settings`）依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；守护进程、`omime` 命令行工具、协议 crate 和 SDK 不依赖 Slint。
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

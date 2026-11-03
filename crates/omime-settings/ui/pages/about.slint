@@ -1,0 +1,101 @@
+import { Backend, Check, Texts, Tr } from "../backend.slint";
+import { Theme } from "../theme.slint";
+import { Card, Divider, PageHeader, SectionHeader } from "../widgets.slint";
+
+component CheckItem inherits HorizontalLayout {
+    in property <Check> check;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    spacing: 12px;
+    VerticalLayout {
+        alignment: start;
+        padding-top: 1px;
+        Image {
+            source: root.check.ok ? @image-url("../icons/check.svg") : @image-url("../icons/alert.svg");
+            colorize: root.check.ok ? Theme.success : Theme.danger;
+            width: 18px;
+            height: 18px;
+        }
+    }
+
+    Text {
+        text: Texts.check(root.check);
+        color: Theme.text;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+    }
+}
+
+export component AboutPage inherits VerticalLayout {
+    spacing: 12px;
+    PageHeader {
+        title: Tr.text("About");
+    }
+
+    Card {
+        HorizontalLayout {
+            padding: 20px;
+            spacing: 16px;
+            Rectangle {
+                width: 56px;
+                height: 56px;
+                border-radius: 14px;
+                background: Theme.accent;
+                Image {
+                    source: @image-url("../icons/keyboard.svg");
+                    colorize: Theme.on-accent;
+                    width: 34px;
+                    height: 34px;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 3px;
+                Text {
+                    text: "oh-my-ime";
+                    font-size: 20px;
+                    font-weight: 600;
+                    color: Theme.text;
+                }
+
+                Text {
+                    text: Tr.text2("omimed {}, settings {}", Backend.daemon-version, Backend.version);
+                    color: Theme.secondary;
+                }
+
+                Text {
+                    text: "https://github.com/Ign1x/oh-my-ime";
+                    font-size: 12px;
+                    color: Theme.secondary;
+                }
+            }
+        }
+    }
+
+    SectionHeader {
+        text: Tr.text("Status");
+    }
+
+    Card {
+        VerticalLayout {
+            for check[index] in Backend.checks: VerticalLayout {
+                if index > 0: Divider {
+                    inset: 46px;
+                }
+                CheckItem {
+                    check: check;
+                }
+            }
+        }
+    }
+
+    Text {
+        text: Tr.text("For a full check of your setup, run “omime doctor” in a terminal. omimed's log: “journalctl --user -u omimed”.");
+        font-size: 12px;
+        color: Theme.secondary;
+        wrap: word-wrap;
+    }
+}

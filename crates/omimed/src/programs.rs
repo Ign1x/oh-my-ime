@@ -1,0 +1,47 @@
+//! Programs that come with omimed: found next to it, as installed, or else in `$PATH`.
+//! The switcher (see [`crate::panel`]), and the settings, `omime-settings`, which the
+//! tray menu opens.
+
+use std::path::PathBuf;
+
+use tracing::{info, warn};
+
+/// The settings program.
+pub const SETTINGS: &str = "omime-settings";
+
+/// The program `name` next to omimed, or else in `$PATH`.
+pub fn find(name: &str) -> Option<PathBuf> {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(name)))
+        .filter(|path| path.is_file());
+    beside.or_else(|| {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+/// Opens the settings on the compositor at `display` (`$WAYLAND_DISPLAY` when `None`):
+/// a window of its own, which stays open when omimed stops.
+pub fn open_settings(display: Option<&str>) -> Result<(), String> {
+    let program = find(SETTINGS).ok_or_else(|| format!("{SETTINGS} is not installed"))?;
+    let mut command = std::process::Command::new(program);
+    if let Some(display) = display {
+        command.env("WAYLAND_DISPLAY", display);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("cannot open the settings: {e}"))?;
+    info!(pid = child.id(), "opened the settings");
+    // Collects its exit status, so that no zombie stays behind.
+    let reaper = std::thread::Builder::new()
+        .name("omime-settings".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    if let Err(e) = reaper {
+        warn!("cannot wait for the settings: {e}");
+    }
+    Ok(())
+}

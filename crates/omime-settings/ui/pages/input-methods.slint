@@ -1,0 +1,296 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Backend, CatalogEntry, InputMethodRow, Texts, Tr, View } from "../backend.slint";
+import { Theme } from "../theme.slint";
+import { Badge, Card, Divider, IconButton, PageHeader, Pill, RowText } from "../widgets.slint";
+
+// An enabled input method with what can be done with it.
+component InputMethodItem inherits HorizontalLayout {
+    in property <InputMethodRow> method;
+    in property <int> index;
+    in property <int> count;
+    padding-left: 16px;
+    padding-right: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    spacing: 14px;
+    VerticalLayout {
+        alignment: center;
+        Badge {
+            text: root.method.label;
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        horizontal-stretch: 1;
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            Text {
+                text: root.method.name;
+                font-size: 14px;
+                color: Theme.text;
+                overflow: elide;
+            }
+
+            if root.method.in-use: VerticalLayout {
+                alignment: center;
+                Pill {
+                    text: Tr.text("In use");
+                }
+            }
+        }
+
+        if Texts.detail(root.method.engine-name, root.method.language) != "": Text {
+            text: Texts.detail(root.method.engine-name, root.method.language);
+            font-size: 12px;
+            color: Theme.secondary;
+            overflow: elide;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 2px;
+        alignment: end;
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: @image-url("../icons/chevron-up.svg");
+                label: Tr.text1("Move {} up", root.method.name);
+                enabled: root.index > 0;
+                clicked => {
+                    Backend.move-input-method(root.index, root.index - 1);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: @image-url("../icons/chevron-down.svg");
+                label: Tr.text1("Move {} down", root.method.name);
+                enabled: root.index < root.count - 1;
+                clicked => {
+                    Backend.move-input-method(root.index, root.index + 1);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: @image-url("../icons/gear.svg");
+                label: Tr.text1("Settings of {}", root.method.name);
+                // Keeps its place when there is nothing to open, so that the buttons line up.
+                visible: root.method.settings;
+                enabled: root.method.settings;
+                clicked => {
+                    Backend.open-settings(root.method.engine);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: @image-url("../icons/trash.svg");
+                label: Tr.text1("Remove {}", root.method.name);
+                clicked => {
+                    Backend.remove-input-method(root.index);
+                }
+            }
+        }
+    }
+}
+
+export component InputMethodsPage inherits VerticalLayout {
+    spacing: 12px;
+    PageHeader {
+        title: Tr.text("Input methods");
+        description: Tr.text("The input methods you switch between, in the order of switching. Direct input is always there too.");
+    }
+
+    if Backend.input-methods.length == 0: Card {
+        VerticalLayout {
+            padding: 28px;
+            spacing: 6px;
+            alignment: center;
+            Text {
+                text: Tr.text("No input methods yet");
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: Tr.text("Add one to type in another language.");
+                color: Theme.secondary;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    if Backend.input-methods.length > 0: Card {
+        VerticalLayout {
+            for method[index] in Backend.input-methods: VerticalLayout {
+                if index > 0: Divider {
+                    inset: 66px;
+                }
+                InputMethodItem {
+                    method: method;
+                    index: index;
+                    count: Backend.input-methods.length;
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        padding-top: 4px;
+        Button {
+            text: Tr.text("Add input method…");
+            icon: @image-url("../icons/plus.svg");
+            colorize-icon: true;
+            primary: true;
+            clicked => {
+                Backend.search("");
+                View.adding = true;
+            }
+        }
+    }
+}
+
+// An entry of the list of input methods to add.
+component CatalogItem inherits Rectangle {
+    in property <CatalogEntry> entry;
+    height: root.entry.id == "" ? 36px : 52px;
+    border-radius: 6px;
+    background: root.entry.id != "" && touch.has-hover ? Theme.hover : transparent;
+    touch := TouchArea {
+        enabled: root.entry.id != "";
+    }
+
+    if root.entry.id == "": Text {
+        x: 8px;
+        y: parent.height - self.height - 6px;
+        text: Texts.language(root.entry.heading);
+        font-size: 12px;
+        font-weight: 600;
+        color: Theme.secondary;
+    }
+
+    if root.entry.id != "": HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Badge {
+                text: root.entry.label;
+                size: 32px;
+            }
+        }
+
+        RowText {
+            title: root.entry.name;
+            subtitle: root.entry.engine-name;
+            horizontal-stretch: 1;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Button {
+                text: Tr.text("Add");
+                accessible-label: Tr.text1("Add {}", root.entry.name);
+                clicked => {
+                    Backend.add-input-method(root.entry.id);
+                }
+            }
+        }
+    }
+}
+
+// The input methods there are to add, by language, over the window.
+export component AddDialog inherits Rectangle {
+    background: Theme.scrim;
+    // Clicking beside the dialog closes it.
+    TouchArea {
+        clicked => {
+            View.adding = false;
+        }
+    }
+
+    Rectangle {
+        width: min(540px, root.width - 48px);
+        height: min(600px, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.dialog;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.card-border;
+        drop-shadow-blur: 28px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-color: #00000060;
+        // Clicks inside the dialog stay there.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 20px;
+            padding-bottom: 12px;
+            spacing: 14px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: Tr.text("Add an input method");
+                    font-size: 20px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                IconButton {
+                    icon: @image-url("../icons/close.svg");
+                    label: Tr.text("Close");
+                    clicked => {
+                        View.adding = false;
+                    }
+                }
+            }
+
+            search := LineEdit {
+                placeholder-text: Tr.text("Search");
+                accessible-label: Tr.text("Search");
+                edited(text) => {
+                    Backend.search(text);
+                }
+            }
+
+            if Backend.catalog-empty: Text {
+                text: search.text == "" ? Tr.text("Every input method there is is in your list already. Install another framework or engine to get more.") : Tr.text1("No input method matches “{}”.", search.text);
+                color: Theme.secondary;
+                wrap: word-wrap;
+                vertical-stretch: 1;
+            }
+
+            if !Backend.catalog-empty: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: 8px;
+                    for entry in Backend.catalog: CatalogItem {
+                        entry: entry;
+                    }
+                }
+            }
+        }
+    }
+
+    init => {
+        search.focus();
+    }
+}

@@ -3,7 +3,6 @@
 //! switches from the control API's `Switched`. omimed starts it with `[panel] enabled`,
 //! starts it again when it stops, and stops it with itself.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, info, warn};
@@ -30,7 +29,7 @@ impl Drop for Panel {
 /// Starts the switcher on the compositor at `display` (`$WAYLAND_DISPLAY` when `None`)
 /// and keeps it running, unless it is not installed.
 pub fn start(display: Option<String>) -> Option<Panel> {
-    let Some(program) = find() else {
+    let Some(program) = crate::programs::find(PROGRAM) else {
         warn!("the switcher ({PROGRAM}) is not installed");
         return None;
     };
@@ -67,17 +66,4 @@ pub fn start(display: Option<String>) -> Option<Panel> {
         }
     });
     Some(Panel { task })
-}
-
-/// The switcher next to omimed, as installed, or else in `$PATH`.
-fn find() -> Option<PathBuf> {
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join(PROGRAM)))
-        .filter(|path| path.is_file());
-    beside.or_else(|| {
-        std::env::split_paths(&std::env::var_os("PATH")?)
-            .map(|dir| dir.join(PROGRAM))
-            .find(|path| path.is_file())
-    })
 }

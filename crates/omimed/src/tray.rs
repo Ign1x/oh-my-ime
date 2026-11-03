@@ -7,7 +7,8 @@
 //! engine and, when it says, what it is doing ("Fcitx 5 · 双拼"). A click switches
 //! between direct input and the last engine, a middle click to the next engine, and the
 //! menu (`com.canonical.dbusmenu`) lists the enabled engines and direct input, then the
-//! current engine's own menu (switches such as Chinese punctuation) and its settings.
+//! current engine's own menu (switches such as Chinese punctuation), its settings and
+//! oh-my-ime's settings.
 //!
 //! The item keeps no state of its own: every property is read from the daemon loop, and
 //! the daemon tells the item when something changed.
@@ -52,6 +53,8 @@ pub struct TrayInfo {
     pub method: Option<String>,
     /// The current engine's menu.
     pub properties: Vec<Property>,
+    /// Whether oh-my-ime's settings program is installed.
+    pub own_settings: bool,
 }
 
 impl TrayInfo {
@@ -148,11 +151,20 @@ impl TrayInfo {
             entries.push(MenuEntry::separator());
             entries.extend(own);
         }
-        if let Some(engine) = self.current().filter(|e| e.settings) {
+        let engine_settings = self.current().filter(|e| e.settings);
+        if engine_settings.is_some() || self.own_settings {
             entries.push(MenuEntry::separator());
+        }
+        if let Some(engine) = engine_settings {
             entries.push(MenuEntry::item(
                 MenuAction::Settings(engine.id.clone()),
                 settings_label(&engine.name),
+            ));
+        }
+        if self.own_settings {
+            entries.push(MenuEntry::item(
+                MenuAction::OwnSettings,
+                own_settings_label().to_owned(),
             ));
         }
         entries
@@ -166,6 +178,8 @@ enum MenuAction {
     Switch(Option<String>),
     /// Opens the settings of an engine.
     Settings(String),
+    /// Opens oh-my-ime's settings.
+    OwnSettings,
     /// Activates an entry of the current engine's menu.
     Property(String),
 }
@@ -334,6 +348,15 @@ fn settings_label(engine: &str) -> String {
         format!("配置 {engine}…")
     } else {
         format!("Configure {engine}…")
+    }
+}
+
+/// "Settings…", oh-my-ime's own, in Chinese for Chinese locales.
+fn own_settings_label() -> &'static str {
+    if chinese() {
+        "设置…"
+    } else {
+        "Settings…"
     }
 }
 
@@ -669,6 +692,9 @@ impl Menu {
                     ControlRequest::OpenSettings(engine, tx)
                 });
             }
+            Some(MenuAction::OwnSettings) => {
+                tell(&self.requests, ControlRequest::OpenOwnSettings);
+            }
             Some(MenuAction::Property(property)) => {
                 tell(&self.requests, |tx| {
                     ControlRequest::ActivateProperty(property, tx)
@@ -996,6 +1022,20 @@ mod tests {
         assert_eq!(menu.len(), 7);
         let menu = info(Some("sparkle"), Some("sparkle")).menu();
         assert_eq!(menu.len(), 5);
+
+        // oh-my-ime's settings come last, where they are installed.
+        let mut fcitx5 = info(Some("fcitx5"), Some("fcitx5/pinyin"));
+        fcitx5.own_settings = true;
+        let menu = fcitx5.menu();
+        assert_eq!(menu.len(), 8);
+        assert_eq!(
+            menu[7],
+            MenuEntry::item(MenuAction::OwnSettings, own_settings_label().to_owned())
+        );
+        let mut direct = info(None, None);
+        direct.own_settings = true;
+        let menu = direct.menu();
+        assert_eq!(menu[menu.len() - 2], MenuEntry::separator());
     }
 
     fn property(id: &str, parent: &str, kind: PropertyKind, checked: bool) -> Property {

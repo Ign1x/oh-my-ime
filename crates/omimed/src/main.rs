@@ -11,6 +11,7 @@ mod ime_state;
 mod keyboard;
 mod panel;
 mod placement;
+mod programs;
 mod runtime_dir;
 mod state;
 mod tray;

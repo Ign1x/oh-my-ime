@@ -110,13 +110,29 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 
 ## 托盘项
 
-omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。它们下面是当前引擎自己的菜单（开关显示为复选项，子菜单照样嵌套），有设置的引擎还有“配置 …”。菜单变化时，每一项保持自己的 id，因此在变化之前打开的菜单里点一项，执行的仍是这一项写着的操作。`[tray] enabled = false` 可以关掉它。
+omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，带一个 `com.canonical.dbusmenu` 菜单），并注册到状态栏的 `org.kde.StatusNotifierWatcher`；此后每当新的 `org.kde.StatusNotifierWatcher` 出现，都会再注册一次。这个托盘项不保存状态：每个属性都从守护进程主循环读取，主循环在当前引擎、它的状态或引擎列表变化时通知托盘项，从而发出 `NewIcon`、`NewToolTip` 与 `LayoutUpdated`。图标取被托管的输入法的图标，否则取引擎状态或清单中的图标，否则取 `input-keyboard`；悬停提示为“引擎 · 状态”。单击切换直接输入，中键单击切到下一个输入法，菜单以单选项列出输入法与直接输入；对于框架内的输入法，悬停提示为“输入法（框架）”。它们下面是当前引擎自己的菜单（开关显示为复选项，子菜单照样嵌套），有设置的引擎还有“配置 …”，最后是打开 `omime-settings` 的“设置…”。菜单变化时，每一项保持自己的 id，因此在变化之前打开的菜单里点一项，执行的仍是这一项写着的操作。`[tray] enabled = false` 可以关掉它。
 
 ## 切换浮层
 
 用户用 omimed 的热键或控制 API 的 `Switch`、`Next`、`Toggle` 切换时，`omime-panel` 会短暂显示输入法，并高亮刚切换到的那个。它是合成器的普通客户端：omimed 在 `[panel] enabled` 时启动它，它退出时重新启动，并在 omimed 退出时一起停止。它通过控制 API 的 `Switched(input_method, reason)` 得知切换，只在原因为 "hotkey" 和 "command" 时显示；来自托盘（"menu"）、来自引擎（"engine"）以及随焦点在应用之间切换的，都不显示。
 
 它通过 `omime-overlay` 用 Slint 绘制。`omime-overlay` 是一个小库，把图层表面（`zwlr_layer_shell_v1`，smithay-client-toolkit）作为 Slint 的平台：Slint 的软件渲染器绘制到共享内存中，表面不接收输入，由应用以所需的尺寸显示或隐藏它。引擎的浮动面板之后也会用它。omimed、命令行工具、协议 crate 和 SDK 都不依赖 Slint。
+
+## 设置程序
+
+`omime-settings` 是 oh-my-ime 的设置窗口，包括：
+- 输入法及其顺序，以及按语言分组、可以添加的输入法；
+- 热键，按下组合键即可录制；
+- 每个应用的输入法；
+- `config.toml` 的选项；
+- `Diagnose` 报告的状态。
+
+它是普通的 Wayland 应用（Slint 加 winit，经设置门户跟随桌面的浅色或深色偏好），自己不保存任何东西：
+- 一切都从控制 API 读取，收到 `InputMethodsChanged`、`ConfigChanged` 和 `StatusChanged` 后重新读取；
+- 跟随 omimed 的总线名，omimed 停止和重新启动时随之更新；
+- 通过 `Configure`、`OpenSettings`、`SetAppInputMethod` 和 `ForgetApp` 修改，因此 `config.toml` 始终只由 omimed 写入。
+
+界面文字以英文写成，译文来自 `crates/omime-settings/po` 中的 gettext 目录，编译进程序。`omime settings` 和托盘菜单中的“设置…”都能打开它；桌面文件 `io.github.ign1x.OhMyIme.Settings`（也是它的应用 id）让它出现在启动器里。
 
 ## 兼容层（计划中）
 

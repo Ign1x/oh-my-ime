@@ -28,8 +28,8 @@ Commands:
   toggle           Switch between direct input and the last engine
   enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
-  settings <ENGINE>
-                   Open the settings of an engine, such as `fcitx5`
+  settings [<ENGINE>]
+                   Open oh-my-ime's settings, or those of an engine, such as `fcitx5`
   properties       Show the menu of the input method in use (switches such as
                    Chinese or English punctuation)
   activate <ID>    Activate an entry of that menu
@@ -50,8 +50,8 @@ Commands:
   help             Print this help
 
 The other commands talk to a running `omimed` over the session bus; `install`,
-`uninstall`, `setup` and `doctor` also work without it, and `status --watch` keeps watching
-for it.";
+`uninstall`, `setup` and `doctor` also work without it, `status --watch` keeps watching
+for it, and the settings wait for it.";
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Daemon1",
@@ -97,6 +97,8 @@ enum Command {
     },
     /// Checks the setup; needs neither omimed nor a session bus.
     Doctor,
+    /// Opens oh-my-ime's settings, `omime-settings`, which waits for omimed itself.
+    OwnSettings,
     Setup(setup::Options),
 }
 
@@ -137,6 +139,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
         },
         ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
         ["doctor"] => Command::Doctor,
+        ["settings"] => Command::OwnSettings,
         ["setup", rest @ ..] => Command::Setup(setup::Options::parse(rest)?),
         ["status", "--watch"] => Command::Watch { json: false },
         ["status", "--json", "--watch"] | ["status", "--watch", "--json"] => {
@@ -252,6 +255,7 @@ async fn run(command: Command) -> anyhow::Result<ExitCode> {
         Command::Watch { json } => watch::run(json).await?,
         Command::Setup(options) => setup::run(options).await?,
         Command::Daemon(command) => run_daemon(command).await?,
+        Command::OwnSettings => return Err(open_own_settings()),
         Command::Doctor => {
             let clean = doctor::run().await?;
             return Ok(if clean {
@@ -262,6 +266,20 @@ async fn run(command: Command) -> anyhow::Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Runs `omime-settings` in place of this process: the one next to `omime`, as
+/// installed, or else the one in `$PATH`. Returns only when that fails.
+fn open_own_settings() -> anyhow::Error {
+    use std::os::unix::process::CommandExt as _;
+    const PROGRAM: &str = "omime-settings";
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(PROGRAM)))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(PROGRAM));
+    let error = std::process::Command::new(&program).exec();
+    anyhow::Error::new(error).context(format!("cannot run {}", program.display()))
 }
 
 /// Installs the engine directory `dir` for the user and lets a running omimed notice.
@@ -716,6 +734,13 @@ mod tests {
         ));
         assert!(
             matches!(parse(&args("switch echo")), Ok(Some(Command::Daemon(DaemonCommand::Switch(e)))) if e == "echo")
+        );
+        assert!(matches!(
+            parse(&args("settings")),
+            Ok(Some(Command::OwnSettings))
+        ));
+        assert!(
+            matches!(parse(&args("settings fcitx5")), Ok(Some(Command::Daemon(DaemonCommand::Settings(e)))) if e == "fcitx5")
         );
         assert!(matches!(
             parse(&args("install /tmp/echo")),

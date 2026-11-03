@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=oh-my-ime Settings
+Name[zh_CN]=oh-my-ime 设置
+Comment=Choose and order input methods, set hotkeys and options
+Comment[zh_CN]=选择和排列输入法，设置热键和选项
+Exec=omime-settings
+Icon=input-keyboard
+Terminal=false
+Categories=Settings;
+Keywords=input method;IME;keyboard;hotkeys;Fcitx;IBus;
+Keywords[zh_CN]=输入法;键盘;热键;中文;Fcitx;IBus;
+StartupNotify=false

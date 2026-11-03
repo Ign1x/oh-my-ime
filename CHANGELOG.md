@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Settings: `omime-settings`, a window for what config.toml and `omime` used to be
+  needed for. It lists your input methods in switching order, to reorder, remove and
+  open the settings of, and adds more from what Fcitx 5, IBus and the installed engines
+  offer, grouped by language and searchable. It records hotkeys as you press them, sets
+  or forgets the input method of each application, turns the tray and the switcher on
+  or off, sets the key timeout, and shows what omimed reports about the session. It is
+  in English and Chinese, light or dark as the desktop prefers, and works only through
+  the control API: it follows omimed as it stops and starts, and omimed writes
+  config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
+  end of the tray menu and the desktop entry "oh-my-ime Settings".
 - `omime setup` configures Hyprland's input environment and autostart in Lua or
   legacy `.conf`, with a read-only preview and a journal for undo that preserves
   unrelated edits. `--engine` sets the first-login method, `--start` activates the
@@ -138,7 +148,7 @@ All notable changes to this project are documented here. The format follows
 
 - Input methods of a hosted framework that config.toml names, such as
   `fcitx5/shuangpin`, have their names (Shuangpin, 双拼) before the framework runs, in
-  `omime list` and the tray, instead of their ids.
+  `omime list`, the tray and the settings, instead of their ids.
 - First keys wait for a hosted framework to finish selecting its input method.
   IBus also waits for panel initialization and input-context focus, preventing
   its default layout or asynchronous startup from passing the first letters through.

@@ -24,11 +24,12 @@ let
     "omimed"
     "omime-cli"
     "omime-panel"
+    "omime-settings"
     "omime-echo"
     "omime-sparkle"
   ];
-  # Libraries Sparkle's toolkit (winit, glutin, fontique) opens at runtime; the
-  # switcher needs the Wayland and font ones.
+  # Libraries Sparkle's and the settings' toolkit (winit, glutin, fontique) opens at
+  # runtime; the switcher needs the Wayland and font ones.
   sparkleRuntimeLibs = [
     fontconfig
     freetype
@@ -98,6 +99,10 @@ rustPlatform.buildRustPackage {
     substituteInPlace $out/lib/systemd/user/omimed.service \
       --replace-fail "ExecStart=%h/.local/bin/omimed" "ExecStart=$out/bin/omimed" \
       --replace-fail "ExecReload=%h/.local/bin/omime reload" "ExecReload=$out/bin/omime reload"
+    install -Dm644 data/io.github.ign1x.OhMyIme.Settings.desktop \
+      $out/share/applications/io.github.ign1x.OhMyIme.Settings.desktop
+    substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.Settings.desktop \
+      --replace-fail "Exec=omime-settings" "Exec=$out/bin/omime-settings"
     install -Dm644 data/config.toml $out/share/oh-my-ime/config.toml
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
 
@@ -110,8 +115,10 @@ rustPlatform.buildRustPackage {
 
   # After the fixup phase has shrunk the RPATH to what is linked.
   postFixup = ''
-    patchelf --add-rpath ${lib.makeLibraryPath sparkleRuntimeLibs} $out/bin/omime-sparkle
-    addDriverRunpath $out/bin/omime-sparkle
+    for program in omime-sparkle omime-settings; do
+      patchelf --add-rpath ${lib.makeLibraryPath sparkleRuntimeLibs} $out/bin/$program
+      addDriverRunpath $out/bin/$program
+    done
     patchelf --add-rpath ${
       lib.makeLibraryPath [
         fontconfig
@@ -125,8 +132,8 @@ rustPlatform.buildRustPackage {
     description = "A modern, Wayland-first, UI-agnostic input method platform for Linux";
     homepage = "https://github.com/Ign1x/oh-my-ime";
     changelog = "https://github.com/Ign1x/oh-my-ime/blob/main/CHANGELOG.md";
-    # The Sparkle engine and the switcher also contain Slint, used under its
-    # royalty-free license.
+    # The Sparkle engine, the switcher and the settings also contain Slint, used under
+    # its royalty-free license.
     license = with lib.licenses; [
       mit
       asl20

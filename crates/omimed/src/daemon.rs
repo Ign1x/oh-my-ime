@@ -585,6 +585,7 @@ impl Daemon {
                     methods: self.core.input_methods(),
                     method: self.core.current_method(),
                     properties: self.core.properties(),
+                    own_settings: crate::programs::find(crate::programs::SETTINGS).is_some(),
                 });
             }
             ControlRequest::Diagnose(reply) => {
@@ -629,6 +630,13 @@ impl Daemon {
             }
             ControlRequest::OpenSettings(engine, reply) => {
                 let _ = reply.send(result(self.core.open_settings(&engine)));
+            }
+            ControlRequest::OpenOwnSettings(reply) => {
+                let opened = crate::programs::open_settings(self.options.display.as_deref());
+                if let Err(e) = &opened {
+                    warn!("{e}");
+                }
+                let _ = reply.send(opened);
             }
         }
     }

@@ -131,6 +131,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Tray item: the input method in use and a menu to switch | ✅ |
 | Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
 | Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
+| Settings (`omime-settings`): input methods and their order, hotkeys, applications, options; English and Chinese, light and dark | ✅ |
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
 | Nix/source installation with a systemd user unit and session templates | ✅ |
@@ -196,6 +197,7 @@ and systemd session management.
 | Toggle direct input ↔ last engine | `Ctrl+Space` |
 | Next input method | `Ctrl+Shift+Space` or `omime next` |
 | Pick an input method | `omime list`, then `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`; or the tray menu |
+| Settings | `omime settings`, "Settings…" in the tray menu, or "oh-my-ime Settings" in your launcher |
 | Manage engines | `omime engines`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Status bars | the tray item (StatusNotifierItem); `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 
@@ -221,8 +223,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
    (not released yet)
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
-7. **Phase 5** — native Rime engine, settings GUI, more compositors, C ABI SDK (the
-   tray item is done)
+7. **Phase 5** — native Rime engine, more compositors, C ABI SDK (the tray item and the
+   settings are done)
 
 ## FAQ
 
@@ -257,8 +259,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
 without any additional terms or conditions.
 
-The [Sparkle](engines/sparkle) demo engine and the switcher (`omime-panel`, with
-`omime-overlay`) use [Slint](https://slint.dev) under the Slint Royalty-free License;
+The [Sparkle](engines/sparkle) demo engine, the switcher (`omime-panel`, with
+`omime-overlay`) and the settings (`omime-settings`) use [Slint](https://slint.dev)
+under the Slint Royalty-free License;
 the daemon, the `omime` command line tool, the protocol crate and the SDK do not depend
 on Slint.
 

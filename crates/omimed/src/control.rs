@@ -37,6 +37,8 @@ pub enum ControlRequest {
     Reload(oneshot::Sender<Result<(), String>>),
     /// Opens the settings program of an engine.
     OpenSettings(String, oneshot::Sender<Result<(), String>>),
+    /// Opens oh-my-ime's own settings, `omime-settings`.
+    OpenOwnSettings(oneshot::Sender<Result<(), String>>),
     /// The input method remembered for each application (`None`: direct input).
     Apps(oneshot::Sender<Vec<(String, Option<String>)>>),
     SetApp(String, Option<String>, oneshot::Sender<Result<(), String>>),

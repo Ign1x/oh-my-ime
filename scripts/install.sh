@@ -5,9 +5,9 @@
 #   PREFIX=/usr/local scripts/install.sh
 #   OMIME_INSTALL_BIN_DIR=/path/to/prebuilt/bin scripts/install.sh
 #
-# Installs omimed, omime, omime-panel and omime-ibus, the bundled engines (echo, sparkle) and their
-# manifests, and the manifests of Fcitx 5 and IBus, which omimed offers where they are
-# installed.
+# Installs omimed, omime, omime-panel, omime-settings (with its desktop entry) and omime-ibus,
+# the bundled engines (echo, sparkle) and their manifests, and the manifests of Fcitx 5 and
+# IBus, which omimed offers where they are installed.
 set -eu
 
 PREFIX=${PREFIX:-"$HOME/.local"}
@@ -37,6 +37,7 @@ install -Dm755 "$BUILD_BIN/omimed" "$BIN/omimed"
 install -Dm755 "$BUILD_BIN/omime" "$BIN/omime"
 install -Dm755 "$BUILD_BIN/omime-ibus" "$BIN/omime-ibus"
 install -Dm755 "$BUILD_BIN/omime-panel" "$BIN/omime-panel"
+install -Dm755 "$BUILD_BIN/omime-settings" "$BIN/omime-settings"
 # TOML and systemd quoted strings both escape backslashes and double quotes.
 QUOTED_PREFIX=$(printf '%s' "$PREFIX" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 install_manifest() {
@@ -58,6 +59,17 @@ for engine in echo sparkle; do
 done
 install -Dm644 data/engines/fcitx5/engine.toml "$ENGINES/fcitx5/engine.toml"
 install_manifest data/engines/ibus/engine.toml ibus omime-ibus
+
+# Launchers may not have the PATH of a shell either.
+DESKTOP="$PREFIX/share/applications/io.github.ign1x.OhMyIme.Settings.desktop"
+install -d "$(dirname "$DESKTOP")"
+while IFS= read -r desktop_line; do
+  case "$desktop_line" in
+    Exec=*) printf 'Exec="%s/bin/omime-settings"\n' "$(printf '%s' "$QUOTED_PREFIX" | sed 's/%/%%/g')" ;;
+    *) printf '%s\n' "$desktop_line" ;;
+  esac
+done < data/io.github.ign1x.OhMyIme.Settings.desktop > "$DESKTOP"
+chmod 644 "$DESKTOP"
 
 install -Dm644 data/config.toml "$PREFIX/share/oh-my-ime/config.toml"
 for snippet in data/hyprland/*; do

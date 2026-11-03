@@ -136,6 +136,17 @@ omimed 在状态栏的托盘中显示正在使用的输入法（StatusNotifierIt
 enabled = false
 ```
 
+### 设置程序
+
+运行 `omime settings`，或点托盘菜单里的“设置…”、启动器里的“oh-my-ime 设置”，都能打开 oh-my-ime 的设置。在这里可以：
+- 管理你的输入法及其顺序，并从 Fcitx 5、IBus 和已安装引擎提供的输入法中添加更多；
+- 设置热键；
+- 设置每个应用的输入法；
+- 开关托盘和切换浮层，调整按键超时；
+- 查看 omimed 报告的会话状态。
+
+它所做的修改都经 omimed 写入 `config.toml`，你的注释会保留。它的应用 id 是 `io.github.ign1x.OhMyIme.Settings`，可用于窗口规则；`omime-settings hotkeys`（或 `applications`、`general`、`about`）会直接打开对应的页面。
+
 ### 切换浮层
 
 用热键切换，或者用 `omime switch`、`next` 和 `toggle`（比如来自你自己的按键绑定）切换时，屏幕下方会短暂显示输入法，并高亮刚切换到的那个：这就是切换浮层 `omime-panel`，由 omimed 启动。从托盘菜单切换，以及启用 `[apps] remember` 后随应用切换时，不会显示它。它是命名空间为 `omime-switcher` 的图层表面，可用于合成器规则；要关掉它：

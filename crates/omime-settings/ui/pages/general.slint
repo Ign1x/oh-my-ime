@@ -1,0 +1,62 @@
+import { ComboBox } from "std-widgets.slint";
+import { Backend, Tr } from "../backend.slint";
+import { Card, Divider, PageHeader, RowText, SwitchRow } from "../widgets.slint";
+
+export component GeneralPage inherits VerticalLayout {
+    spacing: 12px;
+    PageHeader {
+        title: Tr.text("General");
+    }
+
+    Card {
+        VerticalLayout {
+            SwitchRow {
+                title: Tr.text("Show in the tray");
+                subtitle: Tr.text("An icon in the status bar shows the input method in use, and its menu switches");
+                checked <=> Backend.tray;
+                toggled(on) => {
+                    Backend.set-tray(on);
+                }
+            }
+
+            Divider { }
+
+            SwitchRow {
+                title: Tr.text("Show the switcher");
+                subtitle: Tr.text("Your input methods appear for a moment when you switch with the hotkeys");
+                checked <=> Backend.switcher;
+                toggled(on) => {
+                    Backend.set-switcher(on);
+                }
+            }
+
+            Divider { }
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                spacing: 16px;
+                RowText {
+                    title: Tr.text("Waiting for an input method");
+                    subtitle: Tr.text("How long a key waits for the input method's answer before it goes to the application as it is");
+                    horizontal-stretch: 1;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    ComboBox {
+                        width: 160px;
+                        model: Backend.timeouts;
+                        current-index: Backend.timeout-index;
+                        accessible-label: Tr.text("Waiting for an input method");
+                        selected => {
+                            Backend.set-timeout(self.current-index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
