@@ -56,7 +56,12 @@ use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::ZwpLinux
 use wl_proxy::protocols::linux_dmabuf_v1::zwp_linux_dmabuf_v1::{
     ZwpLinuxDmabufV1, ZwpLinuxDmabufV1Handler,
 };
-use wl_proxy::protocols::presentation_time::wp_presentation::WpPresentation;
+use wl_proxy::protocols::presentation_time::wp_presentation::{
+    WpPresentation, WpPresentationHandler,
+};
+use wl_proxy::protocols::presentation_time::wp_presentation_feedback::{
+    WpPresentationFeedback, WpPresentationFeedbackHandler,
+};
 use wl_proxy::protocols::single_pixel_buffer_v1::wp_single_pixel_buffer_manager_v1::{
     WpSinglePixelBufferManagerV1, WpSinglePixelBufferManagerV1Handler,
 };
@@ -709,6 +714,41 @@ impl WlRegistryHandler for BridgeRegistry {
             dmabuf.set_handler(BridgeDmabuf);
         } else if let Some(manager) = id.try_downcast::<WpSinglePixelBufferManagerV1>() {
             manager.set_handler(BridgeSinglePixelBuffers);
+        } else if let Some(presentation) = id.try_downcast::<WpPresentation>() {
+            presentation.set_handler(BridgePresentation);
+        }
+    }
+}
+
+/// Engines' `wp_presentation`, whose feedback has to leave out other clients' outputs.
+struct BridgePresentation;
+
+impl WpPresentationHandler for BridgePresentation {
+    fn handle_feedback(
+        &mut self,
+        slf: &Rc<WpPresentation>,
+        surface: &Rc<WlSurface>,
+        callback: &Rc<WpPresentationFeedback>,
+    ) {
+        slf.send_feedback(surface, callback);
+        callback.set_handler(BridgePresentationFeedback);
+    }
+}
+
+/// Presentation feedback for an engine's surface.
+struct BridgePresentationFeedback;
+
+impl WpPresentationFeedbackHandler for BridgePresentationFeedback {
+    /// The compositor names every `wl_output` of the shared connection that shows the
+    /// surface, among them the daemon's own and other engines'. Only the engine's own
+    /// mean anything to it; forwarding the others fails, on every frame.
+    fn handle_sync_output(&mut self, slf: &Rc<WpPresentationFeedback>, output: &Rc<WlOutput>) {
+        let theirs = match (slf.client(), output.client()) {
+            (Some(engine), Some(owner)) => Rc::ptr_eq(&engine, &owner),
+            _ => false,
+        };
+        if theirs {
+            slf.send_sync_output(output);
         }
     }
 }

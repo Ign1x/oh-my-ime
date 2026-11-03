@@ -165,6 +165,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Engines with GTK 4 windows no longer make omimed log a warning on every frame: the
+  compositor's presentation feedback also names the daemon's own outputs, which the
+  bridge now keeps from engines.
 - With Fcitx 5's default settings, the input method chosen in omimed, for example with
   `omime setup --engine fcitx5/pinyin`, is in use in the first text field: chosen
   while no field had focus, it only became Fcitx 5's default, and fields started on
