@@ -525,6 +525,15 @@ fn fcitx5s_input_methods_are_listed_before_it_ever_ran() -> anyhow::Result<()> {
     })?;
     assert!(list.contains("fcitx5/pinyin"), "{list}");
     assert!(!list.contains("keyboard-"), "{list}");
+    // Enabled, it keeps the name from those files, not just its id.
+    env.omime(&["enable", "fcitx5/shuangpin"])?;
+    let list = env.omime(&["list"])?;
+    let line = list
+        .lines()
+        .find(|line| line.contains("fcitx5/shuangpin"))
+        .with_context(|| format!("shuangpin is not enabled: {list}"))?;
+    let name = line.split_whitespace().nth(1).unwrap_or_default();
+    assert_ne!(name, "shuangpin", "{list}");
     assert_eq!(env.count_in_log("engine launched"), 0, "Fcitx 5 ran");
     Ok(())
 }

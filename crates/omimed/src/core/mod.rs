@@ -657,9 +657,14 @@ impl Core {
                 language: text(&method.language),
             };
             match inner {
-                // Named before the framework has listed it, it is still there to choose.
+                // Named before the framework has listed it, it is still there to choose,
+                // under the name the framework's files give it if they have it.
                 Some(inner) => {
-                    let method = slot.methods.iter().find(|m| m.id == inner);
+                    let method = slot
+                        .methods
+                        .iter()
+                        .chain(&slot.available)
+                        .find(|m| m.id == inner);
                     methods.push(inside(method.unwrap_or(&InnerMethod {
                         id: inner.to_owned(),
                         name: inner.to_owned(),

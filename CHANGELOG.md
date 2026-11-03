@@ -136,6 +136,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Input methods of a hosted framework that config.toml names, such as
+  `fcitx5/shuangpin`, have their names (Shuangpin, 双拼) before the framework runs, in
+  `omime list` and the tray, instead of their ids.
 - First keys wait for a hosted framework to finish selecting its input method.
   IBus also waits for panel initialization and input-context focus, preventing
   its default layout or asynchronous startup from passing the first letters through.
