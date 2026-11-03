@@ -853,6 +853,25 @@ impl EngineManager {
         slot.wanted_retried = false;
     }
 
+    /// Asks the framework of `id` again for the input method it was asked for and has
+    /// not reported in use yet, now that it has focused a text field. Fcitx 5 applies a
+    /// selection made while no field has focus only as the default of fields to come,
+    /// and with its default settings (`ActiveByDefault=False`) they start on the
+    /// keyboard layout instead.
+    pub fn reselect_inner(&self, id: &str) {
+        let Some(slot) = self.slots.get(id) else {
+            return;
+        };
+        if let (Some(wanted), Some(commands)) = (&slot.wanted_inner, &slot.framework) {
+            debug!(
+                engine = id,
+                input_method = wanted,
+                "selecting again in the focused field"
+            );
+            let _ = commands.send(FrameworkCommand::Select(wanted.clone()));
+        }
+    }
+
     /// Asks the framework adapter of `id` to look at the current input method again.
     pub fn refresh_inner(&self, id: &str) {
         if let Some(commands) = self.slots.get(id).and_then(|s| s.framework.as_ref()) {
@@ -889,6 +908,12 @@ impl EngineManager {
         slot.framework = None;
         slot.selection = None;
         slot.needs_focus = false;
+        // A framework starts again with its own default: it gets back the input method
+        // that was in use, as when omimed starts.
+        if slot.wanted_inner.is_none() {
+            slot.wanted_inner = slot.inner.clone();
+            slot.wanted_retried = false;
+        }
         slot.properties.clear();
         slot.menu_clicks = None;
         // The status of a hosted engine came from its tray item, which is gone.

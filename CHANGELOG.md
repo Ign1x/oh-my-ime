@@ -146,6 +146,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- With Fcitx 5's default settings, the input method chosen in omimed, for example with
+  `omime setup --engine fcitx5/pinyin`, is in use in the first text field: chosen
+  while no field had focus, it only became Fcitx 5's default, and fields started on
+  Fcitx 5's keyboard layout, so "nihao" stayed "nihao". omimed asks Fcitx 5 again once
+  it focuses a field, gives a Fcitx 5 that starts again the input method that was in
+  use, and keys that wait longer than a second for the switch go to the input method
+  afterwards instead of to the application. The end-to-end tests no longer read the
+  system's `/etc/xdg`, whose Fcitx 5 settings had hidden this.
 - Input methods of a hosted framework that config.toml names, such as
   `fcitx5/shuangpin`, have their names (Shuangpin, 双拼) before the framework runs, in
   `omime list`, the tray and the settings, instead of their ids.

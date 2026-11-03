@@ -427,6 +427,38 @@ fn the_input_methods_inside_fcitx5_are_chosen_directly() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn the_chosen_input_method_is_in_use_with_fcitx5s_defaults() -> anyhow::Result<()> {
+    let Some(engine) = fcitx5() else {
+        eprintln!("fcitx5 is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    // Fcitx 5's own settings: fields start on the keyboard layout (ActiveByDefault is
+    // off), and the input method is chosen before any field has focus.
+    write_profile(&env)?;
+    env.omime(&["switch", "fcitx5/pinyin"])?;
+    env.wait_for_log("selecting in the framework input_method=\"pinyin\"")?;
+    let editor = env.editor(&[])?;
+    env.type_on_seat("seat0", "nihao ")?;
+    editor.wait_for_text("你好")?;
+
+    // Fcitx 5 starts again on the keyboard layout; omimed gives it back pinyin.
+    let pid = env.engine_pid("fcitx5").context("Fcitx 5 was launched")?;
+    rustix::process::kill_process(
+        rustix::process::Pid::from_raw(pid.try_into()?).context("a valid pid")?,
+        rustix::process::Signal::KILL,
+    )?;
+    env.wait_for_log("engine exited unexpectedly")?;
+    wait_until("Fcitx 5 to serve the field again", || {
+        (env.count_in_log("hosted input method grabbed the keyboard") >= 2).then_some(())
+    })?;
+    env.type_on_seat("seat0", "zhongguo ")?;
+    editor.wait_for_text("你好中国")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn input_methods_outside_fcitx5s_group_are_added_when_chosen() -> anyhow::Result<()> {
     let Some(engine) = fcitx5() else {
         eprintln!("fcitx5 is not installed; nothing to test");

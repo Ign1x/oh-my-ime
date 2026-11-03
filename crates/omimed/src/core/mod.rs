@@ -1043,6 +1043,8 @@ impl Core {
                 }
             }
             HostedEvent::Grabbed { engine } => {
+                // The framework has focused the field now.
+                self.engines.reselect_inner(&engine);
                 let waiting: Vec<ContextId> = self
                     .contexts
                     .iter()
@@ -1593,18 +1595,24 @@ impl Core {
                 }
             }
             Request::Key(key, event) => {
-                if !context.framework_ready
-                    || self
-                        .engines
-                        .get(&engine)
-                        .is_some_and(|slot| slot.wanted_inner.is_some())
-                {
+                let selecting = self
+                    .engines
+                    .get(&engine)
+                    .is_some_and(|slot| slot.wanted_inner.is_some());
+                if !context.framework_ready || selecting {
                     if context.hold_key() {
                         context.queue.push_front(Request::Key(key, event));
                         return false;
                     }
-                    out.finish_key(&key, false);
-                    return true;
+                    // Without its input context the framework would lose the key. One
+                    // that is still selecting gets it after the selection, which it was
+                    // sent first: switching can take longer than the wait (Fcitx 5
+                    // loading pinyin on a busy machine), and the key belongs to the
+                    // input method switched to, not to the application.
+                    if !context.framework_ready {
+                        out.finish_key(&key, false);
+                        return true;
+                    }
                 }
                 match out.hosted_key(&engine, &key, &event) {
                     KeyDelivery::Delivered => {

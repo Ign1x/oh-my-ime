@@ -317,6 +317,12 @@ impl TestEnv {
                     "XDG_DATA_DIRS".into(),
                     dir.join("system").display().to_string(),
                 ),
+                // Without the host's /etc/xdg: a system-wide Fcitx 5 configuration
+                // there (NixOS writes one) would change how the hosted Fcitx 5 behaves.
+                (
+                    "XDG_CONFIG_DIRS".into(),
+                    dir.join("system-config").display().to_string(),
+                ),
                 ("OMIME_ENGINE_PATH".into(), engine_dir.display().to_string()),
                 (
                     "DBUS_SESSION_BUS_ADDRESS".into(),
