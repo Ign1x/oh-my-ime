@@ -32,6 +32,9 @@ pub struct Effects {
     pub preedit: Option<String>,
     /// Whether the key was consumed.
     pub handled: bool,
+    /// Whether `commit` is an emoji the user picked, rather than the typed text given
+    /// back.
+    pub picked: bool,
 }
 
 /// What the popup should show.
@@ -94,6 +97,7 @@ impl Composer {
             commit: Some(text),
             preedit: Some(String::new()),
             handled: false,
+            picked: false,
         }
     }
 
@@ -105,6 +109,7 @@ impl Composer {
             commit: Some(glyph.to_owned()),
             preedit: Some(String::new()),
             handled: true,
+            picked: true,
         })
     }
 

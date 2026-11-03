@@ -27,6 +27,13 @@ Everything else you type passes through untouched.
 - **Visibility is the platform's job.** The engine calls `set_popup_visible` instead of
   hiding its window.
 - **Threading.** The engine logic runs on the SDK thread; the UI owns the main thread.
+- **A menu and a floating panel.** Sparkle's menu (in the tray, or `omime properties`
+  and `omime activate recent-panel`) turns on a panel at the bottom right of the screen
+  with the emoji you inserted last; a click inserts one again, and the keyboard stays in
+  the text field. The panel is a helper process, `omime-sparkle --panel`, on the
+  compositor's display (`$OMIME_HOST_WAYLAND_DISPLAY`), drawn on a layer surface by
+  `omime-overlay`; it is there while Sparkle serves a text field. Sparkle keeps the
+  switch and the emoji in `$XDG_STATE_HOME/oh-my-ime/sparkle`.
 
 ## Rendering
 
@@ -34,7 +41,10 @@ Slint renders with OpenGL (femtovg) when it can, using GPU buffers through the b
 and falls back to its software renderer otherwise. To force the software renderer, set
 `SLINT_BACKEND=winit-software` in omimed's environment.
 
-Emoji glyphs use the "Noto Color Emoji" font when it is installed.
+Emoji glyphs use the "Noto Color Emoji" font when it is installed. The panel always
+uses Slint's software renderer, which draws a glyph in one color only, so it draws its
+emoji with swash into images (Noto Color Emoji, Twemoji and a few others are looked
+for).
 
 ## License
 

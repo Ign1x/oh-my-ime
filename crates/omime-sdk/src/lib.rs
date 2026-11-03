@@ -50,6 +50,10 @@ pub use omime_proto::engine::{
     ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Property, PropertyKind, Status,
     modifiers,
 };
+/// The variable with the compositor's display, for windows on the desktop rather than at
+/// the text cursor: floating panels and settings. The engine's own `WAYLAND_DISPLAY` is
+/// omimed's UI bridge.
+pub use omime_proto::names::ENV_HOST_WAYLAND_DISPLAY;
 pub use omime_proto::{ContentHints, ContentPurpose, ContentType};
 
 /// Errors that end an engine.

@@ -5,8 +5,10 @@
 //! [`install`] makes the overlay Slint's platform. The application then creates its
 //! Slint component, shows it (`ComponentHandle::show`) and runs `slint::run_event_loop`.
 //! The component appears on the screen when the application calls [`Overlay::show`]
-//! with the size it needs, and goes away with [`Overlay::hide`]. The surface takes no
-//! input: the pointer reaches what is below it, and the keyboard stays where it is.
+//! with the size it needs, and goes away with [`Overlay::hide`]. The keyboard stays
+//! where it is, with the application the user types in. With [`Pointer::PassThrough`]
+//! (the switcher) the pointer reaches what is below the surface; with [`Pointer::Take`]
+//! (a floating panel) the component gets it: hovering, clicks and scrolling.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,13 +17,21 @@ use std::sync::Mutex;
 use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType, TargetPixel,
 };
-use slint::platform::{EventLoopProxy, PlatformError, WindowAdapter, WindowEvent};
-use slint::{EventLoopError, PhysicalSize};
+use slint::platform::{
+    EventLoopProxy, PlatformError, PointerEventButton, WindowAdapter, WindowEvent,
+};
+use slint::{EventLoopError, LogicalPosition, PhysicalSize};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, channel};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::reexports::protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+    Shape, WpCursorShapeDeviceV1,
+};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
+use smithay_client_toolkit::seat::pointer::cursor_shape::CursorShapeManager;
+use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
+use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
@@ -30,13 +40,13 @@ use smithay_client_toolkit::shell::wlr_layer::{
 use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
-    registry_handlers,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm, registry_handlers,
 };
 use tracing::{debug, warn};
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_output, wl_shm, wl_surface};
-use wayland_client::{Connection, QueueHandle};
+use wayland_client::protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
+use wayland_client::{Connection, Proxy as _, QueueHandle};
 
 /// Where the overlay is on the output the compositor puts it on.
 ///
@@ -50,6 +60,16 @@ pub struct Placement {
     pub right: Option<i32>,
     /// Above fullscreen windows (the overlay layer), rather than below them.
     pub above_fullscreen: bool,
+}
+
+/// What the overlay does with the pointer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Pointer {
+    /// Clicks go through to what is below, as for a notice.
+    #[default]
+    PassThrough,
+    /// The component gets the pointer, as a panel with buttons needs.
+    Take,
 }
 
 /// Error setting up the overlay.
@@ -88,8 +108,9 @@ impl Overlay {
 
 /// Connects to the compositor in `$WAYLAND_DISPLAY` and makes the overlay Slint's
 /// platform, with layer surfaces in the namespace `namespace` (for compositor rules)
-/// placed by `placement`. Call it before creating any Slint component.
-pub fn install(namespace: &str, placement: Placement) -> Result<Overlay, Error> {
+/// placed by `placement`, doing with the pointer what `pointer` says. Call it before
+/// creating any Slint component.
+pub fn install(namespace: &str, placement: Placement, pointer: Pointer) -> Result<Overlay, Error> {
     let conn = Connection::connect_to_env()?;
     let (globals, queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
@@ -98,6 +119,11 @@ pub fn install(namespace: &str, placement: Placement) -> Result<Overlay, Error> 
     let layer_shell =
         LayerShell::bind(&globals, &qh).map_err(|_| Error::Missing("zwlr_layer_shell_v1"))?;
     let shm = Shm::bind(&globals, &qh).map_err(|_| Error::Missing("wl_shm"))?;
+    // The pointer's shape over the overlay, where the compositor lets clients choose it
+    // by name; elsewhere the compositor's cursor stays as it was.
+    let cursor_shapes = (pointer == Pointer::Take)
+        .then(|| CursorShapeManager::bind(&globals, &qh).ok())
+        .flatten();
     let pool = SlotPool::new(256 * 64 * 4, &shm).map_err(|e| Error::EventLoop(e.to_string()))?;
 
     let event_loop: EventLoop<'static, State> =
@@ -118,6 +144,10 @@ pub fn install(namespace: &str, placement: Placement) -> Result<Overlay, Error> 
     let wanted = Rc::new(Cell::new(None));
     let state = State {
         registry: RegistryState::new(&globals),
+        seats: SeatState::new(&globals, &qh),
+        pointers: Vec::new(),
+        pointer,
+        cursor_shapes,
         outputs: OutputState::new(&globals, &qh),
         compositor,
         layer_shell,
@@ -255,6 +285,12 @@ impl TargetPixel for Bgra {
 
 struct State {
     registry: RegistryState,
+    seats: SeatState,
+    /// The pointers of the seats, with their cursor-shape devices, while the component
+    /// takes the pointer.
+    pointers: Vec<(wl_pointer::WlPointer, Option<WpCursorShapeDeviceV1>)>,
+    pointer: Pointer,
+    cursor_shapes: Option<CursorShapeManager>,
     outputs: OutputState,
     compositor: CompositorState,
     layer_shell: LayerShell,
@@ -339,12 +375,14 @@ impl State {
         );
         layer.set_size(width, height);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        // Clicks go through.
-        match Region::new(&self.compositor) {
-            Ok(region) => layer
-                .wl_surface()
-                .set_input_region(Some(region.wl_region())),
-            Err(e) => warn!("the overlay takes clicks: {e}"),
+        if self.pointer == Pointer::PassThrough {
+            // An empty input region: clicks go through.
+            match Region::new(&self.compositor) {
+                Ok(region) => layer
+                    .wl_surface()
+                    .set_input_region(Some(region.wl_region())),
+                Err(e) => warn!("the overlay takes clicks: {e}"),
+            }
         }
         // The first commit has no buffer; the compositor answers with a configure.
         layer.commit();
@@ -515,15 +553,152 @@ impl ShmHandler for State {
     }
 }
 
+impl SeatHandler for State {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seats
+    }
+
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+
+    fn new_capability(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability != Capability::Pointer || self.pointer != Pointer::Take {
+            return;
+        }
+        match self.seats.get_pointer(qh, &seat) {
+            Ok(pointer) => {
+                let shape = self
+                    .cursor_shapes
+                    .as_ref()
+                    .map(|shapes| shapes.get_shape_device(&pointer, qh));
+                self.pointers.push((pointer, shape));
+            }
+            Err(e) => warn!("the overlay cannot follow a pointer: {e}"),
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability != Capability::Pointer {
+            return;
+        }
+        self.pointers.retain(|(pointer, shape)| {
+            let ours = pointer
+                .data::<smithay_client_toolkit::seat::pointer::PointerData>()
+                .is_some_and(|data| data.seat() == &seat);
+            if ours {
+                if let Some(shape) = shape {
+                    shape.destroy();
+                }
+                pointer.release();
+            }
+            !ours
+        });
+    }
+
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+impl PointerHandler for State {
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        let ours = |surface: &wl_surface::WlSurface| {
+            self.layer
+                .as_ref()
+                .is_some_and(|layer| layer.wl_surface() == surface)
+        };
+        for event in events {
+            if !ours(&event.surface) {
+                continue;
+            }
+            // Logical pixels, as Slint takes them.
+            let position = LogicalPosition::new(event.position.0 as f32, event.position.1 as f32);
+            let window = self.window.window();
+            match event.kind {
+                PointerEventKind::Enter { serial } => {
+                    if let Some((_, Some(shape))) = self.pointers.iter().find(|(p, _)| p == pointer)
+                    {
+                        shape.set_shape(serial, Shape::Default);
+                    }
+                    window.dispatch_event(WindowEvent::PointerMoved { position });
+                }
+                PointerEventKind::Leave { .. } => window.dispatch_event(WindowEvent::PointerExited),
+                PointerEventKind::Motion { .. } => {
+                    window.dispatch_event(WindowEvent::PointerMoved { position });
+                }
+                PointerEventKind::Press { button, .. } => {
+                    window.dispatch_event(WindowEvent::PointerPressed {
+                        position,
+                        button: button_of(button),
+                    });
+                }
+                PointerEventKind::Release { button, .. } => {
+                    window.dispatch_event(WindowEvent::PointerReleased {
+                        position,
+                        button: button_of(button),
+                    });
+                }
+                PointerEventKind::Axis {
+                    horizontal,
+                    vertical,
+                    ..
+                } => {
+                    // Slint scrolls content the other way round from Wayland's axes.
+                    window.dispatch_event(WindowEvent::PointerScrolled {
+                        position,
+                        delta_x: -horizontal.absolute as f32,
+                        delta_y: -vertical.absolute as f32,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Slint's name for a Linux input event code of a pointer button.
+fn button_of(code: u32) -> PointerEventButton {
+    // linux/input-event-codes.h
+    const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
+    const BTN_MIDDLE: u32 = 0x112;
+    const BTN_SIDE: u32 = 0x113;
+    const BTN_EXTRA: u32 = 0x114;
+    match code {
+        BTN_LEFT => PointerEventButton::Left,
+        BTN_RIGHT => PointerEventButton::Right,
+        BTN_MIDDLE => PointerEventButton::Middle,
+        BTN_SIDE => PointerEventButton::Back,
+        BTN_EXTRA => PointerEventButton::Forward,
+        _ => PointerEventButton::Other,
+    }
+}
+
 impl ProvidesRegistryState for State {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry
     }
 
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
 
 delegate_compositor!(State);
+delegate_seat!(State);
+delegate_pointer!(State);
 delegate_output!(State);
 delegate_shm!(State);
 delegate_layer!(State);

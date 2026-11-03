@@ -382,7 +382,10 @@ the reasons "hotkey" and "command"; switches from the tray ("menu"), from engine
 It draws with Slint through `omime-overlay`, a small library that makes a layer surface
 (`zwlr_layer_shell_v1`, smithay-client-toolkit) Slint's platform: Slint's software
 renderer draws into shared memory, the surface takes no input, and the application
-shows and hides it with the size it needs. Engines' floating panels are to use it too.
+shows and hides it with the size it needs. Engines' floating panels use it too, taking
+the pointer (`Pointer::Take`): Sparkle's recent-emoji panel, a process of its own on the
+compositor's display, which draws color emoji as images (the software renderer draws a
+glyph in one color only).
 Slint stays out of omimed, the command line tool, the protocol crate and the SDK.
 
 ## Settings

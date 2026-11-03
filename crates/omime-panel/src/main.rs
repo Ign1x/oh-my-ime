@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
-use omime_overlay::{Overlay, Placement};
+use omime_overlay::{Overlay, Placement, Pointer};
 use slint::{ComponentHandle as _, ModelRc, VecModel};
 use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -147,6 +147,8 @@ fn run() -> anyhow::Result<()> {
             above_fullscreen: true,
             ..Placement::default()
         },
+        // The switcher is a notice: clicks go to what is below it.
+        Pointer::PassThrough,
     )?;
     let ui = Switcher::new()?;
     ui.show()?;

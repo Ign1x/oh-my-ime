@@ -126,6 +126,16 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 
 [Sparkle](../../engines/sparkle) 引擎用 Slint 展示了以上全部内容。
 
+## 浮动面板
+
+在用户打字时一直留在桌面上的窗口，比如状态条、软键盘或调色板，不是弹窗：它属于 `$OMIME_HOST_WAYLAND_DISPLAY`（`omime_sdk::ENV_HOST_WAYLAND_DISPLAY`）中的合成器，是一个不接收键盘（`keyboard_interactivity` 为 none）的图层表面（`zwlr_layer_shell_v1`），这样键盘焦点留在文本框里。一个进程通常无法用同一个工具包连接两个 display，所以为面板启动一个辅助进程，把它的 `WAYLAND_DISPLAY` 设为那个 display，再通过管道与它通信；上屏仍由引擎来做，用 `Host::commit` 提交到它服务的文本框。
+
+- 用 Slint 时，`omime-overlay` 把图层表面作为 Slint 的平台：调用 `omime_overlay::install(namespace, placement, Pointer::Take)`，然后显示组件，再调用 `Overlay::show(width, height)` 和 `Overlay::hide()`。它用 Slint 的软件渲染器绘制，而软件渲染器只用一种颜色绘制文字字形：彩色 emoji 要作为图片绘制。
+- 其他工具包也可以：gtk4-layer-shell、layer-shell-qt。
+- 只在引擎服务某个文本框时（`activate` 与 `deactivate` 之间）显示面板，并给图层表面一个你自己的命名空间，方便合成器规则使用。
+
+Sparkle 的最近使用表情面板（在它的菜单里打开）完整演示了以上做法，见 [`engines/sparkle/src/panel.rs`](../../engines/sparkle/src/panel.rs)。
+
 ## 多个输入法
 
 引擎可以拥有自己的多个输入法，就像 Rime 引擎有多个方案。在 `registered` 中公布它们以及正在使用的那个：它先于其它任何调用运行，因此公布的内容是最新的。之后用户就能以 `engine/id` 选择它们（`omime switch my-engine/fast`、托盘菜单、`Ctrl+Shift+Space`、config.toml 的 `engines`），omimed 会请求你的引擎切换：

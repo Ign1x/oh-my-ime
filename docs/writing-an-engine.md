@@ -168,6 +168,29 @@ text cursor whenever your engine is the active one.
 
 The [Sparkle](../engines/sparkle) engine shows all of this with Slint.
 
+## Floating panels
+
+A window that stays on the desktop while the user types, such as a status bar, a soft
+keyboard or a palette, is no popup: it belongs to the compositor in
+`$OMIME_HOST_WAYLAND_DISPLAY` (`omime_sdk::ENV_HOST_WAYLAND_DISPLAY`), where it is a
+layer surface (`zwlr_layer_shell_v1`) that does not take the keyboard
+(`keyboard_interactivity` none), so the text field keeps it. One process usually cannot
+be on two displays with one toolkit, so start a helper process for the panel with
+`WAYLAND_DISPLAY` set to that display, and talk to it over a pipe; the engine stays the
+one that commits text, with `Host::commit` for the field it serves.
+
+- With Slint, `omime-overlay` makes a layer surface Slint's platform:
+  `omime_overlay::install(namespace, placement, Pointer::Take)`, then show the component
+  and call `Overlay::show(width, height)` and `Overlay::hide()`. It draws with Slint's
+  software renderer, which draws text glyphs in one color: draw color emoji as images.
+- Any other toolkit works too: gtk4-layer-shell, layer-shell-qt.
+- Show the panel only while your engine serves a field (between `activate` and
+  `deactivate`), and give the layer surface a namespace of your own, for compositor
+  rules.
+
+Sparkle's recent-emoji panel, which its menu turns on, does all of this: see
+[`engines/sparkle/src/panel.rs`](../engines/sparkle/src/panel.rs).
+
 ## More than one input method
 
 An engine can have input methods of its own, as a Rime engine has schemas. Announce

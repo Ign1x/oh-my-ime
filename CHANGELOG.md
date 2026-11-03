@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format follows
   the control API: it follows omimed as it stops and starts, and omimed writes
   config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
   end of the tray menu and the desktop entry "oh-my-ime Settings".
+- Engines' floating panels: windows on the desktop rather than at the text cursor, such
+  as a status bar or a palette. `omime-overlay` gives Slint components a layer surface
+  that takes the pointer but not the keyboard (`Pointer::Take`), the SDK names the
+  compositor's display (`ENV_HOST_WAYLAND_DISPLAY`), and the engine guide says how. As
+  an example, Sparkle's menu turns on a panel with the emoji inserted last at the bottom
+  right of the screen, which a click inserts again; Sparkle keeps the emoji and the
+  switch in `$XDG_STATE_HOME/oh-my-ime/sparkle`.
 - Desktop notifications about trouble that used to be only in omimed's log: an engine
   that stopped (it kept crashing, did not start in time, could not be launched or broke
   the connection to the compositor), another input method holding a seat, such as a

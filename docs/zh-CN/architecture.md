@@ -116,7 +116,7 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 
 用户用 omimed 的热键或控制 API 的 `Switch`、`Next`、`Toggle` 切换时，`omime-panel` 会短暂显示输入法，并高亮刚切换到的那个。它是合成器的普通客户端：omimed 在 `[panel] enabled` 时启动它，它退出时重新启动，并在 omimed 退出时一起停止。它通过控制 API 的 `Switched(input_method, reason)` 得知切换，只在原因为 "hotkey" 和 "command" 时显示；来自托盘（"menu"）、来自引擎（"engine"）以及随焦点在应用之间切换的，都不显示。
 
-它通过 `omime-overlay` 用 Slint 绘制。`omime-overlay` 是一个小库，把图层表面（`zwlr_layer_shell_v1`，smithay-client-toolkit）作为 Slint 的平台：Slint 的软件渲染器绘制到共享内存中，表面不接收输入，由应用以所需的尺寸显示或隐藏它。引擎的浮动面板之后也会用它。omimed、命令行工具、协议 crate 和 SDK 都不依赖 Slint。
+它通过 `omime-overlay` 用 Slint 绘制。`omime-overlay` 是一个小库，把图层表面（`zwlr_layer_shell_v1`，smithay-client-toolkit）作为 Slint 的平台：Slint 的软件渲染器绘制到共享内存中，表面不接收输入，由应用以所需的尺寸显示或隐藏它。引擎的浮动面板也用它，并接收指针（`Pointer::Take`）：例如 Sparkle 的最近使用表情面板，它是连接合成器 display 的独立进程，把彩色 emoji 作为图片绘制（软件渲染器只用一种颜色绘制字形）。omimed、命令行工具、协议 crate 和 SDK 都不依赖 Slint。
 
 ## 设置程序
 

@@ -3044,8 +3044,11 @@ name = "omime-sparkle"
 version = "0.3.0"
 dependencies = [
  "emojis",
+ "fontique",
+ "omime-overlay",
  "omime-sdk",
  "slint",
+ "swash",
 ]
 
 [[package]]

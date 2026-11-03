@@ -7,15 +7,21 @@
 //!
 //! The engine logic runs on the SDK's thread; the UI owns the main thread. The window is
 //! an ordinary frameless Slint window: oh-my-ime's UI bridge turns it into a popup.
+//!
+//! Sparkle's menu can turn on a floating panel with the emoji inserted last (see
+//! [`panel`]), an example of a window of an engine on the desktop rather than at the
+//! text cursor.
 
 mod compose;
+mod emoji;
+mod panel;
 mod search;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use compose::{Composer, Effects, PAGE, View};
-use omime_sdk::{Context, ContextId, Engine, Host, KeyEvent, Preedit};
+use omime_sdk::{Context, ContextId, Engine, Host, KeyEvent, Preedit, Property, PropertyKind};
 use search::Index;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -154,6 +160,24 @@ struct Shared {
     ctx: Option<ContextId>,
     /// Whether we asked the platform to show the window.
     shown: bool,
+    /// What Sparkle keeps across restarts: the panel's switch and the recent emoji.
+    saved: panel::Saved,
+    /// The recent-emoji panel, while it is on.
+    panel: Option<panel::Panel>,
+    /// Whether the panel was told to show itself.
+    panel_shown: bool,
+}
+
+/// The id of the menu entry that turns the panel on and off.
+const PANEL_PROPERTY: &str = "recent-panel";
+
+/// Puts `glyph` first among the recent emoji, and on the panel.
+fn remember(shared: &mut Shared, glyph: &str) {
+    shared.saved.remember(glyph);
+    shared.saved.save();
+    if let Some(panel) = &mut shared.panel {
+        panel.set_recent(&shared.saved.recent);
+    }
 }
 
 struct Sparkle {
@@ -178,6 +202,14 @@ fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
     if view.visible != shared.shown {
         shared.shown = view.visible;
         host.set_popup_visible(view.visible);
+    }
+    // The panel is there while Sparkle serves a text field.
+    let panel_wanted = shared.ctx.is_some();
+    if let Some(panel) = &mut shared.panel
+        && panel_wanted != shared.panel_shown
+    {
+        panel.show(panel_wanted);
+        shared.panel_shown = panel_wanted;
     }
     let cards: Vec<(String, String)> = view
         .candidates
@@ -207,6 +239,58 @@ fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
 }
 
 impl Sparkle {
+    /// The menu: the panel's switch, which needs a desktop to show the panel on.
+    fn properties(&self, on: bool) -> Vec<Property> {
+        let chinese = ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .find(|value| !value.is_empty())
+            .is_some_and(|locale| locale.starts_with("zh"));
+        vec![Property {
+            id: PANEL_PROPERTY.to_owned(),
+            kind: PropertyKind::Toggle,
+            label: if chinese {
+                "最近使用的表情面板"
+            } else {
+                "Recent emoji panel"
+            }
+            .to_owned(),
+            icon: Some("face-smile".to_owned()),
+            checked: on,
+            enabled: host_display().is_some(),
+            ..Property::default()
+        }]
+    }
+
+    /// Starts the panel, which inserts what is clicked into the field Sparkle serves.
+    fn start_panel(&self, host: &Host, shared: &mut Shared) {
+        let Some(display) = host_display() else {
+            return;
+        };
+        let picks = self.shared.clone();
+        let host = host.clone();
+        let ui = self.ui.clone();
+        let started = panel::Panel::start(&display, move |glyph| {
+            let mut shared = lock(&picks);
+            let Some(ctx) = shared.ctx else { return };
+            // A query in progress gives way: the commit replaces its preedit.
+            if let Some(composition) = shared.contexts.get_mut(&ctx) {
+                composition.composer.reset();
+            }
+            host.commit(ctx, glyph.clone());
+            remember(&mut shared, &glyph);
+            refresh(&mut shared, &host, &ui);
+        });
+        match started {
+            Ok(mut panel) => {
+                panel.set_recent(&shared.saved.recent);
+                shared.panel_shown = false;
+                shared.panel = Some(panel);
+            }
+            Err(e) => eprintln!("omime-sparkle: cannot start the panel: {e}"),
+        }
+    }
+
     fn apply(ctx: &mut Context<'_>, effects: Effects) -> bool {
         if let Some(text) = effects.commit {
             ctx.commit(text);
@@ -221,6 +305,32 @@ impl Sparkle {
 }
 
 impl Engine for Sparkle {
+    fn registered(&mut self, host: &Host) {
+        let mut shared = lock(&self.shared);
+        let on = shared.saved.panel;
+        host.set_properties(&self.properties(on));
+        if on {
+            self.start_panel(host, &mut shared);
+            refresh(&mut shared, host, &self.ui);
+        }
+    }
+
+    fn activate_property(&mut self, host: &Host, id: &str) {
+        if id != PANEL_PROPERTY {
+            return;
+        }
+        let mut shared = lock(&self.shared);
+        shared.saved.panel = !shared.saved.panel;
+        shared.saved.save();
+        if shared.saved.panel {
+            self.start_panel(host, &mut shared);
+        } else {
+            shared.panel = None;
+        }
+        host.set_properties(&self.properties(shared.saved.panel));
+        refresh(&mut shared, host, &self.ui);
+    }
+
     fn activate(&mut self, ctx: &mut Context<'_>) {
         let mut shared = lock(&self.shared);
         shared.ctx = Some(ctx.id());
@@ -270,13 +380,34 @@ impl Engine for Sparkle {
         let composition = shared.contexts.entry(ctx.id()).or_default();
         composition.cursor = ctx.info().cursor_rect;
         let effects = composition.composer.key(&self.index, key);
+        let picked = effects.picked.then(|| effects.commit.clone()).flatten();
         let handled = Self::apply(ctx, effects);
+        if let Some(glyph) = picked {
+            remember(&mut shared, &glyph);
+        }
         refresh(&mut shared, ctx.host(), &self.ui);
         handled
     }
 }
 
+/// The compositor's display, where the panel goes; Sparkle's own `WAYLAND_DISPLAY` is
+/// omimed's UI bridge.
+fn host_display() -> Option<String> {
+    std::env::var(omime_sdk::ENV_HOST_WAYLAND_DISPLAY)
+        .ok()
+        .filter(|d| !d.is_empty())
+}
+
 fn main() -> std::process::ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--panel") {
+        return match panel::run() {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("omime-sparkle --panel: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
@@ -288,7 +419,10 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ui = Popup::new()?;
-    let shared = Arc::new(Mutex::new(Shared::default()));
+    let shared = Arc::new(Mutex::new(Shared {
+        saved: panel::Saved::load(),
+        ..Shared::default()
+    }));
     let engine = Sparkle {
         shared: shared.clone(),
         index: Arc::new(Index::new()),
@@ -310,7 +444,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             && let Some(text) = effects.commit
         {
             // A commit replaces the preedit, so the `:query` disappears with it.
-            click_host.commit(ctx, text);
+            click_host.commit(ctx, text.clone());
+            remember(&mut shared, &text);
         }
         refresh(&mut shared, &click_host, &weak);
     });

@@ -10,6 +10,11 @@ repository.workspace = true
 
 [dependencies]
 omime-sdk.workspace = true
+# The recent-emoji panel on a layer surface of the compositor, and its color emoji,
+# which Slint's software renderer cannot draw: the versions Slint uses.
+omime-overlay.workspace = true
+fontique = "0.8"
+swash = { version = "0.2", default-features = false, features = ["std", "scale", "render"] }
 emojis = "0.9"
 # Slint is used under its royalty-free license (see the README for the attribution).
 # The software renderer works everywhere; femtovg uses the GPU when available.
