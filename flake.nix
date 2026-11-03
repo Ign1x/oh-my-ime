@@ -21,6 +21,7 @@
             fontconfig
             freetype
             libxkbcommon
+            librime
             wayland
           ];
           # Libraries that toolkits (winit/Slint, Mesa) dlopen at runtime.
@@ -69,6 +70,8 @@
             ++ extraPackages;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+          # The Rime engine's schemas and dictionaries.
+          OMIME_RIME_SHARED_DATA = "${pkgs.rime-data}/share/rime-data";
           GI_TYPELIB_PATH = giTypelibs;
 
           shellHook = ''
@@ -82,6 +85,8 @@
       packages = forAllSystems (pkgs: rec {
         oh-my-ime = pkgs.callPackage ./nix/package.nix { };
         default = oh-my-ime;
+        # The Rime engine, with librime and Rime's data: `nix profile install .#rime`.
+        rime = pkgs.callPackage ./nix/rime.nix { };
       });
 
       overlays.default = final: _prev: {
@@ -90,6 +95,7 @@
 
       checks = forAllSystems (pkgs: {
         package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        rime = self.packages.${pkgs.stdenv.hostPlatform.system}.rime;
       });
 
       devShells = forAllSystems (pkgs: {

@@ -28,6 +28,7 @@ let
     "omime-echo"
     "omime-sparkle"
   ];
+  # nix/rime.nix builds the Rime engine, with librime, apart.
   # Libraries Sparkle's and the settings' toolkit (winit, glutin, fontique) opens at
   # runtime; the switcher needs the Wayland and font ones.
   sparkleRuntimeLibs = [

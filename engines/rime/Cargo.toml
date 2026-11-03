@@ -1,0 +1,25 @@
+[package]
+name = "omime-rime"
+description = "oh-my-ime's Rime engine: Xiaohe shuangpin, pinyin and Rime's other schemas, with candidates in a window of its own"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+omime-sdk.workspace = true
+# Slint is used under its royalty-free license, as in Sparkle. The software renderer
+# works everywhere; femtovg uses the GPU when available.
+slint = { version = "1.16", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "backend-winit-wayland",
+  "renderer-femtovg",
+  "renderer-software",
+] }
+# librime itself (BSD-3-Clause) is linked as a system library; see src/rime.
+
+[lints]
+workspace = true

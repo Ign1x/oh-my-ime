@@ -6,8 +6,10 @@
 #   OMIME_INSTALL_BIN_DIR=/path/to/prebuilt/bin scripts/install.sh
 #
 # Installs omimed, omime, omime-panel, omime-settings (with its desktop entry) and omime-ibus,
-# the bundled engines (echo, sparkle) and their manifests, and the manifests of Fcitx 5 and
-# IBus, which omimed offers where they are installed.
+# the bundled engines (echo, sparkle, and rime where librime is installed) and their
+# manifests, and the manifests of Fcitx 5 and IBus, which omimed offers where they are
+# installed. The Rime engine needs librime's development files (pkg-config `rime`) to
+# build, and Rime's data (rime-data, in /usr/share/rime-data) to work.
 set -eu
 
 PREFIX=${PREFIX:-"$HOME/.local"}
@@ -29,7 +31,12 @@ cd "$(dirname "$0")/.."
 if [ -n "${OMIME_INSTALL_BIN_DIR:-}" ]; then
   BUILD_BIN=$OMIME_INSTALL_BIN_DIR
 else
-  cargo build --release --locked --workspace --bins
+  if pkg-config --exists rime 2>/dev/null; then
+    cargo build --release --locked --workspace --bins
+  else
+    echo "librime is not installed: building without the Rime engine." >&2
+    cargo build --release --locked --workspace --bins --exclude omime-rime
+  fi
   BUILD_BIN="${CARGO_TARGET_DIR:-target}/release"
 fi
 
@@ -57,6 +64,10 @@ for engine in echo sparkle; do
   install -Dm755 "$BUILD_BIN/omime-$engine" "$BIN/omime-$engine"
   install_manifest "engines/$engine/engine.toml" "$engine" "omime-$engine"
 done
+if [ -x "$BUILD_BIN/omime-rime" ]; then
+  install -Dm755 "$BUILD_BIN/omime-rime" "$BIN/omime-rime"
+  install_manifest engines/rime/engine.toml rime omime-rime
+fi
 install -Dm644 data/engines/fcitx5/engine.toml "$ENGINES/fcitx5/engine.toml"
 install_manifest data/engines/ibus/engine.toml ibus omime-ibus
 

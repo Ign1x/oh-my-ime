@@ -1,0 +1,11 @@
+[engine]
+id = "rime"
+name = "Rime"
+description = "Xiaohe shuangpin, pinyin and Rime's other schemas, with candidates in a window of its own."
+languages = ["zh"]
+exec = ["omime-rime"]
+api = "1.0"
+
+[engine.i18n.zh-CN]
+name = "中州韵"
+description = "小鹤双拼、拼音以及 Rime 的其他方案，候选词显示在自己的窗口中。"

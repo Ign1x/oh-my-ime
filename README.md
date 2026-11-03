@@ -126,6 +126,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Password and PIN fields reported by Wayland/Fcitx5 bypass engines | ✅; XIM does not report field purpose |
 | UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
+| [Rime](engines/rime) engine: Xiaohe shuangpin and Rime's other schemas, its own candidate window | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
 | Tray item: the input method in use and a menu to switch | ✅ |
@@ -224,8 +225,8 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
    (not released yet)
 6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
-7. **Phase 5** — native Rime engine, more compositors, C ABI SDK (the tray item and the
-   settings are done)
+7. **Phase 5** — more compositors, C ABI SDK (the tray item, the settings and the native
+   Rime engine are done)
 
 ## FAQ
 

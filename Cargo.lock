@@ -3013,6 +3013,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "omime-rime"
+version = "0.3.0"
+dependencies = [
+ "omime-sdk",
+ "slint",
+]
+
+[[package]]
 name = "omime-sdk"
 version = "0.3.0"
 dependencies = [

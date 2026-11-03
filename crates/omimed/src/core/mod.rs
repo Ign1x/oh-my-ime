@@ -659,7 +659,13 @@ impl Core {
         {
             let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
             status.tooltip = Some(method.name.clone());
-            status.label = text(&method.label).or(status.label);
+            // The engine's own label says more (Rime's A for English letters), except
+            // while a switch is on its way and it still has the old input method's.
+            status.label = if slot.wanted_inner.is_some() {
+                text(&method.label).or(status.label)
+            } else {
+                status.label.or_else(|| text(&method.label))
+            };
             status.icon = status.icon.or_else(|| text(&method.icon));
         }
         Some(status)

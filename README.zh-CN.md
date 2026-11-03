@@ -128,6 +128,7 @@ flowchart LR
 | Wayland/Fcitx5 明确标记的密码与 PIN 输入框绕过引擎 | ✅；XIM 不提供字段用途 |
 | UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
+| [Rime](engines/rime) 引擎：小鹤双拼及 Rime 的其他方案，自己的候选窗 | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
 | 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
@@ -213,7 +214,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
 6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
-7. **阶段 5**：原生 Rime 引擎、更多合成器、C ABI SDK（托盘项与设置程序已完成）
+7. **阶段 5**：更多合成器、C ABI SDK（托盘项、设置程序与原生 Rime 引擎已完成）
 
 ## 常见问题
 

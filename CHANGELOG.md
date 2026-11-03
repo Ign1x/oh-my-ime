@@ -19,6 +19,17 @@ All notable changes to this project are documented here. The format follows
   the control API: it follows omimed as it stops and starts, and omimed writes
   config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
   end of the tray menu and the desktop entry "oh-my-ime Settings".
+- A Rime engine, `omime-rime` (`engines/rime`): Rime's schemas are its input methods,
+  Xiaohe shuangpin (`rime/double_pinyin_flypy`) first and then pinyin, with simplified
+  characters and Shift switching between Chinese and English letters, which it sets up
+  the first time in `~/.local/share/oh-my-ime/rime`. Its candidate window follows the
+  text cursor, light or dark, takes clicks and turns pages with arrows and the wheel,
+  and shows the preedit where the application does not. Each text field has a
+  composition of its own. Its menu switches English letters, full width, simplified
+  characters and English punctuation, and deploys again. While Rime deploys, keys go
+  to applications as they are. It binds librime's C API by hand; the Nix package is
+  `.#rime`, with librime and nixpkgs' rime-data, and `scripts/install.sh` builds it
+  where librime is installed.
 - An example engine in Python, `examples/python-gtk4`: it speaks the engine protocol
   with PyGObject's D-Bus, without the SDK, and draws a GTK 4 window, which becomes the
   popup at the text cursor like any engine's. An end-to-end test types, clicks and looks
