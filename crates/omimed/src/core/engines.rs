@@ -36,6 +36,7 @@ use zbus::{OwnedVariant, Variant};
 use super::CoreEvent;
 use super::frameworks::{self, FrameworkCommand, FrameworkUpdate, InnerMethod};
 use super::sni_watcher::{self, HostedMenu, HostedTray};
+use crate::notify::EngineFailure;
 use crate::runtime_dir;
 
 /// How long an engine may take to start and register.
@@ -447,8 +448,9 @@ impl EngineManager {
             .min()
     }
 
-    /// Handles startup timeouts and due restarts. Returns engines that failed to start.
-    pub fn on_timer(&mut self, now: Instant) -> Vec<String> {
+    /// Handles startup timeouts and due restarts. Returns engines that failed to start,
+    /// and why.
+    pub fn on_timer(&mut self, now: Instant) -> Vec<(String, EngineFailure)> {
         let mut failed = Vec::new();
         let due: Vec<String> = self
             .slots
@@ -471,13 +473,13 @@ impl EngineManager {
                         let _ = kill.send(Stop::Politely);
                     }
                     slot.state = EngineState::Failed;
-                    failed.push(id);
+                    failed.push((id, EngineFailure::NoStart));
                 }
                 EngineState::Restarting { .. } => {
                     slot.state = EngineState::Stopped;
                     if let Err(e) = self.start(&id) {
                         warn!(engine = id, "restart failed: {e:#}");
-                        failed.push(id);
+                        failed.push((id, EngineFailure::Launch(format!("{e:#}"))));
                     }
                 }
                 _ => {}

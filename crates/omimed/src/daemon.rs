@@ -24,6 +24,7 @@ use crate::core::engines::UiConnection;
 use crate::core::{Core, CoreEvent};
 use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyDelivery, KeyRef, Origin};
+use crate::notify::{Notifier, Subject, Trouble};
 use crate::placement::{self, Rect};
 use crate::state::State;
 use crate::tray::{self, TrayInfo, TrayService};
@@ -88,13 +89,17 @@ fn read_config() -> Result<Config, String> {
     Ok(config)
 }
 
-/// The configuration to start with: the defaults when config.toml is broken.
-fn load_config() -> Config {
-    read_config().unwrap_or_else(|e| {
-        warn!("{e}");
-        warn!("using the default configuration");
-        Config::default()
-    })
+/// The configuration to start with: the defaults when config.toml is broken, and then
+/// what is wrong with it.
+fn load_config() -> (Config, Option<String>) {
+    match read_config() {
+        Ok(config) => (config, None),
+        Err(e) => {
+            warn!("{e}");
+            warn!("using the default configuration");
+            (Config::default(), Some(e))
+        }
+    }
 }
 
 fn discover_engines() -> Vec<omime_proto::manifest::InstalledEngine> {
@@ -153,6 +158,8 @@ struct Daemon {
     tray: SharedTray,
     /// The switcher, unless it is turned off.
     panel: Option<crate::panel::Panel>,
+    /// Tells the user about trouble.
+    notifier: Rc<Notifier>,
     context_ids: ContextIds,
     /// Applications using the Fcitx5 module; they outlive compositor connections.
     fcitx: FcitxFrontend,
@@ -197,7 +204,7 @@ impl Daemon {
             (None, None)
         };
 
-        let config = load_config();
+        let (config, config_error) = load_config();
         let tray = SharedTray::default();
         if config.tray.enabled && control.is_some() {
             *tray.borrow_mut() = start_tray(&control_tx).await;
@@ -221,6 +228,13 @@ impl Daemon {
             .enabled
             .then(|| crate::panel::start(host_display.clone()))
             .flatten();
+        let notifier = Rc::new(Notifier::start(
+            config.notifications.enabled,
+            host_display.clone(),
+        ));
+        if let Some(error) = config_error {
+            notifier.tell(Trouble::Config { error, kept: false });
+        }
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
         let loaded = State::load();
         let has_saved_choice = loaded.is_some();
@@ -250,6 +264,8 @@ impl Daemon {
                 tray.changed();
             }
         });
+        let told = notifier.clone();
+        core.set_trouble_listener(move |report| told.report(report));
         let service = control.clone();
         core.set_switched_listener(move |input_method, reason| {
             if let Some(service) = &service {
@@ -291,6 +307,7 @@ impl Daemon {
             control_tx,
             tray,
             panel,
+            notifier,
             context_ids,
             fcitx,
             fcitx_rx,
@@ -679,9 +696,19 @@ impl Daemon {
     /// install` reloads too.
     async fn reload(&mut self, frontend: &mut Frontend) -> Result<(), String> {
         let result = read_config().map(|config| self.config = config);
-        if let Err(e) = &result {
-            warn!("{e}");
-            warn!("keeping the configuration in effect");
+        match &result {
+            Ok(()) => {
+                self.notifier.set_enabled(self.config.notifications.enabled);
+                self.notifier.resolved(Subject::Config);
+            }
+            Err(e) => {
+                warn!("{e}");
+                warn!("keeping the configuration in effect");
+                self.notifier.tell(Trouble::Config {
+                    error: e.clone(),
+                    kept: true,
+                });
+            }
         }
         let installed = discover_engines();
         self.core.reconfigure(

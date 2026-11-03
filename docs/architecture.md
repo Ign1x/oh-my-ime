@@ -401,6 +401,22 @@ gettext catalogs in `crates/omime-settings/po`, which are built in. `omime setti
 and "Settings…" in the tray menu open it, and the desktop entry
 `io.github.ign1x.OhMyIme.Settings` (also its application id) puts it in launchers.
 
+## Notifications
+
+omimed tells the user about trouble that would otherwise only be in its log, with
+desktop notifications (`org.freedesktop.Notifications`, connected to once there is
+something to tell): an engine that stopped and stays stopped until the user switches to
+it again (it kept crashing, did not register in time, could not be launched, or was
+quarantined after a compositor protocol error), another input method holding a seat
+(`unavailable` from the compositor), and a mistake in config.toml, at startup (omimed
+uses the defaults) or on a reload (it keeps what it had). The core reports engine and
+seat trouble to the daemon with a listener, as it reports state and lists. Each trouble
+is told once, again only after it was resolved (the engine registered, the seat's input
+method was activated, the configuration loaded) or an hour later, and a resolved
+trouble's notification is closed. The default action opens `omime-settings` on its
+About page. Texts are in Chinese under a Chinese locale. `[notifications] enabled =
+false` turns them off.
+
 ## Compatibility layers (planned)
 
 - **Per-engine hosts:** an IBus engine host (private bus, component discovery, Factory/Engine

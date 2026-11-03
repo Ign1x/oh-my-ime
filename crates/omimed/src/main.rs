@@ -9,6 +9,7 @@ mod fcitx;
 mod frontend;
 mod ime_state;
 mod keyboard;
+mod notify;
 mod panel;
 mod placement;
 mod programs;

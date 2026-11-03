@@ -183,11 +183,23 @@ enabled = false
 `omime settings` opens oh-my-ime's settings, as do "Settings…" in the tray menu and
 "oh-my-ime Settings" in application launchers: your input methods and their order (add
 more from what Fcitx 5, IBus and the installed engines offer), the hotkeys, the input
-method of each application, the tray, the switcher and the key timeout, and what omimed
-reports about the session. Everything it changes goes through omimed into `config.toml`,
+method of each application, the tray, the switcher, notifications and the key timeout,
+and what omimed reports about the session. Everything it changes goes through omimed into `config.toml`,
 which keeps your comments. Its application id is `io.github.ign1x.OhMyIme.Settings`, for
 window rules, and `omime-settings hotkeys` (or `applications`, `general`, `about`) opens
 it on another page.
+
+### Notifications
+
+omimed tells you with a desktop notification when something goes wrong: an engine
+stopped, another input method (a Fcitx 5 started by your desktop, say) holds the
+keyboard, or `config.toml` has a mistake. Your notification daemon (mako, dunst,
+swaync, …) shows them; a click opens the settings. To turn them off:
+
+```toml
+[notifications]
+enabled = false
+```
 
 ### Switcher
 

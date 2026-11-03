@@ -285,6 +285,7 @@ fn options(dict: &Dict) -> Options {
         remember_apps: flag(dict, "apps.remember").unwrap_or(defaults.remember_apps),
         tray: flag(dict, "tray.enabled").unwrap_or(defaults.tray),
         panel: flag(dict, "panel.enabled").unwrap_or(defaults.panel),
+        notifications: flag(dict, "notifications.enabled").unwrap_or(defaults.notifications),
     }
 }
 

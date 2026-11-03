@@ -591,10 +591,12 @@ fn show_value(value: &OwnedVariant) -> String {
 fn parse_value(key: &str, text: &str) -> anyhow::Result<zbus::Variant<'static>> {
     use zbus::Variant as Value;
     Ok(match key {
-        "apps.remember" | "tray.enabled" | "panel.enabled" => Value::from(
-            text.parse::<bool>()
-                .with_context(|| format!("`{key}` is true or false"))?,
-        ),
+        "apps.remember" | "tray.enabled" | "panel.enabled" | "notifications.enabled" => {
+            Value::from(
+                text.parse::<bool>()
+                    .with_context(|| format!("`{key}` is true or false"))?,
+            )
+        }
         "engine.key_timeout_ms" => Value::from(
             text.parse::<u64>()
                 .with_context(|| format!("`{key}` is a number of milliseconds"))?,

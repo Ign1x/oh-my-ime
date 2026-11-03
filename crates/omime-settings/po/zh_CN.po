@@ -183,6 +183,12 @@ msgstr "显示切换浮层"
 msgid "Your input methods appear for a moment when you switch with the hotkeys"
 msgstr "用热键切换时，屏幕上会短暂显示你的输入法"
 
+msgid "Show notifications"
+msgstr "显示通知"
+
+msgid "Tell you when something goes wrong: an input method stopped, another input method holds the keyboard, or config.toml has a mistake"
+msgstr "出现问题时通知你：输入法停止运行、另一个输入法占用了键盘，或 config.toml 有错误"
+
 msgid "Waiting for an input method"
 msgstr "等待输入法的时间"
 

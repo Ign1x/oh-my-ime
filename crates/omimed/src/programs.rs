@@ -25,8 +25,18 @@ pub fn find(name: &str) -> Option<PathBuf> {
 /// Opens the settings on the compositor at `display` (`$WAYLAND_DISPLAY` when `None`):
 /// a window of its own, which stays open when omimed stops.
 pub fn open_settings(display: Option<&str>) -> Result<(), String> {
+    open(display, &[])
+}
+
+/// Opens the settings on their page `page`, such as `about`.
+pub fn open_settings_page(display: Option<&str>, page: &str) -> Result<(), String> {
+    open(display, &[page])
+}
+
+fn open(display: Option<&str>, args: &[&str]) -> Result<(), String> {
     let program = find(SETTINGS).ok_or_else(|| format!("{SETTINGS} is not installed"))?;
     let mut command = std::process::Command::new(program);
+    command.args(args);
     if let Some(display) = display {
         command.env("WAYLAND_DISPLAY", display);
     }

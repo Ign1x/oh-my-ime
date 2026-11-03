@@ -142,10 +142,19 @@ enabled = false
 - 管理你的输入法及其顺序，并从 Fcitx 5、IBus 和已安装引擎提供的输入法中添加更多；
 - 设置热键；
 - 设置每个应用的输入法；
-- 开关托盘和切换浮层，调整按键超时；
+- 开关托盘、切换浮层和通知，调整按键超时；
 - 查看 omimed 报告的会话状态。
 
 它所做的修改都经 omimed 写入 `config.toml`，你的注释会保留。它的应用 id 是 `io.github.ign1x.OhMyIme.Settings`，可用于窗口规则；`omime-settings hotkeys`（或 `applications`、`general`、`about`）会直接打开对应的页面。
+
+### 通知
+
+出现问题时，omimed 会用桌面通知告诉你：引擎停止了、另一个输入法（例如桌面自动启动的 Fcitx 5）占用了键盘，或者 `config.toml` 有错误。通知由你的通知守护进程（mako、dunst、swaync 等）显示，点击通知会打开设置。要关掉通知：
+
+```toml
+[notifications]
+enabled = false
+```
 
 ### 切换浮层
 

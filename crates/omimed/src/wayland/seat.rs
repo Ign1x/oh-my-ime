@@ -61,6 +61,9 @@ pub struct SeatSession {
     ime: ImState,
     /// When to request the input method again after `unavailable`.
     retry: Option<(Instant, Duration)>,
+    /// Whether another input method held the seat when omimed last asked for it, and
+    /// omimed has not served a text field since.
+    taken: bool,
     /// The focused, non-sensitive text field, if any.
     ctx: Option<ContextId>,
 
@@ -120,6 +123,7 @@ impl SeatSession {
             im_generation: 0,
             ime: ImState::default(),
             retry: None,
+            taken: false,
             ctx: None,
             grab: None,
             grab_generation: 0,
@@ -215,7 +219,17 @@ impl SeatSession {
             return;
         }
         match event {
-            ImEvent::Activate => self.ime.activate(),
+            ImEvent::Activate => {
+                if std::mem::take(&mut self.taken) {
+                    self.outputs
+                        .borrow_mut()
+                        .push_back(FrontendEvent::SeatTaken {
+                            seat: self.name.clone(),
+                            taken: false,
+                        });
+                }
+                self.ime.activate();
+            }
             ImEvent::Deactivate => self.ime.deactivate(),
             ImEvent::SurroundingText {
                 text,
@@ -245,6 +259,14 @@ impl SeatSession {
             "another input method is active on this seat (is fcitx5 or ibus running?)"
         );
         self.retry = Some((Instant::now() + backoff, backoff));
+        if !std::mem::replace(&mut self.taken, true) {
+            self.outputs
+                .borrow_mut()
+                .push_back(FrontendEvent::SeatTaken {
+                    seat: self.name.clone(),
+                    taken: true,
+                });
+        }
     }
 
     fn context_info(&self) -> ContextInfo {

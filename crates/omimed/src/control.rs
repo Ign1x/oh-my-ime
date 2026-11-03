@@ -182,7 +182,8 @@ impl ControlObject {
     /// The configuration in effect, by the dotted names of config.toml's options:
     /// "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
     /// "initial_input_method" (s, when set; used only before any saved choice),
-    /// "apps.remember", "tray.enabled", "panel.enabled" (b), and "engines" (as) when
+    /// "apps.remember", "tray.enabled", "panel.enabled", "notifications.enabled" (b),
+    /// and "engines" (as) when
     /// config.toml lists engines (otherwise every engine enabled by default is).
     async fn config(&self) -> zbus::fdo::Result<Dict> {
         let config = self.ask(ControlRequest::Config).await?;
@@ -442,6 +443,10 @@ fn config_dict(config: &omime_proto::config::Config) -> Dict {
             "panel.enabled".to_owned(),
             owned(Variant::from(config.panel.enabled)),
         ),
+        (
+            "notifications.enabled".to_owned(),
+            owned(Variant::from(config.notifications.enabled)),
+        ),
     ]);
     if let Some(engines) = &config.engines {
         dict.insert("engines".to_owned(), owned(Variant::from(engines)));
@@ -465,7 +470,7 @@ fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::V
         "hotkeys.toggle" | "hotkeys.next" | "initial_input_method" => {
             Value::String(String::try_from(take()?).map_err(|_| wrong())?)
         }
-        "apps.remember" | "tray.enabled" | "panel.enabled" => {
+        "apps.remember" | "tray.enabled" | "panel.enabled" | "notifications.enabled" => {
             Value::Bool(bool::try_from(take()?).map_err(|_| wrong())?)
         }
         "engine.key_timeout_ms" => Value::Integer(match &*value {

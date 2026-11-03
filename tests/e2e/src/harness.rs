@@ -699,6 +699,33 @@ impl TestEnv {
         Ok(host)
     }
 
+    /// Serves desktop notifications on the session bus with `omime-notifications`, as a
+    /// desktop's notification daemon would; it prints them as lines.
+    pub fn notifications(&self) -> anyhow::Result<FcitxClient> {
+        let mut child = self
+            .command(target_dir().join("omime-notifications"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("cannot start omime-notifications")?;
+        let stdin = child.stdin.take().context("no stdin")?;
+        let stdout = child.stdout.take().context("no stdout")?;
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                sink.lock().unwrap_or_else(|p| p.into_inner()).push(line);
+            }
+        });
+        let server = FcitxClient {
+            child,
+            stdin: Mutex::new(Some(stdin)),
+            lines,
+        };
+        server.wait_for("the notification server", |l| l == "ready")?;
+        Ok(server)
+    }
+
     /// Clicks with the cursor of `seat` at (`x`, `y`) of the output, which gives that
     /// seat's keyboard focus to the window there.
     pub fn click_on_seat(&self, seat: &str, x: u32, y: u32) -> anyhow::Result<()> {

@@ -94,6 +94,8 @@ export global Backend {
     callback set-tray(bool);
     in-out property <bool> switcher;
     callback set-switcher(bool);
+    in-out property <bool> notifications;
+    callback set-notifications(bool);
     in property <[string]> timeouts;
     in property <int> timeout-index;
     callback set-timeout(int);

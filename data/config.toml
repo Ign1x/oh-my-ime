@@ -40,3 +40,8 @@ enabled = true
 # Show the input methods for a moment, at the bottom of the screen, when you switch
 # with the hotkeys or `omime switch`/`next`/`toggle` (the switcher, omime-panel).
 enabled = true
+
+[notifications]
+# Tell you with a desktop notification when something goes wrong: an engine stopped,
+# another input method holds a seat, or this file has a mistake.
+enabled = true

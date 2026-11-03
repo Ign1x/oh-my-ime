@@ -132,6 +132,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
 | Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
 | Settings (`omime-settings`): input methods and their order, hotkeys, applications, options; English and Chinese, light and dark | ✅ |
+| Notifications about trouble: an engine that stopped, another input method on a seat, a mistake in config.toml | ✅ |
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
 | Nix/source installation with a systemd user unit and session templates | ✅ |

@@ -134,6 +134,15 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 
 界面文字以英文写成，译文来自 `crates/omime-settings/po` 中的 gettext 目录，编译进程序。`omime settings` 和托盘菜单中的“设置…”都能打开它；桌面文件 `io.github.ign1x.OhMyIme.Settings`（也是它的应用 id）让它出现在启动器里。
 
+## 通知
+
+有些问题原本只记在 omimed 的日志里，现在 omimed 会用桌面通知（`org.freedesktop.Notifications`，有事要说时才连接）告诉用户：
+- 引擎停止了，在用户再次切换到它之前不会再启动：它一再崩溃、没有及时注册、无法启动，或因合成器协议错误被隔离；
+- 另一个输入法占用了某个座位（合成器发来 `unavailable`）；
+- config.toml 有错误：启动时出错，omimed 使用默认值；重新加载时出错，保留原有配置。
+
+核心像报告状态和列表那样，通过一个监听器把引擎和座位的问题报告给守护进程。每个问题只说一次；问题解决之后（引擎注册了、座位上的输入法被激活了、配置加载成功了）或者一小时之后，才会再说。问题解决后，它的通知会被关闭。点击通知会打开 `omime-settings` 的“关于”页。中文环境下通知文字是中文。`[notifications] enabled = false` 可以关掉通知。
+
 ## 兼容层（计划中）
 
 - **逐引擎宿主：** 一个 IBus 引擎宿主（私有总线、组件发现、Factory/Engine 转换）和一个 Fcitx5 插件宿主（C++、libFcitx5Core）。

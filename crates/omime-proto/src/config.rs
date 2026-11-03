@@ -25,6 +25,11 @@
 //! [panel]
 //! # Show the input methods for a moment when switching with the hotkeys or `omime`.
 //! enabled = true
+//!
+//! [notifications]
+//! # Tell the user about trouble: an engine that stopped, another input method on a
+//! # seat, a mistake in this file.
+//! enabled = true
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +50,7 @@ pub struct Config {
     pub apps: AppSettings,
     pub tray: TraySettings,
     pub panel: PanelSettings,
+    pub notifications: NotificationSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +120,20 @@ impl Default for PanelSettings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationSettings {
+    /// Show desktop notifications about trouble: an engine that stopped, another input
+    /// method on a seat, a mistake in config.toml.
+    pub enabled: bool,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 impl Config {
     /// Reads a configuration, and the keys in it that this version does not know
     /// (misspelt, or from a newer version), which it ignores.
@@ -132,7 +152,7 @@ pub enum Value {
 }
 
 /// The options [`edit`] can set, by dotted name.
-pub const KEYS: [&str; 8] = [
+pub const KEYS: [&str; 9] = [
     "engines",
     "initial_input_method",
     "hotkeys.toggle",
@@ -141,6 +161,7 @@ pub const KEYS: [&str; 8] = [
     "apps.remember",
     "tray.enabled",
     "panel.enabled",
+    "notifications.enabled",
 ];
 
 /// Returns `text`, a config.toml, with the option `key` (one of [`KEYS`]) set to

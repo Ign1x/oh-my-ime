@@ -31,6 +31,7 @@ use xkbcommon::xkb;
 
 use crate::catalog::Catalog;
 use crate::frontend::{FrontendEvent, Frontends, HostedEvent, KeyDelivery, KeyRef, Origin};
+use crate::notify::{EngineFailure, Report, Subject, Trouble};
 use crate::state::State;
 use crate::wayland::EngineId;
 use engines::{EngineManager, EngineState, HostCall, UiConnection};
@@ -243,6 +244,8 @@ type PropertiesListener = Box<dyn Fn()>;
 /// Callback for changes of the current engine or of the status it published.
 type StatusListener = Box<dyn Fn(Option<&str>, Option<&str>, Option<&Status>)>;
 type SwitchedListener = Box<dyn Fn(Option<&str>, SwitchReason)>;
+/// Callback for trouble to tell the user about, and for its end.
+type TroubleListener = Box<dyn Fn(Report)>;
 
 /// Who switched the input method, as the control API's `Switched` says: the switcher
 /// overlay shows after the user's own switches, not after a menu's.
@@ -316,6 +319,7 @@ pub struct Core {
     on_catalog: Option<CatalogListener>,
     on_lists: Option<ListsListener>,
     on_properties: Option<PropertiesListener>,
+    on_trouble: Option<TroubleListener>,
     /// Whether applications keep their own engine (`[apps] remember`).
     remember_apps: bool,
     /// The app id of the focused window, when the compositor reports it.
@@ -362,6 +366,7 @@ impl Core {
             on_catalog: None,
             on_lists: None,
             on_properties: None,
+            on_trouble: None,
             remember_apps: config.apps.remember,
             focused_app: None,
             app_engines: BTreeMap::new(),
@@ -398,6 +403,35 @@ impl Core {
         if let Some(listener) = &self.on_properties {
             listener();
         }
+    }
+
+    /// Called with trouble the user should hear about (an engine stopped, another input
+    /// method holds a seat), and when it is over.
+    pub fn set_trouble_listener(&mut self, listener: impl Fn(Report) + 'static) {
+        self.on_trouble = Some(Box::new(listener));
+    }
+
+    fn report(&self, report: Report) {
+        if let Some(listener) = &self.on_trouble {
+            listener(report);
+        }
+    }
+
+    /// Reports that the engine `id` stopped and stays stopped.
+    fn engine_failed(&self, id: &str, why: EngineFailure) {
+        let locale = std::env::var("LC_ALL")
+            .or_else(|_| std::env::var("LC_MESSAGES"))
+            .or_else(|_| std::env::var("LANG"))
+            .unwrap_or_default();
+        let name = self.engines.get(id).map_or_else(
+            || id.to_owned(),
+            |slot| slot.installed.manifest.localized_name(&locale).to_owned(),
+        );
+        self.report(Report::Trouble(Trouble::Engine {
+            id: id.to_owned(),
+            name,
+            why,
+        }));
     }
 
     /// The menu of the current engine: actions, switches and choices it offers.
@@ -830,7 +864,8 @@ impl Core {
     }
 
     pub fn on_timer(&mut self, now: Instant, out: &mut dyn Frontends) {
-        for failed in self.engines.on_timer(now) {
+        for (failed, why) in self.engines.on_timer(now) {
+            self.engine_failed(&failed, why);
             self.engine_unavailable(&failed, out);
         }
         self.check_hosted(now, out);
@@ -905,6 +940,7 @@ impl Core {
                     && let Err(e) = self.engines.ensure_started(id, false)
                 {
                     warn!("{e:#}");
+                    self.engine_failed(id, EngineFailure::Launch(format!("{e:#}")));
                 }
                 let mut context = Context {
                     origin,
@@ -992,6 +1028,12 @@ impl Core {
             }
             FrontendEvent::FocusedApp(app) => self.on_focused_app(app, out),
             FrontendEvent::Hosted(event) => self.on_hosted(event, out),
+            FrontendEvent::SeatTaken { seat, taken: true } => {
+                self.report(Report::Trouble(Trouble::Seat { name: seat }));
+            }
+            FrontendEvent::SeatTaken { seat, taken: false } => {
+                self.report(Report::Resolved(Subject::Seat(seat)));
+            }
         }
     }
 
@@ -1023,6 +1065,7 @@ impl Core {
                 if !self.engines.hosted_ready(&engine) {
                     return;
                 }
+                self.report(Report::Resolved(Subject::Engine(engine.to_string())));
                 self.timeouts.remove(&*engine);
                 // A hosted input method shows its popups when it likes.
                 self.set_engine_visible(&engine, true, out);
@@ -1114,6 +1157,7 @@ impl Core {
                     warn!(engine, "cannot talk to the engine: {e}");
                     return;
                 }
+                self.report(Report::Resolved(Subject::Engine(engine.clone())));
                 self.timeouts.remove(&engine);
                 let waiting: Vec<ContextId> = self
                     .contexts
@@ -1141,8 +1185,20 @@ impl Core {
                         .engines
                         .get(&engine)
                         .is_some_and(|s| !matches!(s.state, EngineState::Stopped));
+                let was_failed = self
+                    .engines
+                    .get(&engine)
+                    .is_some_and(|s| s.state == EngineState::Failed);
                 if !self.engines.exited(&engine, generation, status, needed) {
                     return;
+                }
+                if !was_failed
+                    && self
+                        .engines
+                        .get(&engine)
+                        .is_some_and(|s| s.state == EngineState::Failed)
+                {
+                    self.engine_failed(&engine, EngineFailure::Crashed);
                 }
                 // A new process has to ask for its window again.
                 self.set_engine_visible(&engine, false, out);
@@ -1419,6 +1475,7 @@ impl Core {
             "quarantining an engine after a compositor protocol error"
         );
         self.engines.quarantine(engine);
+        self.engine_failed(engine, EngineFailure::Protocol);
         self.set_engine_visible(engine, false, out);
         self.engine_unavailable(engine, out);
         self.status_changed();
@@ -1749,7 +1806,10 @@ impl Core {
                 );
             }
             // An explicit switch also retries an engine that gave up after crashing.
-            self.engines.ensure_started(id, true)?;
+            if let Err(e) = self.engines.ensure_started(id, true) {
+                self.engine_failed(id, EngineFailure::Launch(format!("{e:#}")));
+                return Err(e);
+            }
             if let Some(inner) = inner {
                 self.engines.select_inner(id, inner);
                 for context in self.contexts.values_mut() {

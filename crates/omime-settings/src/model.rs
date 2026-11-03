@@ -37,6 +37,7 @@ pub struct Options {
     pub remember_apps: bool,
     pub tray: bool,
     pub panel: bool,
+    pub notifications: bool,
 }
 
 impl Default for Options {
@@ -49,6 +50,7 @@ impl Default for Options {
             remember_apps: config.apps.remember,
             tray: config.tray.enabled,
             panel: config.panel.enabled,
+            notifications: config.notifications.enabled,
         }
     }
 }

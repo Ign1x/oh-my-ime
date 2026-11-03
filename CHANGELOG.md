@@ -12,12 +12,20 @@ All notable changes to this project are documented here. The format follows
   needed for. It lists your input methods in switching order, to reorder, remove and
   open the settings of, and adds more from what Fcitx 5, IBus and the installed engines
   offer, grouped by language and searchable. It records hotkeys as you press them, sets
-  or forgets the input method of each application, turns the tray and the switcher on
-  or off, sets the key timeout, and shows what omimed reports about the session. It is
+  or forgets the input method of each application, turns the tray, the switcher and
+  notifications on or off, sets the key timeout, and shows what omimed reports about the
+  session. It is
   in English and Chinese, light or dark as the desktop prefers, and works only through
   the control API: it follows omimed as it stops and starts, and omimed writes
   config.toml, keeping your comments. `omime settings` opens it, as do "Settings…" at the
   end of the tray menu and the desktop entry "oh-my-ime Settings".
+- Desktop notifications about trouble that used to be only in omimed's log: an engine
+  that stopped (it kept crashing, did not start in time, could not be launched or broke
+  the connection to the compositor), another input method holding a seat, such as a
+  Fcitx 5 that still runs, and a mistake in config.toml. Each is told once, again only
+  after it was resolved or an hour later, and its notification goes away once it is
+  resolved; a click opens the settings on their About page. In English and Chinese.
+  `[notifications] enabled = false` turns them off.
 - `omime setup` configures Hyprland's input environment and autostart in Lua or
   legacy `.conf`, with a read-only preview and a journal for undo that preserves
   unrelated edits. `--engine` sets the first-login method, `--start` activates the

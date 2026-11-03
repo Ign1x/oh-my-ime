@@ -1,0 +1,118 @@
+//! `omime-notifications` — a desktop notification server (`org.freedesktop.Notifications`)
+//! for the end-to-end tests, as a desktop's notification daemon would be.
+//!
+//! It prints what it is asked to do, one line each:
+//!
+//! ```text
+//! ready
+//! notify <id> <replaces id> <summary>|<body>
+//! close <id>
+//! ```
+//!
+//! and reads commands from stdin: `click <id>` invokes the default action of a
+//! notification, as a click on it would.
+
+use std::collections::HashMap;
+use std::io::{BufRead as _, Write as _};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use anyhow::Context as _;
+use tokio::sync::mpsc;
+use zbus::OwnedVariant;
+use zbus::object_server::SignalEmitter;
+
+const PATH: &str = "/org/freedesktop/Notifications";
+
+fn say(line: &str) {
+    println!("{line}");
+    let _ = std::io::stdout().flush();
+}
+
+struct Server {
+    last: AtomicU32,
+}
+
+#[zbus::interface(name = "org.freedesktop.Notifications")]
+impl Server {
+    #[allow(clippy::too_many_arguments)]
+    fn notify(
+        &self,
+        _app_name: String,
+        replaces_id: u32,
+        _app_icon: String,
+        summary: String,
+        body: String,
+        _actions: Vec<String>,
+        _hints: HashMap<String, OwnedVariant>,
+        _expire_timeout: i32,
+    ) -> u32 {
+        let id = if replaces_id == 0 {
+            self.last.fetch_add(1, Ordering::Relaxed) + 1
+        } else {
+            replaces_id
+        };
+        say(&format!(
+            "notify {id} {replaces_id} {summary}|{}",
+            body.replace('\n', " ")
+        ));
+        id
+    }
+
+    fn close_notification(&self, id: u32) {
+        say(&format!("close {id}"));
+    }
+
+    fn get_capabilities(&self) -> Vec<String> {
+        vec!["actions".to_owned(), "body".to_owned()]
+    }
+
+    fn get_server_information(&self) -> (String, String, String, String) {
+        (
+            "omime-notifications".to_owned(),
+            "oh-my-ime".to_owned(),
+            "0".to_owned(),
+            "1.2".to_owned(),
+        )
+    }
+
+    #[zbus(signal)]
+    async fn action_invoked(
+        emitter: &SignalEmitter<'_>,
+        id: u32,
+        action_key: &str,
+    ) -> zbus::Result<()>;
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
+    let conn = zbus::connection::Builder::session()
+        .serve_at(
+            PATH,
+            Server {
+                last: AtomicU32::new(0),
+            },
+        )
+        .name("org.freedesktop.Notifications")
+        .build()
+        .await
+        .context("cannot serve notifications on the session bus")?;
+
+    let (commands_tx, mut commands) = mpsc::unbounded_channel::<String>();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+            if commands_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    say("ready");
+
+    let emitter = SignalEmitter::new(&conn, PATH)?;
+    while let Some(command) = commands.recv().await {
+        if let Some(id) = command.strip_prefix("click ") {
+            let id: u32 = id.trim().parse().context("a notification id")?;
+            Server::action_invoked(&emitter, id, "default").await?;
+        }
+    }
+    Ok(())
+}

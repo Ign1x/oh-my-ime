@@ -153,6 +153,12 @@ impl Controller {
             });
         });
         let weak = Rc::downgrade(&this);
+        backend.on_set_notifications(move |on| {
+            with(&weak, on, |this, on| {
+                this.configure("notifications.enabled", Value::Bool(on))
+            });
+        });
+        let weak = Rc::downgrade(&this);
         backend.on_set_timeout(move |choice| {
             with(&weak, choice, |this, choice| {
                 let ms = index(choice).and_then(|i| this.timeouts.borrow().get(i).copied());
@@ -249,6 +255,7 @@ impl Controller {
         backend.set_remember_apps(options.remember_apps);
         backend.set_tray(options.tray);
         backend.set_switcher(options.panel);
+        backend.set_notifications(options.notifications);
         let (timeouts, current) = model::timeouts(options.key_timeout_ms);
         let labels: Vec<SharedString> = timeouts.iter().map(|&ms| timeout_label(ms)).collect();
         backend.set_timeouts(model_of(labels));
@@ -628,6 +635,11 @@ mod tests {
         assert_eq!(
             requests.try_recv().ok(),
             Some(option("panel.enabled", Value::Bool(false)))
+        );
+        click(&window, "Show notifications");
+        assert_eq!(
+            requests.try_recv().ok(),
+            Some(option("notifications.enabled", Value::Bool(false)))
         );
         assert_eq!(backend.get_timeout_index(), 1, "200 ms");
         backend.invoke_set_timeout(3);

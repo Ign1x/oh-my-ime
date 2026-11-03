@@ -70,6 +70,9 @@ pub enum FrontendEvent {
     FocusedApp(Option<String>),
     /// Something a hosted input method did.
     Hosted(HostedEvent),
+    /// Another input method holds the seat of this name (`true`), or omimed serves it
+    /// again (`false`).
+    SeatTaken { seat: String, taken: bool },
 }
 
 /// What hosted input methods (Wayland input methods running as engines) do.

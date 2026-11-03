@@ -32,6 +32,17 @@ export component GeneralPage inherits VerticalLayout {
 
             Divider { }
 
+            SwitchRow {
+                title: Tr.text("Show notifications");
+                subtitle: Tr.text("Tell you when something goes wrong: an input method stopped, another input method holds the keyboard, or config.toml has a mistake");
+                checked <=> Backend.notifications;
+                toggled(on) => {
+                    Backend.set-notifications(on);
+                }
+            }
+
+            Divider { }
+
             HorizontalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
