@@ -123,9 +123,9 @@ impl TrayInfo {
         self.status.label.clone().unwrap_or_default()
     }
 
-    /// The menu: the input methods and direct input, to choose from, the current
-    /// engine's own menu, then its settings if it has any. Input methods of the same name
-    /// in two frameworks say which one they are in.
+    /// The menu: the input methods and direct input, to choose from, with their icons,
+    /// the current engine's own menu, then its settings if it has any. Input methods of
+    /// the same name in two frameworks say which one they are in.
     fn menu(&self) -> Vec<MenuEntry> {
         let mut entries: Vec<_> = self
             .methods
@@ -138,14 +138,20 @@ impl TrayInfo {
                     m.name.clone()
                 };
                 let current = self.method.as_deref() == Some(m.id.as_str());
-                MenuEntry::radio(MenuAction::Switch(Some(m.id.clone())), label, current)
+                MenuEntry {
+                    icon: m.icon.clone(),
+                    ..MenuEntry::radio(MenuAction::Switch(Some(m.id.clone())), label, current)
+                }
             })
             .collect();
-        entries.push(MenuEntry::radio(
-            MenuAction::Switch(None),
-            direct_input_label().to_owned(),
-            self.engine.is_none(),
-        ));
+        entries.push(MenuEntry {
+            icon: Some(KEYBOARD_ICON.to_owned()),
+            ..MenuEntry::radio(
+                MenuAction::Switch(None),
+                direct_input_label().to_owned(),
+                self.engine.is_none(),
+            )
+        });
         let own = MenuEntry::from_properties(&self.properties, "", 0);
         if !own.is_empty() {
             entries.push(MenuEntry::separator());
@@ -1006,7 +1012,10 @@ mod tests {
             switch(Some("fcitx5/pinyin"), "拼音 (Fcitx 5)", true),
             switch(Some("ibus/pinyin"), "拼音 (IBus)", false),
             switch(Some("sparkle"), "Sparkle", false),
-            switch(None, direct_input_label(), false),
+            MenuEntry {
+                icon: Some(KEYBOARD_ICON.to_owned()),
+                ..switch(None, direct_input_label(), false)
+            },
         ];
         // Fcitx 5 has settings, which the menu offers while it is in use.
         let menu = info(Some("fcitx5"), Some("fcitx5/pinyin")).menu();
@@ -1036,6 +1045,16 @@ mod tests {
         direct.own_settings = true;
         let menu = direct.menu();
         assert_eq!(menu[menu.len() - 2], MenuEntry::separator());
+    }
+
+    #[test]
+    fn input_methods_in_the_menu_have_their_icons() {
+        let mut info = info(Some("fcitx5"), Some("fcitx5/pinyin"));
+        info.methods[1].icon = Some("fcitx-pinyin".to_owned());
+        let menu = info.menu();
+        assert_eq!(menu[1].icon.as_deref(), Some("fcitx-pinyin"));
+        assert_eq!(menu[0].icon, None, "it has none");
+        assert_eq!(menu[4].icon.as_deref(), Some(KEYBOARD_ICON), "direct input");
     }
 
     fn property(id: &str, parent: &str, kind: PropertyKind, checked: bool) -> Property {

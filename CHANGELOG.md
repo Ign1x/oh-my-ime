@@ -60,7 +60,7 @@ All notable changes to this project are documented here. The format follows
   as waybar's tray: in the tooltip ("双拼 (Fcitx 5)"), and with the icon of Fcitx 5's or
   IBus's own tray item, which omimed follows on the private bus. A click toggles direct
   input, a middle click switches to the next input method, and its menu switches to any
-  input method. `omime status` reports the input method too. `[tray] enabled = false`
+  input method, each with its icon. `omime status` reports the input method too. `[tray] enabled = false`
   hides it.
 - Engine protocol 1.1: engines can have input methods of their own, such as the schemas
   of a Rime engine, announced with `SetInputMethods` and `SetCurrentInputMethod` and

@@ -363,7 +363,7 @@ current engine, its status or the engines change, which sends `NewIcon`, `NewToo
 `LayoutUpdated`. The icon is the hosted input method's, else the engine's status or
 manifest icon, else `input-keyboard`; the tooltip is "engine · status". A click toggles
 direct input, a middle click switches to the next input method, and the menu holds the
-input methods and direct input as radio items; for an input method inside a framework
+input methods and direct input as radio items with their icons; for an input method inside a framework
 the tooltip is "input method (framework)". Below them come the current engine's own
 menu, with its switches as check items and its submenus, "Configure …" for an
 engine with settings, and "Settings…", which opens `omime-settings`. An entry keeps its id while the menu changes, so a click on a menu
