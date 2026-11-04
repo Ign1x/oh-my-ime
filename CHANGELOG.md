@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Session setup now configures systemd and UWSM application launches as well as
+  Hyprland, with preview, preservation of existing settings and journaled undo.
+  `omime setup --start` updates the current D-Bus activation and user-manager
+  environments after input is ready; a manager for a different Wayland display is
+  left alone. Existing applications still need restarting.
+- `omime doctor --app PID` checks a running application's input environment and
+  known loaded input plugins. It identifies Compose fallback and compares the
+  application's settings with systemd's launch environment, without reading typed
+  text or printing unrelated environment variables. `doctor` also uses the daemon's
+  engine list when its service has paths absent from the terminal.
 - Rime settings (`omime settings rime`, or **Configure Rime…** in the tray): choose
   schemas, candidates per page, Shift behavior, horizontal or vertical candidates,
   system/light/dark colors and font size. The window is in English and Chinese;

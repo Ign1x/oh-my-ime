@@ -26,6 +26,11 @@ omime setup --engine fcitx5/pinyin --take-over --start
 
 启动时会等到框架接受输入法选择；最初的按键会等到输入上下文获得焦点再交给框架，缺少插件时会明确报错。
 
+`--start` 还会更新当前会话总线上的 D-Bus 激活环境与 systemd 用户管理器的环境，
+之后通过它们启动的应用（包括 UWSM 启动器）即可继承输入法配置。
+如果用户管理器属于另一个 Wayland display，setup 会报告不匹配，并保留其环境。
+已经运行的应用仍保留旧环境，需要重启。
+
 配置后注销并重新登录 Hyprland，让合成器和应用继承新的输入环境，再运行 `omime doctor`。已经打开的应用可能需要重启，才能使用新的 GTK/Qt/XIM 接入途径。
 
 ## 配置文件位置
@@ -40,7 +45,30 @@ omime setup --config ~/.config/hypr/my-desktop.lua --engine sparkle
 
 支持 Lua 和旧版 `.conf`。工具在主配置末尾加入带标记的 include，并在 `$XDG_CONFIG_HOME/oh-my-ime/` 中创建自己的配置片段，设置 `GTK_IM_MODULE`、`QT_IM_MODULE`、`QT_IM_MODULES`、`XMODIFIERS` 和守护进程自启动。其他设置、快捷键和注释保留。
 
+同样的输入配置还会写入 `$XDG_CONFIG_HOME/environment.d/90-oh-my-ime.conf`，
+供 systemd 启动的应用使用；并在 `$XDG_CONFIG_HOME/uwsm/env-hyprland` 中加入
+带标记的配置块，供 UWSM 使用。这些修改都纳入 setup/undo 记录，保留原有 UWSM
+设置及之后新增的无关配置。由配置管理器管理的文件应在其源配置中声明。
+会话统一配置一次，应用继续使用原来的启动器。
+
 自定义脚本、其他被包含文件或任意 Lua 表达式中的启动逻辑，需在原配置中调整。把输入法与其他程序合在一起的复合命令不会被自动改写。Nix/Home Manager 等工具可能将主配置生成为符号链接，应通过[手动配置](hyprland.md#3-让-omimed-随-hyprland-启动)在声明式配置中加入 include；setup 会指出符号链接，不会替换它。
+
+## 检查某个应用
+
+只有某个应用无法输入时，从进程管理器取得其 PID，然后运行：
+
+```sh
+omime doctor --app 12345
+```
+
+报告检查该进程实际继承的输入法变量、已加载库中可识别的输入插件，以及 daemon 和引擎状态。
+它能指出 Qt 退回 Compose 插件的情况，也会对比 systemd 启动环境，提醒应用可能仍在使用
+setup 之前的旧环境。检查不会读取文档内容、按键、窗口标题或输出其他环境变量；
+找到插件本身并不能证明应用的输入框确实向 daemon 发送按键。
+
+不带 `--app` 的 `omime doctor` 检查当前终端和 systemd 的启动环境。
+服务可能使用终端中没有的引擎目录和程序路径，诊断也会采用 daemon 已发现的引擎列表，
+避免误报“引擎未安装”。
 
 ## 首次选择与后续记忆
 

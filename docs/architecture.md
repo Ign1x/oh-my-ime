@@ -233,6 +233,24 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.
 
+## Session setup and application diagnostics
+
+The CLI's setup journal covers the compositor include, engine choice, systemd's
+`environment.d/90-oh-my-ime.conf` and a marked block in UWSM's `env-hyprland`.
+`--start` updates D-Bus activation and systemd's user-manager environment only after
+the daemon has acquired its input seat. It connects through the selected session
+bus and rejects a manager naming another Wayland display. This affects future
+launches; no running application's environment can be changed this way. Undo
+restores the managed files, with the restored environment taking effect at login.
+
+`doctor --app PID` reads only the current user's selected process. Its output
+contains a fixed allowlist of input-related environment variables and names of
+recognized input/display plugins found in `/proc/PID/maps`. It never reports the
+process command line, window title, document text or other environment values.
+These are configuration observations, not evidence that a field sends keys. The
+daemon's reported engines supplement local discovery because a service may have
+different manifest paths from the terminal running `doctor`.
+
 ## Rime settings
 
 `omime-rime --settings` is a separate Slint process on the real compositor, opened
@@ -434,10 +452,10 @@ trouble's notification is closed. The default action opens `omime-settings` on i
 About page. Texts are in Chinese under a Chinese locale. `[notifications] enabled =
 false` turns them off.
 
-## Compatibility layers (planned)
+## Compatibility work after the current milestones
 
-- **Per-engine hosts:** an IBus engine host (private bus, component discovery, Factory/Engine
-  translation) and a Fcitx5 addon host (C++, libFcitx5Core).
+Per-engine IBus hosting is deferred. The current integration hosts complete Fcitx 5
+and IBus frameworks; a separate Fcitx5 addon host is outside the plan.
 
 ## Security notes
 

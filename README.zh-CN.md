@@ -130,7 +130,7 @@ flowchart LR
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
 | [Rime](engines/rime) 引擎：小鹤双拼、方案设置、横竖排候选窗和外观选项 | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
-| `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
+| `omime install/uninstall/doctor`、`doctor --app PID` 应用诊断、供状态栏使用的 `status --watch` | ✅ |
 | 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
 | 引擎菜单（中文标点、全角等）出现在托盘和命令行中，包括 Fcitx 5 与 IBus 的 | ✅ |
 | 切换浮层：用热键切换后，在屏幕下方显示输入法 | ✅ sway 与 Hyprland |
@@ -139,11 +139,11 @@ flowchart LR
 | Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
 | 多 seat 分别路由按键、保存组合输入 | 🚧 已在 sway 上测试；引擎选择和候选窗定位仍共享 |
 | Nix/源码安装附带 systemd 用户单元和会话模板 | ✅ |
-| Hyprland 首次配置、预览、会话接管与撤销（`omime setup`） | ✅ Lua 与 `.conf`；[使用指南](docs/zh-CN/setup.md) |
+| Hyprland、systemd、UWSM 的首次会话配置、预览与撤销（`omime setup`） | ✅ Lua 与 `.conf`；[使用指南](docs/zh-CN/setup.md) |
 | X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
 | X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
 | 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5 与 IBus（≥ 1.5.32），已在 sway 上测试 · 🧩 兼容 |
-| 逐引擎的 IBus 宿主与 Fcitx5 插件宿主 | 📅 阶段 4 · 🧩 兼容 |
+| 逐引擎的 IBus 宿主 | 📅 推迟 · 🧩 兼容 |
 
 ✅ 原生支持 · 🧩 兼容层 · 🚧 进行中 · 📅 计划中
 
@@ -175,7 +175,7 @@ cd oh-my-ime
 scripts/install.sh
 ```
 
-NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 NixOS 与 Home Manager 模块（[docs/nix.md](docs/nix.md)，英文）。`nix profile install github:Ign1x/oh-my-ime#rime` 会加上 [Rime 引擎](engines/rime)。
+NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 [NixOS 与 Home Manager 模块](docs/zh-CN/nix.md)。`nix profile install github:Ign1x/oh-my-ime#rime` 会加上 [Rime 引擎](engines/rime)。
 
 `omime settings rime` 打开 Rime 设置，可选择方案、每页候选数、单按 Shift 的行为、
 候选窗横竖排、深浅色和字号。关闭窗口后 Rime 会重启，读取保存的修改。
@@ -220,8 +220,9 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 按键路由测试；Nix 包；中文文档 ✅ → `v0.2.0`
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
-6. **阶段 4**：逐引擎的 IBus 宿主与 Fcitx5 插件宿主
-7. **阶段 5**：更多合成器、C ABI SDK（托盘项、设置程序与原生 Rime 引擎已完成）
+6. **平台界面与引擎**：设置、切换浮层、托盘菜单、通知、浮动面板、Python 示例和可配置候选窗的原生 Rime ✅（已在 `main`，尚未发布）
+7. **日常使用完善**：已有 NixOS/Home Manager 打包、统一会话配置和应用诊断；继续推进真实应用矩阵、文档和连续日用验证。
+8. **后续方向**：KWin/input-method-v1 与更多合成器。逐引擎 IBus 宿主推迟；Fcitx5 插件宿主和 C ABI SDK 不在当前计划内。
 
 ## 常见问题
 

@@ -37,6 +37,12 @@ name. If another method still owns a seat, setup reports that input is not ready
 Starting input waits for the selected framework to accept the input method. Its
 first keys wait for activation in the focused field; missing addons are reported.
 
+`--start` also updates D-Bus activation and the systemd user manager's environment
+on this session bus. Applications started through them afterwards inherit the input
+settings, including launchers managed by UWSM. If the user manager names another
+Wayland display, setup leaves its environment alone and reports the mismatch.
+Already running applications keep their original environment and need restarting.
+
 Log out and back into Hyprland after setup so the compositor and applications
 inherit the input environment. Then run `omime doctor`. Existing applications may
 need to be restarted before they use the new GTK/Qt/XIM route.
@@ -58,12 +64,39 @@ the main file and creates its own snippet under `$XDG_CONFIG_HOME/oh-my-ime/`.
 The snippet sets `GTK_IM_MODULE`, `QT_IM_MODULE`, `QT_IM_MODULES`, `XMODIFIERS` and
 starts the installed daemon. Unrelated settings, key bindings and comments stay.
 
+The same input settings are written to
+`$XDG_CONFIG_HOME/environment.d/90-oh-my-ime.conf` for systemd application launches
+and a marked block in `$XDG_CONFIG_HOME/uwsm/env-hyprland` for UWSM. These are part
+of the same setup/undo journal. Existing UWSM settings and unrelated later edits
+are kept. Files managed by a dotfile manager are handled declaratively instead.
+This configures the session once; individual applications use their normal launchers.
+
 Startup commands inside custom shell scripts, other included files or arbitrary
 Lua expressions need to be adjusted in their owning configuration. Compound
 commands that combine an input method with other programs are not rewritten.
 Nix/Home Manager and other dotfile managers may make the main file a symlink;
 manage its include declaratively using the [manual setup](hyprland.md#3-start-omimed-with-hyprland).
 Setup reports a symlink instead of replacing it.
+
+## Check an application
+
+If only one application cannot type, use its process ID from a process monitor:
+
+```sh
+omime doctor --app 12345
+```
+
+The report reads that process's input-related launch variables and known input
+plugins in its loaded libraries. It can identify a Qt Compose fallback, or settings
+that differ from the systemd manager because the application was opened before
+setup. It also checks the daemon and installed engines. It reads no document text,
+keystrokes, window titles or unrelated environment values; plugin detection does
+not prove that an application's input field sends keys to the daemon.
+
+`omime doctor` without `--app` checks the terminal's environment and the systemd
+launch environment. A service may have engine manifests and program paths absent
+from a terminal; the daemon's engine list is included to avoid false missing-engine
+warnings.
 
 ## First input method and remembered choices
 

@@ -2,6 +2,7 @@
 
 mod doctor;
 mod install;
+mod launch_env;
 mod setup;
 mod watch;
 
@@ -42,7 +43,8 @@ Commands:
   install <DIR>    Install an engine from a directory (`--force` to replace it)
   uninstall <ID>   Remove an engine installed in your user directory
   reload           Re-read config.toml and look for installed or removed engines
-  doctor           Explain what is wrong with the setup (fails on problems)
+  doctor [--app PID]
+                   Check the setup, or an application's input environment and plugins
   setup [--engine ID] [--config PATH] [--dry-run] [--start] [--take-over]
                    Configure Hyprland; --start also starts input in this session
   setup --undo [--dry-run]
@@ -96,7 +98,9 @@ enum Command {
         json: bool,
     },
     /// Checks the setup; needs neither omimed nor a session bus.
-    Doctor,
+    Doctor {
+        app: Option<u32>,
+    },
     /// Opens oh-my-ime's settings, `omime-settings`, which waits for omimed itself.
     OwnSettings,
     Setup(setup::Options),
@@ -138,7 +142,14 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             force: true,
         },
         ["uninstall", engine] => Command::Uninstall((*engine).to_owned()),
-        ["doctor"] => Command::Doctor,
+        ["doctor"] => Command::Doctor { app: None },
+        ["doctor", "--app", pid] => {
+            let pid = pid
+                .parse::<u32>()
+                .context("--app needs a positive process id")?;
+            anyhow::ensure!(pid > 0, "--app needs a positive process id");
+            Command::Doctor { app: Some(pid) }
+        }
         ["settings"] => Command::OwnSettings,
         ["setup", rest @ ..] => Command::Setup(setup::Options::parse(rest)?),
         ["status", "--watch"] => Command::Watch { json: false },
@@ -256,8 +267,8 @@ async fn run(command: Command) -> anyhow::Result<ExitCode> {
         Command::Setup(options) => setup::run(options).await?,
         Command::Daemon(command) => run_daemon(command).await?,
         Command::OwnSettings => return Err(open_own_settings()),
-        Command::Doctor => {
-            let clean = doctor::run().await?;
+        Command::Doctor { app } => {
+            let clean = doctor::run(app).await?;
             return Ok(if clean {
                 ExitCode::SUCCESS
             } else {
@@ -755,7 +766,16 @@ mod tests {
         assert!(
             matches!(parse(&args("uninstall echo")), Ok(Some(Command::Uninstall(e))) if e == "echo")
         );
-        assert!(matches!(parse(&args("doctor")), Ok(Some(Command::Doctor))));
+        assert!(matches!(
+            parse(&args("doctor")),
+            Ok(Some(Command::Doctor { app: None }))
+        ));
+        assert!(matches!(
+            parse(&args("doctor --app 123")),
+            Ok(Some(Command::Doctor { app: Some(123) }))
+        ));
+        assert!(parse(&args("doctor --app 0")).is_err());
+        assert!(parse(&args("doctor --app nope")).is_err());
         assert!(parse(&args("doctor --json")).is_err());
         assert!(parse(&args("install")).is_err());
         assert!(parse(&args("install --force")).is_err());

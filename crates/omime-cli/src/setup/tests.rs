@@ -85,7 +85,7 @@ impl Drop for Fixture {
 fn preview_is_read_only_and_enables_the_selected_engine_without_hiding_defaults() {
     let f = Fixture::new();
     let p = f.plan(&["--engine", "echo", "--dry-run"]).unwrap();
-    assert_eq!(p.changes.len(), 3);
+    assert_eq!(p.changes.len(), 5);
     assert!(!f.locations.config_dir.exists());
     assert!(!f.locations.state_dir.exists());
     let text = &p
@@ -98,6 +98,52 @@ fn preview_is_read_only_and_enables_the_selected_engine_without_hiding_defaults(
     let parsed = Config::parse(text).unwrap().0;
     assert_eq!(parsed.initial_input_method.as_deref(), Some("echo"));
     assert_eq!(parsed.engines, Some(vec!["sparkle".into(), "echo".into()]));
+}
+
+#[test]
+fn setup_updates_application_launch_environments_and_undo_keeps_other_edits() {
+    let f = Fixture::new();
+    let root = f.locations.config_dir.parent().unwrap();
+    let uwsm = root.join("uwsm/env-hyprland");
+    let systemd = root.join("environment.d/90-oh-my-ime.conf");
+    let original = "# existing session\nexport QT_IM_MODULE=wayland\n";
+    f.write(&uwsm, original);
+    let plan = f.plan(&["--engine", "echo"]).unwrap();
+    f.apply(&plan);
+    let text = fs::read_to_string(&uwsm).unwrap();
+    assert!(text.starts_with(original));
+    assert!(text.contains("export QT_IM_MODULE='fcitx'"));
+    assert!(text.contains("export QT_IM_MODULES='wayland;fcitx'"));
+    assert!(
+        fs::read_to_string(&systemd)
+            .unwrap()
+            .contains("XMODIFIERS=@im=fcitx")
+    );
+    f.apply(&f.plan(&[]).unwrap());
+    assert_eq!(fs::read_to_string(&uwsm).unwrap(), text);
+    f.write(&uwsm, &(text + "export ANOTHER_SETTING=yes\n"));
+    undo(&f.locations, false).unwrap();
+    assert_eq!(
+        fs::read_to_string(uwsm).unwrap(),
+        format!("{original}export ANOTHER_SETTING=yes\n")
+    );
+    assert!(!systemd.exists());
+}
+
+#[test]
+fn setup_will_not_replace_an_existing_launch_environment_file() {
+    let f = Fixture::new();
+    let systemd = f
+        .locations
+        .config_dir
+        .parent()
+        .unwrap()
+        .join("environment.d/90-oh-my-ime.conf");
+    f.write(&systemd, "QT_IM_MODULE=ibus\n");
+    assert!(f.plan(&[]).is_err());
+    assert_eq!(fs::read_to_string(&systemd).unwrap(), "QT_IM_MODULE=ibus\n");
+    assert!(!f.main("lua").exists());
+    assert!(!f.locations.journal.exists());
 }
 
 #[test]

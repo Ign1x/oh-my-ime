@@ -219,5 +219,5 @@ msgstr "合成器不报告哪个应用有焦点，因此应用无法记住各自
 msgid "The input method could not be selected: {}"
 msgstr "无法选中输入法：{}"
 
-msgid "For a full check of your setup, run “omime doctor” in a terminal. omimed's log: “journalctl --user -u omimed”."
-msgstr "要全面检查设置，请在终端运行“omime doctor”。omimed 的日志：“journalctl --user -u omimed”。"
+msgid "For a full check, run “omime doctor”. If one application cannot type, use “omime doctor --app PID” to inspect its launch settings and input plugins. Log: “journalctl --user -u omimed”."
+msgstr "全面检查请运行“omime doctor”。某个应用无法输入时，用“omime doctor --app PID”检查其启动环境和输入插件。日志：“journalctl --user -u omimed”。"

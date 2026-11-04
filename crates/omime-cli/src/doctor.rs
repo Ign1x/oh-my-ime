@@ -18,6 +18,8 @@ use zbus::OwnedVariant;
 
 use crate::DaemonProxy;
 
+mod app;
+
 /// How severe a finding is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -349,20 +351,28 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
         ("GTK_IM_MODULE", "GTK applications"),
         ("QT_IM_MODULE", "Qt applications"),
     ] {
-        if value(name).is_some_and(|v| v.contains("ibus")) {
+        if value(name).is_some_and(|v| v == "ibus") {
             findings.push(Finding::warning(format!(
                 "{name}=ibus: {toolkit} started from this environment look for IBus, \
                  which omimed does not stand in for yet; set {name}=fcitx or unset it"
             )));
         }
     }
-    if !value("QT_IM_MODULE").is_some_and(|v| v.contains("fcitx")) {
+    if !value("QT_IM_MODULE").is_some_and(|v| v == "fcitx" || v == "fcitx5") {
         findings.push(Finding::warning(
-            "QT_IM_MODULE is not fcitx: Qt 5 applications and Qt applications on X11 \
-             (WeChat, WPS) get no input method; with QT_IM_MODULE=fcitx they reach omimed \
-             through its Fcitx5 interface (it needs the fcitx5-qt plugins, which such \
-             applications often bring along)"
+            "QT_IM_MODULE is not fcitx: Qt applications without native text-input support \
+             may fall back to Compose; session setup uses QT_IM_MODULE=fcitx with the \
+             Fcitx5 Qt plugin, and QT_IM_MODULES=wayland;fcitx lets newer Qt prefer Wayland"
                 .to_owned(),
+        ));
+    }
+    if let Some(modules) = value("QT_IM_MODULES")
+        && !modules
+            .split(';')
+            .any(|module| matches!(module.trim(), "fcitx" | "fcitx5"))
+    {
+        findings.push(Finding::warning(
+            "QT_IM_MODULES overrides QT_IM_MODULE in newer Qt but has no Fcitx fallback; session setup uses wayland;fcitx",
         ));
     }
     match value("XMODIFIERS") {
@@ -382,11 +392,12 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
 }
 
 /// Runs every check, prints one line per finding and returns whether nothing is wrong.
-pub async fn run() -> anyhow::Result<bool> {
+pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
+    let application = app_pid.map(app::Application::read).transpose()?;
     let others = other_input_methods(&processes()?);
     let found = discover(&paths::engine_dirs());
     let engines = &found.engines;
-    let installed: Vec<String> = engines.iter().map(|e| e.id().to_owned()).collect();
+    let mut installed: Vec<String> = engines.iter().map(|e| e.id().to_owned()).collect();
     let warnings: Vec<(String, String)> = engines
         .iter()
         .filter_map(|engine| {
@@ -404,7 +415,7 @@ pub async fn run() -> anyhow::Result<bool> {
         })
         .collect();
 
-    let mut findings = daemon_check(&others).await;
+    let mut findings = daemon_check(&others, &mut installed).await;
     findings.extend(config_check(&installed));
     findings.extend(engine_findings(&found.broken, &warnings, &unknown));
     findings.extend(found.unavailable.iter().map(|(id, program)| {
@@ -412,7 +423,45 @@ pub async fn run() -> anyhow::Result<bool> {
             "engine {id} is offered once `{program}` is installed"
         ))
     }));
-    findings.extend(environment_findings(&environment()));
+    let variables = application
+        .as_ref()
+        .map_or_else(environment, |app| app.variables.clone());
+    if let Some(application) = application {
+        findings.extend(application.findings());
+    } else {
+        findings.extend(environment_findings(&variables));
+    }
+    if let Ok(connection) = zbus::Connection::session().await {
+        match crate::launch_env::manager_environment(&connection).await {
+            Ok(Some(manager)) => {
+                let keys: Vec<_> = crate::setup::ENVIRONMENT
+                    .iter()
+                    .map(|(key, _)| *key)
+                    .filter(|key| {
+                        let here = variables
+                            .iter()
+                            .find(|(k, _)| k == key)
+                            .map(|(_, v)| v.as_str())
+                            .unwrap_or("");
+                        here != manager.get(*key).map(String::as_str).unwrap_or("")
+                    })
+                    .collect();
+                if !keys.is_empty() {
+                    findings.push(Finding::warning(format!("{} differs from the systemd user manager: {}; restart the application or open a new terminal after session setup",
+                        if app_pid.is_some() { "the application's launch environment" } else { "this terminal's environment" }, keys.join(", "))));
+                }
+                let vars: Vec<_> = manager.into_iter().collect();
+                for mut finding in environment_findings(&vars) {
+                    finding.text = format!("systemd application launches: {}", finding.text);
+                    findings.push(finding);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => findings.push(Finding::warning(format!(
+                "cannot inspect systemd application launch settings: {error:#}"
+            ))),
+        }
+    }
 
     for finding in &findings {
         println!("{}", finding.line());
@@ -424,7 +473,7 @@ pub async fn run() -> anyhow::Result<bool> {
 ///
 /// Without a session bus or without omimed that is a single problem, and the checks that
 /// do not need the daemon still run.
-async fn daemon_check(others: &[OtherIm]) -> Vec<Finding> {
+async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Finding> {
     let Ok(conn) = zbus::Connection::session().await else {
         return daemon_findings(None, others);
     };
@@ -453,7 +502,7 @@ async fn daemon_check(others: &[OtherIm]) -> Vec<Finding> {
         Ok(diagnosis) => diagnosis,
         Err(e) => return vec![Finding::problem(format!("omimed's `Diagnose` reply: {e}"))],
     };
-    let engines = match proxy.list_engines().await {
+    let engines: Vec<Engine> = match proxy.list_engines().await {
         Ok(engines) => engines
             .into_iter()
             .map(|(id, _name, enabled, state)| Engine { id, enabled, state })
@@ -464,6 +513,13 @@ async fn daemon_check(others: &[OtherIm]) -> Vec<Finding> {
             ))];
         }
     };
+    // Services may have extra manifest paths and programs that this terminal lacks.
+    // A running daemon's engine list is authoritative for its configuration.
+    for engine in &engines {
+        if !installed.contains(&engine.id) {
+            installed.push(engine.id.clone());
+        }
+    }
     let mut findings = daemon_findings(Some(&Daemon { diagnosis, engines }), others);
     if let Some(error) = crate::string(&reply, "input-method-error") {
         findings.push(Finding::problem(format!(
@@ -537,14 +593,19 @@ fn short_path(path: &Path, home: Option<&Path>) -> String {
 
 /// The input method variables of this process's environment.
 fn environment() -> Vec<(String, String)> {
-    ["GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS"]
-        .into_iter()
-        .filter_map(|name| {
-            std::env::var(name)
-                .ok()
-                .map(|value| (name.to_owned(), value))
-        })
-        .collect()
+    [
+        "GTK_IM_MODULE",
+        "QT_IM_MODULE",
+        "QT_IM_MODULES",
+        "XMODIFIERS",
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| (name.to_owned(), value))
+    })
+    .collect()
 }
 
 /// Every process of this user with its `/proc/<pid>/comm`, sorted by pid.

@@ -285,6 +285,8 @@ pub(super) async fn start(
             && ready
             && configured
         {
+            crate::launch_env::apply(&connection).await
+                .context("input is running, but application launch settings could not be updated; retry setup --start or log out and back in")?;
             println!("Input is ready: {}.", crate::format_status(&status, false));
             return Ok(());
         }

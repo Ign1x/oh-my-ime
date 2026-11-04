@@ -128,7 +128,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
 | [Rime](engines/rime) engine: Xiaohe shuangpin, schema settings, horizontal/vertical candidates and appearance options | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
-| `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
+| `omime install/uninstall/doctor`, application checks with `doctor --app PID`, `status --watch` for status bars | ✅ |
 | Tray item: the input method in use and a menu to switch | ✅ |
 | Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
 | Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
@@ -137,11 +137,11 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
 | Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
 | Nix/source installation with a systemd user unit and session templates | ✅ |
-| Hyprland first-run setup, preview, session takeover and undo (`omime setup`) | ✅ Lua and `.conf`; [guide](docs/setup.md) |
+| First-run setup for Hyprland, systemd and UWSM application launches, preview and undo (`omime setup`) | ✅ Lua and `.conf`; [guide](docs/setup.md) |
 | X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
 | Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
 | Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5 and IBus (≥ 1.5.32), tested on sway · 🧩 compat |
-| Per-engine IBus and Fcitx5 addon hosts | 📅 Phase 4 · 🧩 compat |
+| Per-engine IBus hosting | 📅 Deferred · 🧩 compat |
 
 ✅ native support · 🧩 compatibility layer · 🚧 in progress · 📅 planned
 
@@ -230,9 +230,14 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
    `v0.3.0`
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
    (not released yet)
-6. **Phase 4** — per-engine IBus host and Fcitx5 addon host
-7. **Phase 5** — more compositors, C ABI SDK (the tray item, the settings and the native
-   Rime engine are done)
+6. **Platform interface and engines** — settings, switcher, tray menus, notifications,
+   floating panels, Python example and native Rime with configurable candidates ✅
+   (on `main`, not released yet)
+7. **Daily-use readiness** — NixOS/Home Manager packaging, session setup and application
+   diagnostics; broader application testing, documentation and sustained daily use are
+   in progress.
+8. **Later** — KWin/input-method-v1 and further compositor coverage. Per-engine IBus
+   hosting is deferred; a Fcitx5 addon host and a C ABI SDK are outside the current plan.
 
 ## FAQ
 

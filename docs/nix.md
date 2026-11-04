@@ -1,5 +1,7 @@
 # NixOS and Home Manager modules
 
+English | [简体中文](zh-CN/nix.md)
+
 The flake exports two modules that turn the package into declarative configuration:
 
 - `nixosModules.default` configures the system: the package, the systemd user unit,

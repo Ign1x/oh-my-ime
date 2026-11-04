@@ -119,7 +119,26 @@ fn setup_previews_configures_and_undoes_both_hyprland_formats() -> anyhow::Resul
         assert!(preview.contains("Would Create"), "{preview}");
         assert!(!main.exists());
         assert!(!journal.exists());
+        let uwsm = env.dir().join("config/uwsm/env-hyprland");
+        let launch_env = env.dir().join("config/environment.d/90-oh-my-ime.conf");
+        assert!(!uwsm.exists());
+        assert!(!launch_env.exists());
         env.omime(&["setup", "--engine", "echo", "--config", path])?;
+        let output = env
+            .command("sh")
+            .args([
+                "-c",
+                ". \"$1\"; printf '%s\\n' \"$QT_IM_MODULE\" \"$QT_IM_MODULES\" \"$XMODIFIERS\"",
+                "sh",
+            ])
+            .arg(&uwsm)
+            .env("QT_IM_MODULE", "wayland")
+            .output()?;
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout)?,
+            "fcitx\nwayland;fcitx\n@im=fcitx\n"
+        );
         verify_hyprland(&env, &main)?;
         let once = fs::read(&main)?;
         env.omime(&["setup"])?;
@@ -129,10 +148,99 @@ fn setup_previews_configures_and_undoes_both_hyprland_formats() -> anyhow::Resul
         env.omime(&["setup", "--undo"])?;
         assert!(!main.exists());
         assert!(!journal.exists());
+        assert!(!uwsm.exists());
+        assert!(!launch_env.exists());
         assert_eq!(
             fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?,
             original_config
         );
+    }
+    Ok(())
+}
+
+struct UserManager(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+#[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
+impl UserManager {
+    #[zbus(property)]
+    fn environment(&self) -> Vec<String> {
+        self.0.lock().expect("test manager lock").clone()
+    }
+
+    fn set_environment(&self, values: Vec<String>) {
+        let mut environment = self.0.lock().expect("test manager lock");
+        for value in values {
+            let key = value.split_once('=').expect("assignment").0;
+            environment.retain(|s| !s.starts_with(&format!("{key}=")));
+            environment.push(value);
+        }
+    }
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn setup_updates_the_matching_launch_manager_and_leaves_other_sessions_alone() -> anyhow::Result<()>
+{
+    for same_session in [true, false] {
+        let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+        let variable = |name: &str| -> anyhow::Result<String> {
+            let out = env.command("printenv").arg(name).output()?;
+            Ok(String::from_utf8(out.stdout)?.trim().to_owned())
+        };
+        let bus = variable("DBUS_SESSION_BUS_ADDRESS")?;
+        let display = if same_session {
+            variable("WAYLAND_DISPLAY")?
+        } else {
+            "another-desktop".into()
+        };
+        let values = std::sync::Arc::new(std::sync::Mutex::new(vec![
+            format!("WAYLAND_DISPLAY={display}"),
+            "QT_IM_MODULE=wayland".into(),
+            "KEEP_ME=unchanged".into(),
+        ]));
+        let before = values.lock().unwrap().clone();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            let _manager = zbus::connection::Builder::address(bus.as_str())
+                .name("org.freedesktop.systemd1")
+                .serve_at("/org/freedesktop/systemd1", UserManager(values.clone()))
+                .build()
+                .await?;
+            tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let out = env
+                    .command(program_dir().join("omime"))
+                    .args(["setup", "--engine", "echo", "--start"])
+                    .output()?;
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                assert_eq!(out.status.success(), same_session, "{text}");
+                if same_session {
+                    assert!(
+                        text.contains("D-Bus and the systemd user manager"),
+                        "{text}"
+                    );
+                } else {
+                    assert!(text.contains("another session"), "{text}");
+                }
+                Ok(())
+            })
+            .await??;
+            Ok::<_, anyhow::Error>(())
+        })?;
+        let after = values.lock().unwrap();
+        if same_session {
+            assert!(after.contains(&"QT_IM_MODULE=fcitx".into()));
+            assert!(after.contains(&"QT_IM_MODULES=wayland;fcitx".into()));
+            assert!(after.contains(&"XMODIFIERS=@im=fcitx".into()));
+            assert!(after.contains(&"KEEP_ME=unchanged".into()));
+        } else {
+            assert_eq!(*after, before);
+        }
     }
     Ok(())
 }

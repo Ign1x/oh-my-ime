@@ -330,6 +330,12 @@ acceptance still needs a version, Wayland/XWayland mode, module/launch options a
 test date, covering composition, candidate selection, shortcuts, focus, positioning
 and restart. WeChat/WPS and sandboxed Flatpak/Snap builds need their own runs.
 
+Known application issue, tested 2026-11-04: WPS Office 12.1.2.29183 on NixOS/XWayland
+accepted Chinese in documents with the Fcitx module, but its home-page input field
+failed and could temporarily disrupt document input afterwards. The user reproduced
+the same behavior with standalone Fcitx 5.1.23 in the same session. Its precise cause
+in WPS, bundled Qt/CEF or packaging remains unresolved.
+
 | Toolkit / application | Route / requirements |
 |---|---|
 | GTK 3/4, recent Qt 6 and Wayland terminals | text-input-v3, when supported by the installed build |

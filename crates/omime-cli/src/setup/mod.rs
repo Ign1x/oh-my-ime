@@ -165,7 +165,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
             .context("settings were saved, but input could not be started; correct the reported problem and retry omime setup --start")?;
     }
     println!(
-        "Log out and back into Hyprland so applications inherit the input settings, then run omime doctor."
+        "Session configuration is ready for Hyprland, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
     );
     println!(
         "Qt applications need their Fcitx5 input module (fcitx5-qt); see docs/hyprland.md for application requirements."
@@ -296,6 +296,67 @@ fn prepare_with(
         original,
         content,
         Kind::Whole,
+    );
+
+    // Applications launched by the user manager or UWSM do not inherit Hyprland's
+    // environment. Configure their launch environments as part of the same journal.
+    let config_root = locations
+        .config_dir
+        .parent()
+        .context("no configuration directory")?;
+    let systemd_env = config_root.join("environment.d/90-oh-my-ime.conf");
+    let (current, original) = base(&systemd_env)?;
+    ensure!(
+        original.is_none(),
+        "{} already exists outside setup",
+        systemd_env.display()
+    );
+    let mut content = String::from("# Managed by omime setup.\n");
+    for (key, value) in ENVIRONMENT {
+        content += &format!("{key}={value}\n");
+    }
+    add_file(
+        &mut record,
+        &mut changes,
+        systemd_env,
+        current,
+        original,
+        content,
+        Kind::Whole,
+    );
+
+    let uwsm_env = config_root.join("uwsm/env-hyprland");
+    let (current, original) = base(&uwsm_env)?;
+    let mut content = original.clone().unwrap_or_default();
+    ensure!(
+        !content.contains("omime setup begin"),
+        "{} has a setup block without its journal",
+        uwsm_env.display()
+    );
+    let mut block = if content.is_empty() || content.ends_with('\n') {
+        String::new()
+    } else {
+        "\n".into()
+    };
+    block += "# omime setup begin\n";
+    for (key, value) in ENVIRONMENT {
+        block += &format!("export {key}={}\n", shell_quote(value));
+    }
+    block += "# omime setup end\n";
+    content += &block;
+    add_file(
+        &mut record,
+        &mut changes,
+        uwsm_env,
+        current,
+        original,
+        content,
+        Kind::Text {
+            edits: vec![Edit {
+                before: String::new(),
+                after: block,
+            }],
+        },
     );
 
     if let Some(target) = engine {
