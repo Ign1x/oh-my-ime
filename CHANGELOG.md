@@ -191,6 +191,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- CI's Nix development shells provide librime at runtime, including for cached
+  binaries built outside Nix. Rime settings tests retain the library-path wrapper
+  when testing a local engine with an installed daemon.
 - Closing an engine's settings window after typing no longer crashes sway 1.12.
   Hidden candidate windows now release their input-popup role objects, which sway
   otherwise keeps tracking across focus changes. Showing candidates recreates the

@@ -24,12 +24,14 @@
             librime
             wayland
           ];
-          # Libraries that toolkits (winit/Slint, Mesa) dlopen at runtime.
+          # Runtime libraries, including those toolkits (winit/Slint, Mesa) dlopen.
           runtimeLibs = with pkgs; [
             fontconfig
             freetype
             libGL
             libxkbcommon
+            # CI may reuse a Rime binary linked outside this Nix shell.
+            librime
             vulkan-loader
             wayland
           ];

@@ -161,9 +161,17 @@ const SETTINGS_ID: &str = "io.github.ign1x.OhMyIme.Rime";
 fn settings_env(engine: TestEngine) -> anyhow::Result<TestEnv> {
     let mut env = TestEnv::prepare(std::slice::from_ref(&engine))?;
     // Use the shipped manifest, including its settings command and restart policy.
+    // Keep the harness's library-path wrapper when an installed daemon launches a
+    // locally built Rime: installed daemons intentionally clear LD_LIBRARY_PATH.
+    let path = env.dir().join("engines/rime/engine.toml");
+    let generated = std::fs::read_to_string(&path)?;
+    let command = generated
+        .lines()
+        .find_map(|line| line.strip_prefix("exec = "))
+        .context("the harness's engine command")?;
     let manifest = include_str!("../../../engines/rime/engine.toml")
-        .replace("[\"omime-rime\"", &format!("[{:?}", engine.program));
-    std::fs::write(env.dir().join("engines/rime/engine.toml"), manifest)?;
+        .replace("[\"omime-rime\"", command.trim_end_matches(']'));
+    std::fs::write(path, manifest)?;
     let output = env
         .command("swaymsg")
         .arg(format!(
