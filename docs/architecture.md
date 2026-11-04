@@ -210,10 +210,13 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
   `/io/github/ign1x/OhMyIme`. It has `Register`, out-of-band actions (for example committing
   after a mouse click on a candidate), `SetPopupVisible`, `SetStatus` and `RequestSwitch`.
   Everything except `Register` is fire-and-forget.
-- Key events time out after 200 ms by default. On timeout the key is forwarded to the
+- Field activation allows at least one second (or `key_timeout_ms`, if longer) to
+  load a schema or dictionary, with incoming keys queued in order. Key events still
+  time out after 200 ms by default. On timeout the key is forwarded to the
   application and later keys bypass that context until the request completes and a
   queued `Reset` finishes. A call that still has not completed after two further
-  timeout intervals causes its engine to be restarted. Replies abandoned by switching,
+  key-timeout intervals causes its engine to be restarted; this also bounds a stuck
+  activation. Replies abandoned by switching,
   deactivation or process exit are discarded without modifying the current context.
 - Composition belongs to a `ContextId`. Multiple contexts can coexist; the bundled
   engines store separate state for each. Engine selection and popup placement remain

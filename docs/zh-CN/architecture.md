@@ -77,7 +77,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 
 - `io.github.ign1x.OhMyIme.Engine1` 由引擎在 `/io/github/ign1x/OhMyIme/Engine` 导出。它包含 `Activate`、`Deactivate`、`UpdateContext`、`ProcessKey`、`Reset` 和 `Shutdown`。`ProcessKey` 返回 `(handled, actions)`，其中 `actions` 是一个有序列表，包含上屏、预编辑、删除周围文本和转发按键等操作。
 - `io.github.ign1x.OhMyIme.EngineHost1` 由守护进程在 `/io/github/ign1x/OhMyIme` 导出。它包含 `Register`、带外操作（例如在鼠标点击候选词之后上屏）、`SetPopupVisible`、`SetStatus` 和 `RequestSwitch`。除 `Register` 外，一切都是发后即忘。
-- 按键事件默认 200 ms 超时。超时后按键被转发给应用，后续按键绕过该上下文，直到旧请求完成、排队的 `Reset` 完成。若再经过两个超时间隔仍未完成请求，就重启该引擎。切换、失焦或进程退出后被放弃的回复只被丢弃，不修改当前上下文。
+- 输入框激活时至少允许 1 秒加载方案或词库（若 `key_timeout_ms` 更长则采用该值），期间到达的按键按顺序排队。普通按键事件仍默认 200 ms 超时。超时后按键被转发给应用，后续按键绕过该上下文，直到旧请求完成、排队的 `Reset` 完成。若再经过两个按键超时间隔仍未完成请求，就重启该引擎；激活请求卡死时也遵循这个上限。切换、失焦或进程退出后被放弃的回复只被丢弃，不修改当前上下文。
 - 组合状态属于 `ContextId`。多个上下文可同时存在，自带引擎按上下文分别保存状态。目前引擎选择与候选窗定位仍为全局状态，正式支持的 UI 使用流程是单 seat 会话。
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
 - 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。

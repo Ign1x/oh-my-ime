@@ -34,6 +34,43 @@ fn a_slow_engine_cannot_hold_up_typing() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn a_slow_activation_keeps_the_first_keys_in_the_engine() -> anyhow::Result<()> {
+    // Loading a schema for a new field can exceed the ordinary 200 ms key budget.
+    let env = TestEnv::start(&[dummy(&["--slow-activate-ms", "450"])], Some("dummy"))?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    env.wait_for_log("activate frontend=")?;
+    env.type_text("abc")?;
+    editor.wait_for_text("abc")?;
+    // Each press and release must have reached the engine, in place of bypassing
+    // it while Activate is still loading the schema.
+    wait_for_count(&env, "processed key", 6);
+    assert_eq!(env.count_in_log("did not answer in time"), 0);
+    assert_eq!(env.count_in_log("engine launched engine=\"dummy\""), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_stuck_activation_returns_keys_and_restarts_its_engine() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[dummy(&["--slow-activate-ms", "10000"]), echo_engine()],
+        Some("dummy"),
+    )?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    env.wait_for_log("activate frontend=")?;
+    env.type_text("abc")?;
+    editor.wait_for_text("abc")?;
+    env.wait_for_log("the engine did not recover after a timeout; restarting it")?;
+    env.omime(&["switch", "echo"])?;
+    env.type_text("de ")?;
+    editor.wait_for_text("abcDE ")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn invalid_viewport_only_disconnects_its_engine() -> anyhow::Result<()> {
     let marker = std::env::temp_dir().join(format!(
         "omime-e2e-misbehaved-{}-{}",

@@ -40,6 +40,9 @@ use frameworks::InnerMethod;
 /// How long keys wait for a hosted input method to start, select its method and
 /// grab the keyboard once activated, before they pass through.
 const HOSTED_WAIT: Duration = Duration::from_secs(1);
+/// Activating a field may load a schema or dictionary for the first time. Give
+/// that setup at least as long as a hosted method, without extending key deadlines.
+const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 /// How often to look whether a hosted input method reads the keys it was given, and
 /// for how long it may read nothing before it counts as hung. Keys handed to a hung
 /// input method are gone, so it is killed and restarted.
@@ -1719,6 +1722,11 @@ impl Core {
         let token = self.next_token;
         let events = self.events.clone();
         let method = request.method();
+        let timeout = if matches!(request, Request::Activate) {
+            self.key_timeout.max(ACTIVATION_TIMEOUT)
+        } else {
+            self.key_timeout
+        };
         let mut key_ref = None;
         match request {
             Request::Activate => {
@@ -1753,7 +1761,7 @@ impl Core {
             token,
             engine,
             method,
-            deadline: Instant::now() + self.key_timeout,
+            deadline: Instant::now() + timeout,
             key: key_ref,
             timed_out: false,
         });

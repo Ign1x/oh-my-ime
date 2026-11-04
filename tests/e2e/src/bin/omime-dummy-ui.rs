@@ -32,12 +32,13 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 const USAGE: &str = "\
 Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport|subsurface]
-                      [--misbehave-once FILE] [--slow-ms N] [--hidden]
+                      [--misbehave-once FILE] [--slow-ms N] [--slow-activate-ms N] [--hidden]
                       [--input-methods ID,ID...] [--properties]";
 
 /// An engine that consumes nothing, optionally slowly.
 struct PassThrough {
     slow: Duration,
+    slow_activate: Duration,
     /// Whether to ask for the window to be shown.
     show: bool,
     /// Input methods of its own, as a Rime engine has schemas.
@@ -93,6 +94,7 @@ impl omime_sdk::Engine for PassThrough {
             info.frontend.as_deref().unwrap_or("?"),
             info.client_preedit
         );
+        std::thread::sleep(self.slow_activate);
         if self.show {
             ctx.host().set_popup_visible(true);
         }
@@ -103,6 +105,10 @@ impl omime_sdk::Engine for PassThrough {
         _ctx: &mut omime_sdk::Context<'_>,
         _key: &omime_sdk::KeyEvent,
     ) -> bool {
+        if !self.slow_activate.is_zero() {
+            // Count requests without logging their contents.
+            println!("processed key");
+        }
         std::thread::sleep(self.slow);
         false
     }
@@ -331,6 +337,7 @@ fn main() -> anyhow::Result<()> {
     let mut misbehave = None;
     let mut once: Option<std::path::PathBuf> = None;
     let mut slow = Duration::ZERO;
+    let mut slow_activate = Duration::ZERO;
     let mut show = true;
     // Input methods of its own, as a Rime engine has schemas; the first is in use.
     let mut input_methods: Vec<omime_sdk::InputMethodInfo> = Vec::new();
@@ -355,6 +362,9 @@ fn main() -> anyhow::Result<()> {
             }
             "--misbehave-once" => once = Some(value()?.into()),
             "--slow-ms" => slow = Duration::from_millis(value()?.parse()?),
+            "--slow-activate-ms" => {
+                slow_activate = Duration::from_millis(value()?.parse()?);
+            }
             "--hidden" => show = false,
             "--properties" => {
                 properties = vec![
@@ -421,6 +431,7 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_default();
         Some(omime_sdk::spawn(PassThrough {
             slow,
+            slow_activate,
             show,
             input_methods,
             current,

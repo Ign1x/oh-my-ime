@@ -56,6 +56,7 @@ Wayland makes this harder:
   forwarding, switching and per-seat state, so engines don't have to.
 - 🛡️ **Recovery.** Native engine timeouts return keys to the application; repeated crashes
   stop the engine. An attributed UI protocol fault quarantines its engine before reconnecting.
+  Initial schema loading gets extra time; a stuck engine still releases queued keys.
 - 🔁 **Compatibility hosts** for the existing IBus and Fcitx5 ecosystems are on the roadmap,
   clearly labelled as such.
 
