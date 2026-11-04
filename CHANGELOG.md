@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Rime settings (`omime settings rime`, or **Configure Rime…** in the tray): choose
+  schemas, candidates per page, Shift behavior, horizontal or vertical candidates,
+  system/light/dark colors and font size. The window is in English and Chinese;
+  schema names use simplified characters except in traditional Chinese locales.
+  Rime's settings preserve other customizations in `default.custom.yaml`, and
+  appearance is stored in `rime.toml`. Files are replaced through temporary files;
+  a failed save keeps the window open for retry. Closing it restarts Rime to deploy
+  the saved changes. The Nix package and installer include the settings command.
 - Settings: `omime-settings`, a window for what config.toml and `omime` used to be
   needed for. It lists your input methods in switching order, to reorder, remove and
   open the settings of, and adds more from what Fcitx 5, IBus and the installed engines
@@ -183,6 +191,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Closing an engine's settings window after typing no longer crashes sway 1.12.
+  Hidden candidate windows now release their input-popup role objects, which sway
+  otherwise keeps tracking across focus changes. Showing candidates recreates the
+  role and reuses the held buffer.
 - Engines with GTK 4 windows no longer make omimed log a warning on every frame: the
   compositor's presentation feedback also names the daemon's own outputs, which the
   bridge now keeps from engines.

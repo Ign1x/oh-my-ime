@@ -128,7 +128,7 @@ flowchart LR
 | Wayland/Fcitx5 明确标记的密码与 PIN 输入框绕过引擎 | ✅；XIM 不提供字段用途 |
 | UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
 | 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
-| [Rime](engines/rime) 引擎：小鹤双拼及 Rime 的其他方案，自己的候选窗 | ✅ |
+| [Rime](engines/rime) 引擎：小鹤双拼、方案设置、横竖排候选窗和外观选项 | ✅ |
 | 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
 | `omime install/uninstall/doctor`，供状态栏使用的 `omime status --watch` | ✅ |
 | 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
@@ -176,6 +176,13 @@ scripts/install.sh
 ```
 
 NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 NixOS 与 Home Manager 模块（[docs/nix.md](docs/nix.md)，英文）。`nix profile install github:Ign1x/oh-my-ime#rime` 会加上 [Rime 引擎](engines/rime)。
+
+`omime settings rime` 打开 Rime 设置，可选择方案、每页候选数、单按 Shift 的行为、
+候选窗横竖排、深浅色和字号。关闭窗口后 Rime 会重启，读取保存的修改。
+Rime 的选项保存在 `~/.local/share/oh-my-ime/rime/default.custom.yaml`，保留其他自定义项；
+候选窗外观保存在 `~/.config/oh-my-ime/rime.toml`。保存失败时窗口会显示错误并允许重试。
+勾选新方案后，在 oh-my-ime 设置中把它加入切换顺序。方案自身的 YAML 配置可能覆盖
+全局页大小和 Shift 选项，可通过“打开用户文件夹”进一步调整。
 
 配置 Hyprland，并试用自带的 Sparkle 表情输入法：
 

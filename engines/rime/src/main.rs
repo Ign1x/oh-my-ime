@@ -10,11 +10,16 @@
 //! after the user changed Rime's configuration. While Rime deploys, which it does the
 //! first time and after changes in its data, keys go to applications as they are.
 //!
+//! `omime-rime --settings` is its settings window (see [`settings`]).
+//!
 //! The engine logic runs on the SDK's thread and the window owns the main thread; both
 //! use librime under one lock.
 
 mod data;
+mod names;
 mod rime;
+mod settings;
+mod style;
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -36,6 +41,82 @@ slint::slint! {
         comment: string,
     }
 
+    // How the window looks, after the engine's settings (rime.toml).
+    export global Look {
+        // 0 as the desktop prefers, 1 light, 2 dark.
+        in-out property <int> appearance;
+        // Candidates in a column rather than a row.
+        in-out property <bool> vertical;
+        // Of the candidates; labels, comments and the preedit are in proportion.
+        in-out property <length> font-size: 18px;
+        out property <bool> dark: self.appearance == 2 || (self.appearance == 0 && Palette.color-scheme == ColorScheme.dark);
+        out property <color> ink: self.dark ? #f2f2f7 : #1c1c1e;
+        out property <color> faint: self.dark ? #ffffff8c : #0000008c;
+        out property <color> accent: self.dark ? #0a84ff : #007aff;
+        out property <color> hover: self.dark ? #ffffff14 : #0000000d;
+    }
+
+    // A candidate, which a click picks.
+    component Cell inherits Rectangle {
+        in property <Item> item;
+        in property <bool> highlighted;
+        callback clicked();
+
+        border-radius: 7px;
+        background: root.highlighted ? Look.accent : touch.has-hover ? Look.hover : transparent;
+        HorizontalLayout {
+            // In a column, the candidate stays at the start of its row.
+            alignment: start;
+            padding-left: 7px;
+            padding-right: 7px;
+            padding-top: 3px;
+            padding-bottom: 3px;
+            spacing: 4px;
+            Text {
+                text: root.item.label;
+                font-size: Look.font-size * 2 / 3;
+                vertical-alignment: center;
+                color: root.highlighted ? #ffffffcc : Look.faint;
+            }
+            Text {
+                text: root.item.text;
+                font-size: Look.font-size;
+                vertical-alignment: center;
+                color: root.highlighted ? #ffffff : Look.ink;
+            }
+            if root.item.comment != "": Text {
+                text: root.item.comment;
+                font-size: Look.font-size * 2 / 3;
+                vertical-alignment: center;
+                color: root.highlighted ? #ffffffcc : Look.faint;
+            }
+        }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    // An arrow that turns the page.
+    component Arrow inherits Rectangle {
+        in property <string> glyph;
+        in property <bool> active;
+        callback clicked();
+
+        width: Look.font-size;
+        Text {
+            text: root.glyph;
+            font-size: Look.font-size;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: root.active ? Look.ink : Look.faint;
+        }
+        TouchArea {
+            enabled: root.active;
+            clicked => { root.clicked(); }
+        }
+    }
+
     export component Candidates inherits Window {
         title: "Rime";
         no-frame: true;
@@ -55,20 +136,15 @@ slint::slint! {
         out property <length> wanted-width: panel.preferred-width + 8px;
         out property <length> wanted-height: panel.preferred-height + 8px;
 
-        property <bool> dark: Palette.color-scheme == ColorScheme.dark;
-        property <color> ink: root.dark ? #f2f2f7 : #1c1c1e;
-        property <color> faint: root.dark ? #ffffff8c : #0000008c;
-        property <color> accent: root.dark ? #0a84ff : #007aff;
-
         panel := Rectangle {
             x: 4px;
             y: 4px;
             width: self.preferred-width;
             height: self.preferred-height;
             border-radius: 10px;
-            background: root.dark ? #2c2c2ef2 : #fbfbfdf5;
+            background: Look.dark ? #2c2c2ef2 : #fbfbfdf5;
             border-width: 1px;
-            border-color: root.dark ? #ffffff1f : #0000001f;
+            border-color: Look.dark ? #ffffff1f : #0000001f;
 
             // The wheel turns pages. Under the candidates, which take the clicks.
             TouchArea {
@@ -91,76 +167,52 @@ slint::slint! {
 
                 if root.preedit != "": Text {
                     text: root.preedit;
-                    color: root.ink;
-                    font-size: 15px;
+                    color: Look.ink;
+                    font-size: Look.font-size * 5 / 6;
                 }
 
-                HorizontalLayout {
+                if !Look.vertical: HorizontalLayout {
                     spacing: 2px;
-                    for item[i] in root.items: Rectangle {
-                        border-radius: 7px;
-                        background: i == root.highlighted ? root.accent : touch.has-hover ? (root.dark ? #ffffff14 : #0000000d) : transparent;
-                        HorizontalLayout {
-                            padding-left: 7px;
-                            padding-right: 7px;
-                            padding-top: 3px;
-                            padding-bottom: 3px;
-                            spacing: 4px;
-                            Text {
-                                text: item.label;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                                color: i == root.highlighted ? #ffffffcc : root.faint;
-                            }
-                            Text {
-                                text: item.text;
-                                font-size: 18px;
-                                vertical-alignment: center;
-                                color: i == root.highlighted ? #ffffff : root.ink;
-                            }
-                            if item.comment != "": Text {
-                                text: item.comment;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                                color: i == root.highlighted ? #ffffffcc : root.faint;
-                            }
-                        }
-                        touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.picked(i); }
-                        }
+                    for item[i] in root.items: Cell {
+                        item: item;
+                        highlighted: i == root.highlighted;
+                        clicked => { root.picked(i); }
                     }
-
                     if root.has-previous || root.has-next: HorizontalLayout {
                         padding-left: 4px;
                         spacing: 2px;
-                        Rectangle {
-                            width: 18px;
-                            Text {
-                                text: "‹";
-                                font-size: 18px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                color: root.has-previous ? root.ink : root.faint;
-                            }
-                            TouchArea {
-                                enabled: root.has-previous;
-                                clicked => { root.turn(true); }
-                            }
+                        Arrow {
+                            glyph: "‹";
+                            active: root.has-previous;
+                            clicked => { root.turn(true); }
                         }
-                        Rectangle {
-                            width: 18px;
-                            Text {
-                                text: "›";
-                                font-size: 18px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                color: root.has-next ? root.ink : root.faint;
-                            }
-                            TouchArea {
-                                enabled: root.has-next;
-                                clicked => { root.turn(false); }
-                            }
+                        Arrow {
+                            glyph: "›";
+                            active: root.has-next;
+                            clicked => { root.turn(false); }
+                        }
+                    }
+                }
+
+                if Look.vertical: VerticalLayout {
+                    spacing: 2px;
+                    for item[i] in root.items: Cell {
+                        item: item;
+                        highlighted: i == root.highlighted;
+                        clicked => { root.picked(i); }
+                    }
+                    if root.has-previous || root.has-next: HorizontalLayout {
+                        alignment: end;
+                        spacing: 2px;
+                        Arrow {
+                            glyph: "‹";
+                            active: root.has-previous;
+                            clicked => { root.turn(true); }
+                        }
+                        Arrow {
+                            glyph: "›";
+                            active: root.has-next;
+                            clicked => { root.turn(false); }
                         }
                     }
                 }
@@ -320,7 +372,7 @@ impl State {
             label: Some(label.to_owned()),
             icon: None,
             tooltip: status
-                .map(|s| s.schema_name.clone())
+                .map(|s| names::display(&s.schema_name))
                 .filter(|n| !n.is_empty()),
         });
         let simplified = status.is_some_and(|s| s.simplified) || self.focused_option("zh_hans");
@@ -395,7 +447,7 @@ impl State {
             .iter()
             .map(|s| InputMethodInfo {
                 id: s.id.clone(),
-                name: s.name.clone(),
+                name: names::display(&s.name),
                 icon: None,
                 label: Some(badge(&s.id, &s.name)),
                 language: Some("zh".to_owned()),
@@ -669,7 +721,12 @@ fn on_window(
 }
 
 fn main() -> std::process::ExitCode {
-    match run() {
+    let result = if std::env::args().nth(1).as_deref() == Some("--settings") {
+        settings::run()
+    } else {
+        run()
+    };
+    match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("omime-rime: {e}");
@@ -680,6 +737,15 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ui = Candidates::new()?;
+    let style = style::Style::load();
+    let look = ui.global::<Look<'_>>();
+    look.set_vertical(style.layout == style::Layout::Vertical);
+    look.set_appearance(match style.appearance {
+        style::Appearance::System => 0,
+        style::Appearance::Light => 1,
+        style::Appearance::Dark => 2,
+    });
+    look.set_font_size(f32::from(u16::try_from(style.font_size).unwrap_or(18)));
     let state = Arc::new(Mutex::new(State::default()));
 
     // Start Rime first: a deployment can take a while, and it runs in its own thread.

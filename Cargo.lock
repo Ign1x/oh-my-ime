@@ -3017,7 +3017,10 @@ name = "omime-rime"
 version = "0.3.0"
 dependencies = [
  "omime-sdk",
+ "serde",
  "slint",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -126,7 +126,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Password and PIN fields reported by Wayland/Fcitx5 bypass engines | ✅; XIM does not report field purpose |
 | UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
 | Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
-| [Rime](engines/rime) engine: Xiaohe shuangpin and Rime's other schemas, its own candidate window | ✅ |
+| [Rime](engines/rime) engine: Xiaohe shuangpin, schema settings, horizontal/vertical candidates and appearance options | ✅ |
 | One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
 | `omime install/uninstall/doctor`, `omime status --watch` for status bars | ✅ |
 | Tray item: the input method in use and a menu to switch | ✅ |
@@ -177,6 +177,10 @@ scripts/install.sh
 NixOS and Home Manager users can import the flake's modules instead
 ([docs/nix.md](docs/nix.md)); `nix profile install github:Ign1x/oh-my-ime#rime` adds
 the [Rime engine](engines/rime).
+
+`omime settings rime` opens Rime's settings: choose schemas, candidates per page,
+Shift behavior, horizontal or vertical candidates, colors and font size. Closing the
+window restarts Rime to read the saved changes.
 
 Configure Hyprland and try the bundled Sparkle engine:
 

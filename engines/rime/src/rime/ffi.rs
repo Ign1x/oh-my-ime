@@ -1,8 +1,9 @@
 //! librime's C API, as much of it as the engine uses: `rime_get_api()` and the table of
-//! functions it returns, declared by hand after `rime_api.h` of librime 1.17 (no
-//! bindgen, and not the GPL `librime` crate). librime grows the table and its structs
+//! functions it returns, and the table of the `levers` module for the settings, declared
+//! by hand after `rime_api.h` and `rime_levers_api.h` of librime 1.17 (no bindgen, and
+//! not the GPL `librime` crate). librime grows the table and its structs
 //! at the end and says how much of them it has in `data_size`, so every function this
-//! engine calls is checked against that before use ([`Api::has`]).
+//! engine calls is checked against that before use ([`static_table`]).
 //!
 //! The safe wrapper is the parent module, [`crate::rime`].
 
@@ -107,6 +108,75 @@ pub struct SchemaList {
     pub list: *mut SchemaListItem,
 }
 
+/// `RimeConfig`: a configuration librime owns.
+#[repr(C)]
+#[derive(Debug)]
+pub struct Config {
+    pub ptr: *mut c_void,
+}
+
+/// `RimeModule`, a module of librime such as `levers`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct Module {
+    pub data_size: c_int,
+    pub module_name: *const c_char,
+    pub initialize: Option<unsafe extern "C" fn()>,
+    pub finalize: Option<unsafe extern "C" fn()>,
+    /// Its own table of functions, which starts with a `data_size`.
+    pub get_api: Option<unsafe extern "C" fn() -> *const c_int>,
+}
+
+/// `RimeCustomSettings`: a configuration file and the user's customizations of it
+/// (`<id>.custom.yaml`). Opaque.
+#[repr(C)]
+#[derive(Debug)]
+pub struct CustomSettings {
+    _placeholder: c_char,
+}
+
+/// `RimeSwitcherSettings`: the customizations of `default.yaml`, with the schemas the
+/// user can choose. A [`CustomSettings`] as well. Opaque.
+#[repr(C)]
+#[derive(Debug)]
+pub struct SwitcherSettings {
+    _placeholder: c_char,
+}
+
+/// `RimeLeversApi` of `rime_levers_api.h`, the table of the `levers` module, which
+/// librime's settings programs use, up to `select_schemas`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct LeversApi {
+    pub data_size: c_int,
+    _custom_settings_init: Unused,
+    pub custom_settings_destroy: unsafe extern "C" fn(*mut CustomSettings),
+    pub load_settings: unsafe extern "C" fn(*mut CustomSettings) -> Bool,
+    pub save_settings: unsafe extern "C" fn(*mut CustomSettings) -> Bool,
+    _customize_bool: Unused,
+    pub customize_int: unsafe extern "C" fn(*mut CustomSettings, *const c_char, c_int) -> Bool,
+    _customize_double: Unused,
+    pub customize_string:
+        unsafe extern "C" fn(*mut CustomSettings, *const c_char, *const c_char) -> Bool,
+    _is_first_run: Unused,
+    pub settings_is_modified: unsafe extern "C" fn(*mut CustomSettings) -> Bool,
+    pub settings_get_config: unsafe extern "C" fn(*mut CustomSettings, *mut Config) -> Bool,
+    pub switcher_settings_init: unsafe extern "C" fn() -> *mut SwitcherSettings,
+    pub get_available_schema_list:
+        unsafe extern "C" fn(*mut SwitcherSettings, *mut SchemaList) -> Bool,
+    pub get_selected_schema_list:
+        unsafe extern "C" fn(*mut SwitcherSettings, *mut SchemaList) -> Bool,
+    pub schema_list_destroy: unsafe extern "C" fn(*mut SchemaList),
+    _get_schema_id: Unused,
+    _get_schema_name: Unused,
+    _get_schema_version: Unused,
+    _get_schema_author: Unused,
+    _get_schema_description: Unused,
+    _get_schema_file_path: Unused,
+    pub select_schemas:
+        unsafe extern "C" fn(*mut SwitcherSettings, *const *const c_char, c_int) -> Bool,
+}
+
 /// What librime calls with `(context_object, session, message_type, message_value)`.
 pub type NotificationHandler =
     unsafe extern "C" fn(*mut c_void, SessionId, *const c_char, *const c_char);
@@ -126,11 +196,11 @@ pub struct Api {
     pub start_maintenance: unsafe extern "C" fn(Bool) -> Bool,
     pub is_maintenance_mode: unsafe extern "C" fn() -> Bool,
     pub join_maintenance_thread: unsafe extern "C" fn(),
-    _deployer_initialize: Unused,
+    pub deployer_initialize: unsafe extern "C" fn(*mut Traits),
     _prebuild: Unused,
     _deploy: Unused,
     _deploy_schema: Unused,
-    _deploy_config_file: Unused,
+    pub deploy_config_file: unsafe extern "C" fn(*const c_char, *const c_char) -> Bool,
     _sync_user_data: Unused,
     pub create_session: unsafe extern "C" fn() -> SessionId,
     pub find_session: unsafe extern "C" fn(SessionId) -> Bool,
@@ -158,17 +228,17 @@ pub struct Api {
     _config_open: Unused,
     _config_close: Unused,
     _config_get_bool: Unused,
-    _config_get_int: Unused,
+    pub config_get_int: unsafe extern "C" fn(*mut Config, *const c_char, *mut c_int) -> Bool,
     _config_get_double: Unused,
     _config_get_string: Unused,
-    _config_get_cstring: Unused,
+    pub config_get_cstring: unsafe extern "C" fn(*mut Config, *const c_char) -> *const c_char,
     _config_update_signature: Unused,
     _config_begin_map: Unused,
     _config_next: Unused,
     _config_end: Unused,
     _simulate_key_sequence: Unused,
     _register_module: Unused,
-    _find_module: Unused,
+    pub find_module: unsafe extern "C" fn(*const c_char) -> *mut Module,
     _run_task: Unused,
     _get_shared_data_dir: Unused,
     _get_user_data_dir: Unused,
@@ -229,16 +299,26 @@ impl Api {
     pub fn get() -> Option<&'static Api> {
         // SAFETY: rime_get_api takes nothing and returns a pointer to a static table
         // (or null), valid for the life of the process.
-        let api = unsafe { rime_get_api().as_ref()? };
-        api.has_all().then_some(api)
+        unsafe { static_table(rime_get_api().cast()) }
     }
+}
 
-    /// Whether the table reaches `change_page`, the last entry declared here. A table
-    /// from an older librime is shorter: what it lacks would be read past its end.
-    fn has_all(&self) -> bool {
-        let declared = std::mem::size_of::<Api>() - std::mem::size_of::<c_int>();
-        usize::try_from(self.data_size).is_ok_and(|size| size >= declared)
+/// Checks a table's header before forming a reference that covers its whole layout.
+///
+/// # Safety
+///
+/// `pointer` is null or a static librime table aligned for `T`. Its first integer is
+/// `data_size`, the available bytes after that integer. When large enough, the table
+/// must contain a valid `T` and stay immutable for the lifetime of the process.
+pub unsafe fn static_table<T>(pointer: *const c_int) -> Option<&'static T> {
+    // SAFETY: only the header is read before checking the table's size.
+    let size = unsafe { pointer.as_ref()? };
+    let declared = std::mem::size_of::<T>() - std::mem::size_of::<c_int>();
+    if usize::try_from(*size).ok()? < declared {
+        return None;
     }
+    // SAFETY: the header covers the full table, valid and static by the caller.
+    unsafe { pointer.cast::<T>().as_ref() }
 }
 
 // SAFETY: the table is static data librime never changes after `rime_get_api`, and

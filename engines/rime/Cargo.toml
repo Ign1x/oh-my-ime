@@ -10,6 +10,10 @@ repository.workspace = true
 
 [dependencies]
 omime-sdk.workspace = true
+# The candidate window's settings, rime.toml.
+serde.workspace = true
+toml.workspace = true
+tempfile = "3"
 # Slint is used under its royalty-free license, as in Sparkle. The software renderer
 # works everywhere; femtovg uses the GPU when available.
 slint = { version = "1.16", default-features = false, features = [

@@ -110,13 +110,16 @@ compositor's point of view, the input method's own surfaces.
   `zxdg_decoration_manager_v1` always says "server side", so toolkits drop their title
   bars, and a virtual `wl_data_device_manager` gives toolkits that insist on one an empty
   clipboard: engines never see the user's clipboard.
-- **Popup lifecycle.** Each engine surface receives the input-popup role once, right
-  before the commit that should map it, and keeps it for life. Windows are hidden until
+- **Popup lifecycle.** Each engine surface receives an input-popup role object right
+  before the commit that should map it. Windows are hidden until
   their engine calls `SetPopupVisible(true)`, and only the active engine's windows are
   shown. To hide a window, the bridge injects `attach(NULL)` + `commit` and swallows the
-  compositor's release of the last buffer, holding it on the compositor's behalf; showing
-  the window again re-attaches that buffer instantly, without waiting for the toolkit to
-  draw. Buffers committed while hidden replace the held one. While an X11 application has
+  compositor's release of the last buffer, holding it on the compositor's behalf. It
+  also destroys the popup role object so an unmapped popup cannot retain compositor
+  focus references when an application window closes (a crash in sway 1.12). Showing
+  the window again recreates the role object and re-attaches that buffer instantly,
+  without waiting for the toolkit to draw. Buffers committed while hidden replace the
+  held one. While an X11 application has
   focus and no Wayland text field does, a shown window goes to a mirror instead; see
   [X11 applications](#x11-applications).
 - **Scale.** Compositors report an input popup's fractional scale only once it is
@@ -229,6 +232,17 @@ Engines connect to a private peer-to-peer D-Bus socket whose address is in
 - The protocol is versioned by interface name (major) and negotiated at `Register` (minor).
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.
+
+## Rime settings
+
+`omime-rime --settings` is a separate Slint process on the real compositor, opened
+through the engine manifest's settings command. It uses librime's `levers` module
+as a deployer without input sessions. Schema selection, page size and Shift behavior
+are patches in the engine's `default.custom.yaml`; appearance is in
+`$XDG_CONFIG_HOME/oh-my-ime/rime.toml`. Each file is staged before replacement and
+save errors stay visible in the window. The manifest requests a restart when the
+settings process exits, so the engine reads the appearance and deploys changed Rime
+configuration. No engine-protocol changes are needed.
 
 ## Hosted input methods
 

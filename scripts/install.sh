@@ -55,6 +55,7 @@ install_manifest() {
   while IFS= read -r manifest_line; do
     case "$manifest_line" in
       "exec = [\"$manifest_binary\"]") printf 'exec = ["%s/bin/%s"]\n' "$QUOTED_PREFIX" "$manifest_binary" ;;
+      "exec = [\"$manifest_binary\", \"--settings\"]") printf 'exec = ["%s/bin/%s", "--settings"]\n' "$QUOTED_PREFIX" "$manifest_binary" ;;
       *) printf '%s\n' "$manifest_line" ;;
     esac
   done < "$manifest_source" > "$ENGINES/$manifest_engine/engine.toml"

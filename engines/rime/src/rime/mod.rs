@@ -7,6 +7,7 @@
 #![allow(unsafe_code)]
 
 mod ffi;
+mod levers;
 
 use std::ffi::{CString, c_char, c_void};
 use std::path::Path;
@@ -15,6 +16,7 @@ use std::sync::mpsc::Sender;
 
 use ffi::Api;
 pub use ffi::SessionId;
+pub use levers::{Available, Levers};
 
 /// What librime tells the engine on its own, from its threads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,35 +110,56 @@ fn c_text(text: &str) -> Option<CString> {
     CString::new(text).ok()
 }
 
+/// The strings of librime's traits, which must outlive the calls that take them.
+struct TraitStrings {
+    shared: CString,
+    user: CString,
+    name: CString,
+    version: CString,
+    app: CString,
+    log_dir: CString,
+}
+
+impl TraitStrings {
+    fn new(shared: &Path, user: &Path) -> Result<Self, String> {
+        Ok(Self {
+            shared: c_path(shared).ok_or("the shared data directory has a NUL")?,
+            user: c_path(user).ok_or("the user data directory has a NUL")?,
+            name: c_text("oh-my-ime").ok_or("a NUL")?,
+            version: c_text(env!("CARGO_PKG_VERSION")).ok_or("a NUL")?,
+            app: c_text("rime.oh-my-ime").ok_or("a NUL")?,
+            // Only to stderr, which omimed logs: no log files in /tmp.
+            log_dir: c_text("").ok_or("a NUL")?,
+        })
+    }
+
+    fn traits(&self) -> ffi::Traits {
+        ffi::Traits {
+            data_size: ffi::data_size::<ffi::Traits>(),
+            shared_data_dir: self.shared.as_ptr(),
+            user_data_dir: self.user.as_ptr(),
+            distribution_name: self.name.as_ptr(),
+            distribution_code_name: self.name.as_ptr(),
+            distribution_version: self.version.as_ptr(),
+            app_name: self.app.as_ptr(),
+            modules: std::ptr::null(),
+            // Errors only: building a dictionary warns about every entry it cannot
+            // spell, hundreds of lines in omimed's log.
+            min_log_level: 2,
+            log_dir: self.log_dir.as_ptr(),
+            prebuilt_data_dir: std::ptr::null(),
+            staging_dir: std::ptr::null(),
+        }
+    }
+}
+
 impl Rime {
     /// Starts librime with the shared data in `shared` and the user's in `user`, and
     /// deploys in the background what is not built yet: [`Notice`]s go to `notices`.
     pub fn start(shared: &Path, user: &Path, notices: Sender<Notice>) -> Result<Self, String> {
         let api = Api::get().ok_or("librime is older than 1.11, or not librime")?;
-        let shared = c_path(shared).ok_or("the shared data directory has a NUL")?;
-        let user = c_path(user).ok_or("the user data directory has a NUL")?;
-        let name = c_text("oh-my-ime").ok_or("a NUL")?;
-        let code_name = c_text("oh-my-ime").ok_or("a NUL")?;
-        let version = c_text(env!("CARGO_PKG_VERSION")).ok_or("a NUL")?;
-        let app = c_text("rime.oh-my-ime").ok_or("a NUL")?;
-        // Only to stderr, which omimed logs: no log files in /tmp.
-        let log_dir = c_text("").ok_or("a NUL")?;
-        let mut traits = ffi::Traits {
-            data_size: ffi::data_size::<ffi::Traits>(),
-            shared_data_dir: shared.as_ptr(),
-            user_data_dir: user.as_ptr(),
-            distribution_name: name.as_ptr(),
-            distribution_code_name: code_name.as_ptr(),
-            distribution_version: version.as_ptr(),
-            app_name: app.as_ptr(),
-            modules: std::ptr::null(),
-            // Errors only: building a dictionary warns about every entry it cannot
-            // spell, hundreds of lines in omimed's log.
-            min_log_level: 2,
-            log_dir: log_dir.as_ptr(),
-            prebuilt_data_dir: std::ptr::null(),
-            staging_dir: std::ptr::null(),
-        };
+        let strings = TraitStrings::new(shared, user)?;
+        let mut traits = strings.traits();
         if let Ok(mut guard) = NOTICES.lock() {
             *guard = Some(notices);
         }

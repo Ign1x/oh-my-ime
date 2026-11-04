@@ -72,8 +72,9 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     manifest=$out/share/oh-my-ime/engines/rime/engine.toml
     install -Dm644 engines/rime/engine.toml $manifest
+    # The engine's command line and its settings window's.
     substituteInPlace $manifest \
-      --replace-fail 'exec = ["omime-rime"]' "exec = [\"$out/bin/omime-rime\"]"
+      --replace-fail '["omime-rime"' "[\"$out/bin/omime-rime\""
     # Rime's schemas and dictionaries, unless the user points elsewhere.
     wrapProgram $out/bin/omime-rime \
       --set-default OMIME_RIME_SHARED_DATA ${rime-data}/share/rime-data

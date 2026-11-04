@@ -1270,11 +1270,15 @@ impl BridgeSurface {
                 self.show(surface);
             }
             Presentation::Mirror => {
-                self.hide(surface);
+                self.drop_popup(surface);
                 self.update_mirror(surface);
             }
             Presentation::Hidden => {
-                self.hide(surface);
+                // An unmapped popup still follows text-input focus in sway 1.12.
+                // Keeping its role after hiding can leave a dangling scene reference
+                // when a settings window closes. Release the role while hidden;
+                // show() recreates it with the held buffer when candidates return.
+                self.drop_popup(surface);
                 self.drop_mirror(true);
             }
         }

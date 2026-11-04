@@ -10,7 +10,7 @@ of its own at the text cursor.
   letters. Each schema is an input method: `omime switch rime/luna_pinyin`, the tray
   menu, `Ctrl+Shift+Space`.
 - **The candidate window** follows the text cursor, numbered as Rime numbers them
-  (`1`–`5`, or the schema's own keys), light or dark as the desktop prefers. Click a
+  (`1`–`5`, or the schema's own keys), in a row or a column, light or dark. Click a
   candidate to pick it; the arrows and the wheel turn pages. Applications that leave the
   preedit to the input method, such as xterm, see it in the window.
 - **One composition per text field**; Chinese or English letters are the same in all.
@@ -18,6 +18,35 @@ of its own at the text cursor.
   letters (`ascii_mode`), full width (`full_shape`), simplified characters
   (`simplification`), English punctuation (`ascii_punct`), and "Deploy again"
   (`deploy`) after changing Rime's configuration.
+
+## Settings
+
+Open **Configure Rime…** from the tray, the settings button beside a Rime input
+method in oh-my-ime's settings, or run `omime settings rime`. The window offers:
+
+- Schemas to offer as Rime input methods. Add them to the switching order in
+  oh-my-ime's settings afterwards.
+- Candidates per page (1–10) and what pressing Shift alone does: switch and commit
+  the letters, commit the candidate, clear the composition, or do nothing.
+- A horizontal or vertical candidate window, system/light/dark appearance, and
+  candidate font size (12–32 logical pixels).
+
+Save writes Rime's choices into `default.custom.yaml` in its user directory,
+preserving unrelated customizations. Candidate appearance goes into
+`~/.config/oh-my-ime/rime.toml` (`$XDG_CONFIG_HOME/oh-my-ime/rime.toml`):
+
+```toml
+layout = "vertical"       # "horizontal" is the default
+appearance = "system"     # or "light", "dark"
+font_size = 18
+```
+
+When the window closes, oh-my-ime restarts Rime and it deploys the changes. A failed
+save keeps the window open with an error so you can retry. Cancel discards choices
+not yet saved. A schema with its own page-size or Shift overrides may take precedence
+over these defaults; **Open the user folder** gives access to its custom YAML files.
+The settings window is available in English and Chinese; schema names use simplified
+characters except in traditional Chinese locales.
 
 ## Data
 

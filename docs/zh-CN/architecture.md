@@ -56,7 +56,7 @@ Bridge 是基于 [`wl-proxy`](https://crates.io/crates/wl-proxy) 构建的多路
 - **逐引擎的 socket。** 每个引擎得到 `$XDG_RUNTIME_DIR/oh-my-ime/<engine-id>/wayland`（目录权限 `0700`）。`WAYLAND_DISPLAY` 被设为这个相对名称，`DISPLAY` 被移除，以免工具包悄悄回退到 X11。守护进程自己接受连接，因此始终知道某个客户端属于哪个引擎。
 - **全局对象过滤。** 引擎看到的是一个虚拟 registry。它包含 UI 需要的全局对象（合成器、子合成器、shm、不带键盘能力的 seat、输出、xdg-output、linux-dmabuf、viewporter、分数缩放、光标形状、单像素缓冲、呈现时间），并隐藏其余一切（text input、input method、虚拟键盘、layer shell、捕获类协议）。绑定时会核对通告的版本，并在守护进程自己的 registry 上执行。守护进程同步获知全局对象，因此引擎完成第一次 roundtrip 时 registry 绝不会是残缺的。
 - **虚拟协议。** `xdg_wm_base` 由 Bridge 代为应答：引擎创建一个普通的无边框 `xdg_toplevel`，Bridge 用 `configure(0, 0, [])` 应答初始 commit，并关闭 `xdg_popup`。虚拟的 `zxdg_decoration_manager_v1` 总是回答“服务器端”，于是工具包会去掉标题栏；虚拟的 `wl_data_device_manager` 为强依赖剪贴板的工具包提供空剪贴板：引擎永远看不到用户的剪贴板。
-- **弹窗生命周期。** 每个引擎 surface 只在应当映射它的那次 commit 之前获得一次 input-popup 角色，并终身持有。窗口在引擎调用 `SetPopupVisible(true)` 之前一直隐藏，且只显示当前激活引擎的窗口。隐藏窗口时，Bridge 注入 `attach(NULL)` + `commit`，并吞掉合成器对最后一个 buffer 的 release，代合成器扣住该 buffer；再次显示时立即重新 attach 该 buffer，无需等待工具包重绘。隐藏期间提交的 buffer 会替换被扣住的那个。当 X11 应用拥有焦点且没有 Wayland 文本框时，显示中的窗口改为出现在镜像上；见 [X11 应用](#x11-应用)。
+- **弹窗生命周期。** 每个引擎 surface 在应当映射它的那次 commit 之前获得 input-popup 角色对象。窗口在引擎调用 `SetPopupVisible(true)` 之前一直隐藏，且只显示当前激活引擎的窗口。隐藏窗口时，Bridge 注入 `attach(NULL)` + `commit`，并吞掉合成器对最后一个 buffer 的 release，代合成器扣住该 buffer；同时销毁弹窗角色对象，避免未映射的弹窗在应用窗口关闭后仍保留合成器中的焦点引用（会导致 sway 1.12 崩溃）。再次显示时重建角色对象并立即重新 attach 该 buffer，无需等待工具包重绘。隐藏期间提交的 buffer 会替换被扣住的那个。当 X11 应用拥有焦点且没有 Wayland 文本框时，显示中的窗口改为出现在镜像上；见 [X11 应用](#x11-应用)。
 - **缩放。** 合成器只在输入法弹窗映射之后才报告其分数缩放；Bridge 会把最近一次已知的缩放立即交给新出现的引擎 surface。镜像的首选分数缩放会像来自引擎自己的 surface 一样送达引擎。
 - **帧回调。** 引擎窗口的帧回调由 Bridge 自己应答：它向当前显示该窗口的 surface（弹窗或镜像）请求一帧，并在该 surface 的帧到达时应答引擎的回调。窗口在两者之间移动时，工具包不会卡住。
 - **输入路由。** 指针的 `enter`、`motion`、`button`、`axis` 和 `frame` 只送给指针进入其 surface 的那个引擎。`wl_surface.enter(output)` 之类的事件按所属者过滤。镜像上的指针事件会作为其自身 surface 上的事件送达引擎。
@@ -83,6 +83,15 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。
 - 1.1 版还让引擎拥有菜单：`SetProperties` 以扁平列表公布动作、开关和选择（中文或英文标点、全角或半角），每一项写明自己所在的子菜单；某一项被点击时，守护进程调用 `ActivateProperty`。控制 API 提供的就是正在使用的引擎的菜单。
 - 协议按接口名区分版本（主版本号），并在 `Register` 时协商（次版本号）。可扩展参数使用 `a{sv}`，未知键被忽略。`protocol/` 中的 XML 是权威来源。
+
+## Rime 设置
+
+`omime-rime --settings` 是连接真实合成器的独立 Slint 进程，由引擎清单里的设置命令打开。
+它通过 librime 的 `levers` 模块读写配置，仅初始化部署器，不创建输入会话。
+方案列表、页大小和 Shift 行为写入引擎的 `default.custom.yaml` 补丁；外观保存在
+`$XDG_CONFIG_HOME/oh-my-ime/rime.toml`。每个文件先写入临时文件，再替换正式配置；
+保存失败时窗口保留错误提示。清单要求设置进程退出后重启引擎，让它重新读取外观并部署
+修改后的 Rime 配置，无需扩展引擎协议。
 
 ## 被托管的输入法
 
