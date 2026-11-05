@@ -9,6 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+omime-proto.workspace = true
 omime-sdk.workspace = true
 # The recent-emoji panel on a layer surface of the compositor, and its color emoji,
 # which Slint's software renderer cannot draw: the versions Slint uses.

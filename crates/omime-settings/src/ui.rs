@@ -430,9 +430,13 @@ mod tests {
     /// A window in English showing [`snapshot`], its controller, and what it asks
     /// omimed for.
     fn open() -> (SettingsWindow, Rc<Controller>, UnboundedReceiver<Command>) {
+        open_in("C")
+    }
+
+    fn open_in(locale: &str) -> (SettingsWindow, Rc<Controller>, UnboundedReceiver<Command>) {
         i_slint_backend_testing::init_no_event_loop();
         let window = SettingsWindow::new().expect("a window");
-        crate::tr::install(&window, "C");
+        crate::tr::install(&window, locale);
         let (commands, requests) = unbounded_channel();
         let controller = Controller::new(&window, commands);
         controller.apply(Event::Snapshot(Box::new(snapshot())));
@@ -679,5 +683,20 @@ mod tests {
             .collect();
         assert_eq!(kinds, ["display", "seat", "focus"]);
         assert_eq!(backend.get_daemon_version(), "0.6.0");
+    }
+
+    #[test]
+    fn chinese_controls_keep_their_actions_and_interpolated_names() {
+        let (window, _controller, mut requests) = open_in("zh-Hans");
+        click(&window, "上移拼音");
+        assert_eq!(
+            engines(&mut requests),
+            ["fcitx5/pinyin", "fcitx5/shuangpin", "echo"]
+        );
+        click(&window, "拼音的设置");
+        assert_eq!(
+            requests.try_recv().unwrap(),
+            Command::OpenSettings("fcitx5".to_owned())
+        );
     }
 }

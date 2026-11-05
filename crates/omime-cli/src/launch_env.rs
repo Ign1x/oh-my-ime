@@ -1,6 +1,7 @@
 //! The launch environment of applications activated through D-Bus or systemd.
 //! Use the session bus explicitly: never fall back to another user's manager socket.
 
+use omime_proto::tr;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
@@ -30,7 +31,7 @@ pub async fn manager_environment(
         ))
     })
     .await
-    .context("the session manager did not answer")?
+    .context(tr!("the session manager did not answer"))?
 }
 
 fn same_display(expected: &str, actual: &str, runtime: &Path) -> bool {
@@ -58,7 +59,11 @@ pub async fn apply(conn: &zbus::Connection) -> anyhow::Result<()> {
         let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_default();
         ensure!(
             same_display(&expected, actual, Path::new(&runtime)),
-            "the user manager belongs to Wayland display {actual}; launch settings were not changed for another session"
+            "{}",
+            tr!(
+                "the user manager belongs to Wayland display {actual}; launch settings were not changed for another session",
+                actual = actual
+            )
         );
     }
     let values: HashMap<&str, &str> = crate::setup::ENVIRONMENT.into_iter().collect();
@@ -73,7 +78,7 @@ pub async fn apply(conn: &zbus::Connection) -> anyhow::Result<()> {
         ),
     )
     .await
-    .context("D-Bus did not update the launch environment in time")??;
+    .context(tr!("D-Bus did not update the launch environment in time"))??;
     if manager_env.is_some() {
         let values: Vec<String> = crate::setup::ENVIRONMENT
             .iter()
@@ -90,15 +95,24 @@ pub async fn apply(conn: &zbus::Connection) -> anyhow::Result<()> {
             ),
         )
         .await
-        .context("systemd did not update the launch environment in time")??;
-        println!("Application launch settings updated for D-Bus and the systemd user manager.");
+        .context(tr!("systemd did not update the launch environment in time"))??;
+        println!(
+            "{}",
+            tr!("Application launch settings updated for D-Bus and the systemd user manager.")
+        );
     } else {
         println!(
-            "Application launch settings updated for D-Bus (no systemd user manager on this bus)."
+            "{}",
+            tr!(
+                "Application launch settings updated for D-Bus (no systemd user manager on this bus)."
+            )
         );
     }
     println!(
-        "Restart existing applications to inherit these settings. Compositor and terminal launchers may need a new login."
+        "{}",
+        tr!(
+            "Restart existing applications to inherit these settings. Compositor and terminal launchers may need a new login."
+        )
     );
     Ok(())
 }

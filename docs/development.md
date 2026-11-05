@@ -18,10 +18,16 @@ grim, dbus-daemon, Fcitx 5 and IBus. Rust comes from rustup and `rust-toolchain.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+python3 scripts/check-translations.py
 cargo deny check
 ```
 
 ## End-to-end tests
+
+The [localization guide](localization.md) covers the shared translation catalog.
+`localization.rs` checks Chinese tray labels and diagnostics, stable control IDs,
+and undoing a Chinese setup from an English session. Test processes default to
+`C.UTF-8`; locale tests select their language per process.
 
 `tests/e2e` starts a private headless sway, a private session bus and omimed for every
 test, and types with a virtual keyboard into `omime-ti-client`, a tiny editor that

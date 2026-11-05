@@ -55,8 +55,9 @@ slint::slint! {
         vertical-alignment: center;
     }
 
+    export global Tr { pure callback text(string) -> string; }
+
     export component RimeSettings inherits Window {
-        in property <bool> zh;
         in property <[SchemaRow]> schemas;
         // Why Rime's own settings cannot be changed, if they cannot.
         in property <string> problem;
@@ -73,7 +74,7 @@ slint::slint! {
         callback cancel();
         callback open-folder();
 
-        title: root.zh ? "Rime 设置" : "Rime Settings";
+        title: Tr.text("Rime Settings");
         preferred-width: 560px;
         preferred-height: 660px;
         min-width: 440px;
@@ -85,12 +86,10 @@ slint::slint! {
             spacing: 10px;
 
             Heading {
-                text: root.zh ? "方案" : "Schemas";
+                text: Tr.text("Schemas");
             }
             Text {
-                text: root.zh
-                    ? "勾选的方案是 Rime 的输入法；在 oh-my-ime 的设置里把它们加入切换顺序。"
-                    : "The schemas checked are Rime's input methods; oh-my-ime's settings put them in the switching order.";
+                text: Tr.text("The schemas checked are Rime's input methods; oh-my-ime's settings put them in the switching order.");
                 wrap: word-wrap;
                 color: Theme.secondary;
             }
@@ -130,7 +129,7 @@ slint::slint! {
             }
 
             Heading {
-                text: root.zh ? "输入" : "Typing";
+                text: Tr.text("Typing");
             }
             Card {
                 GridLayout {
@@ -139,7 +138,7 @@ slint::slint! {
                     spacing-vertical: 10px;
                     Row {
                         Label {
-                            text: root.zh ? "每页候选数" : "Candidates per page";
+                            text: Tr.text("Candidates per page");
                         }
                         SpinBox {
                             enabled: root.can-edit-rime;
@@ -150,13 +149,11 @@ slint::slint! {
                     }
                     Row {
                         Label {
-                            text: root.zh ? "单按 Shift" : "Shift alone";
+                            text: Tr.text("Shift alone");
                         }
                         ComboBox {
                             enabled: root.can-edit-rime;
-                            model: root.zh
-                                ? ["切换中英，已输入的字母上屏", "切换中英，候选上屏", "切换中英，清除已输入的内容", "不切换"]
-                                : ["Switches, keeping the letters typed", "Switches, committing the candidate", "Switches, clearing what was typed", "Does nothing"];
+                            model: [Tr.text("Switches, keeping the letters typed"), Tr.text("Switches, committing the candidate"), Tr.text("Switches, clearing what was typed"), Tr.text("Does nothing")];
                             current-index <=> root.shift;
                         }
                     }
@@ -164,7 +161,7 @@ slint::slint! {
             }
 
             Heading {
-                text: root.zh ? "候选窗" : "Candidate window";
+                text: Tr.text("Candidate window");
             }
             Card {
                 GridLayout {
@@ -173,25 +170,25 @@ slint::slint! {
                     spacing-vertical: 10px;
                     Row {
                         Label {
-                            text: root.zh ? "排列" : "Layout";
+                            text: Tr.text("Layout");
                         }
                         ComboBox {
-                            model: root.zh ? ["横排", "竖排"] : ["In a row", "In a column"];
+                            model: [Tr.text("In a row"), Tr.text("In a column")];
                             current-index <=> root.layout;
                         }
                     }
                     Row {
                         Label {
-                            text: root.zh ? "外观" : "Appearance";
+                            text: Tr.text("Appearance");
                         }
                         ComboBox {
-                            model: root.zh ? ["跟随系统", "浅色", "深色"] : ["As the desktop", "Light", "Dark"];
+                            model: [Tr.text("As the desktop"), Tr.text("Light"), Tr.text("Dark")];
                             current-index <=> root.appearance;
                         }
                     }
                     Row {
                         Label {
-                            text: root.zh ? "字号" : "Font size";
+                            text: Tr.text("Font size");
                         }
                         SpinBox {
                             minimum: 12;
@@ -205,7 +202,7 @@ slint::slint! {
             HorizontalLayout {
                 spacing: 8px;
                 Button {
-                    text: root.zh ? "打开用户文件夹" : "Open the user folder";
+                    text: Tr.text("Open the user folder");
                     clicked => {
                         root.open-folder();
                     }
@@ -214,13 +211,13 @@ slint::slint! {
                     horizontal-stretch: 1;
                 }
                 Button {
-                    text: root.zh ? "取消" : "Cancel";
+                    text: Tr.text("Cancel");
                     clicked => {
                         root.cancel();
                     }
                 }
                 Button {
-                    text: root.zh ? "保存" : "Save";
+                    text: Tr.text("Save");
                     primary: true;
                     enabled: root.can-save;
                     clicked => {
@@ -299,8 +296,9 @@ fn open_levers() -> Result<Levers, String> {
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let window = RimeSettings::new()?;
     slint::set_xdg_app_id("io.github.ign1x.OhMyIme.Rime")?;
-    let zh = crate::chinese();
-    window.set_zh(zh);
+    window
+        .global::<Tr<'_>>()
+        .on_text(|source| omime_proto::i18n::text(&source).into());
 
     let style = Style::load();
     window.set_layout(index_of(&Layout::ALL, &style.layout));
@@ -323,11 +321,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("omime-rime: {e}");
-            let note = if zh {
-                "无法读取 Rime 的设置，只能更改候选窗："
-            } else {
-                "Rime's settings cannot be read, only the candidate window's:"
-            };
+            let note = omime_proto::i18n::text(
+                "Rime's settings cannot be read, only the candidate window's:",
+            );
             window.set_problem(format!("{note} {e}").into());
         }
     }
@@ -374,14 +370,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         if saved != *saved_style.borrow()
             && let Err(e) = saved.save()
         {
-            save_error(&window, zh, &e.to_string());
+            save_error(&window, &e.to_string());
             return;
         }
         *saved_style.borrow_mut() = saved;
         if let Ok(levers) = &*levers
             && let Err(e) = save_rime(levers, &opened, &window, &schemas)
         {
-            save_error(&window, zh, &e);
+            save_error(&window, &e);
             return;
         }
         let _ = slint::quit_event_loop();
@@ -400,13 +396,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn save_error(window: &RimeSettings, zh: bool, error: &str) {
+fn save_error(window: &RimeSettings, error: &str) {
     eprintln!("omime-rime: cannot save settings: {error}");
-    let note = if zh {
-        "保存未完成，请修复后重试："
-    } else {
-        "Could not save all settings. Please retry:"
-    };
+    let note = omime_proto::i18n::text("Could not save all settings. Please retry:");
     window.set_problem(format!("{note} {error}").into());
 }
 

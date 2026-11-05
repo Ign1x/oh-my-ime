@@ -5,6 +5,7 @@
 //! and the names in `/proc`. Only the functions at the bottom of this module talk to
 //! D-Bus, the file system, `/proc` or the environment.
 
+use omime_proto::tr;
 use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
@@ -147,21 +148,22 @@ pub fn other_input_methods(processes: &[(u32, String)]) -> Vec<OtherIm> {
 /// found, which explains a seat that another input method holds.
 pub fn daemon_findings(daemon: Option<&Daemon>, others: &[OtherIm]) -> Vec<Finding> {
     let Some(daemon) = daemon else {
-        return vec![Finding::problem(
-            "omimed is not running; start it with omimed or systemctl --user start omimed",
-        )];
+        return vec![Finding::problem(tr!(
+            "omimed is not running; start it with omimed or systemctl --user start omimed"
+        ))];
     };
     let diagnosis = &daemon.diagnosis;
-    let mut findings = vec![Finding::ok(format!(
-        "omimed is running, connected to {}",
-        diagnosis.display
+    let mut findings = vec![Finding::ok(tr!(
+        "omimed is running, connected to {arg0}",
+        arg0 = diagnosis.display
     ))];
 
     let mut every_seat_is_ours = true;
     for (seat, ours) in &diagnosis.seats {
         if *ours {
-            findings.push(Finding::ok(format!(
-                "seat {seat}: oh-my-ime is the input method"
+            findings.push(Finding::ok(tr!(
+                "seat {seat}: oh-my-ime is the input method",
+                seat = seat
             )));
         } else {
             every_seat_is_ours = false;
@@ -172,40 +174,37 @@ pub fn daemon_findings(daemon: Option<&Daemon>, others: &[OtherIm]) -> Vec<Findi
     // restarts, so it is still worth knowing about.
     if every_seat_is_ours {
         findings.extend(others.iter().map(|other| {
-            Finding::warning(format!(
-                "{} (pid {}) is running; it is not using the seat now, but may take it \
-                 when omimed restarts",
-                other.process, other.pid
-            ))
+            Finding::warning(tr!("{arg0} (pid {arg1}) is running; it is not using the seat now, but may take it when omimed restarts", arg0 = other.process, arg1 = other.pid))
         }));
     }
 
     findings.push(if diagnosis.focused_app {
-        Finding::ok("the compositor reports the focused window")
+        Finding::ok(tr!("the compositor reports the focused window"))
     } else {
-        Finding::warning(
-            "the compositor does not report the focused window, so per-application \
-             engines (`[apps] remember`) cannot work",
+        Finding::warning(tr!("the compositor does not report the focused window, so per-application engines (`[apps] remember`) cannot work"),
         )
     });
 
     for engine in daemon.engines.iter().filter(|e| e.state == "failed") {
-        findings.push(Finding::problem(format!(
-            "engine {} keeps crashing; omimed gave up on it (see its log)",
-            engine.id
+        findings.push(Finding::problem(tr!(
+            "engine {arg0} keeps crashing; omimed gave up on it (see its log)",
+            arg0 = engine.id
         )));
     }
     let enabled: Vec<&Engine> = daemon.engines.iter().filter(|e| e.enabled).collect();
     if enabled.is_empty() {
-        findings.push(Finding::warning("no engine is enabled"));
+        findings.push(Finding::warning(tr!("no engine is enabled")));
     }
     let working: Vec<String> = enabled
         .iter()
         .filter(|e| e.state != "failed")
-        .map(|e| format!("{} ({})", e.id, e.state))
+        .map(|e| format!("{} ({})", e.id, crate::engine_state(&e.state)))
         .collect();
     if !working.is_empty() {
-        findings.push(Finding::ok(format!("engines: {}", working.join(", "))));
+        findings.push(Finding::ok(tr!(
+            "engines: {arg0}",
+            arg0 = working.join(", ")
+        )));
     }
     findings
 }
@@ -213,20 +212,24 @@ pub fn daemon_findings(daemon: Option<&Daemon>, others: &[OtherIm]) -> Vec<Findi
 /// The line for the seat `seat` that another input method holds; `busy` is the process
 /// that most likely is that input method.
 fn busy_seat(seat: &str, busy: Option<&OtherIm>) -> String {
-    let mut text = format!("seat {seat}: another input method holds it");
+    let mut text = tr!("seat {seat}: another input method holds it", seat = seat);
     match busy {
-        Some(other) => text.push_str(&format!(
-            "; {} (pid {}) is running",
-            other.process, other.pid
+        Some(other) => text.push_str(&tr!(
+            "; {arg0} (pid {arg1}) is running",
+            arg0 = other.process,
+            arg1 = other.pid
         )),
-        None => text.push_str("; stop the other input method (see docs/hyprland.md)"),
+        None => text.push_str(omime_proto::i18n::text(
+            "; stop the other input method (see docs/hyprland.md)",
+        )),
     }
     text
 }
 
 /// What omimed does with a `config.toml` it cannot read or parse.
-const BROKEN_CONFIG: &str =
-    "omimed starts with the defaults then, and `omime reload` keeps the configuration it has";
+const BROKEN_CONFIG: &str = omime_proto::i18n::message(
+    "omimed starts with the defaults then, and `omime reload` keeps the configuration it has",
+);
 
 /// The findings of check 2.
 ///
@@ -238,47 +241,48 @@ pub fn config_findings(
     installed: &[String],
 ) -> Vec<Finding> {
     let text = match content {
-        Ok(None) => return vec![Finding::ok("no config.toml, using the defaults")],
+        Ok(None) => return vec![Finding::ok(tr!("no config.toml, using the defaults"))],
         Ok(Some(text)) => text,
         Err(e) => {
-            return vec![Finding::problem(format!(
-                "config.toml: {display}: {e}; {BROKEN_CONFIG}"
+            return vec![Finding::problem(tr!(
+                "config.toml: {display}: {e}; {BROKEN_CONFIG}",
+                display = display,
+                e = e,
+                BROKEN_CONFIG = omime_proto::i18n::text(BROKEN_CONFIG)
             ))];
         }
     };
     let (config, unknown) = match Config::parse(text) {
         Ok(parsed) => parsed,
         Err(e) => {
-            return vec![Finding::problem(format!(
-                "config.toml: {display}: {e}\n{BROKEN_CONFIG}"
+            return vec![Finding::problem(tr!(
+                "config.toml: {display}: {e}\n{BROKEN_CONFIG}",
+                display = display,
+                e = e,
+                BROKEN_CONFIG = omime_proto::i18n::text(BROKEN_CONFIG)
             ))];
         }
     };
 
-    let mut findings = vec![Finding::ok(format!("config.toml: {display}"))];
+    let mut findings = vec![Finding::ok(tr!(
+        "config.toml: {display}",
+        display = display
+    ))];
     for key in unknown {
-        findings.push(Finding::warning(format!(
-            "config.toml: omimed does not know `{key}` and ignores it (misspelt, or for a newer version?)"
-        )));
+        findings.push(Finding::warning(tr!("config.toml: omimed does not know `{key}` and ignores it (misspelt, or for a newer version?)", key = key)));
     }
     for id in config.engines.iter().flatten() {
         let engine = id.split('/').next().unwrap_or(id);
         if !installed.iter().any(|known| known == engine) {
-            findings.push(Finding::warning(format!(
-                "config.toml: engine `{id}` is in `engines` but not installed; omimed leaves it out"
-            )));
+            findings.push(Finding::warning(tr!("config.toml: engine `{id}` is in `engines` but not installed; omimed leaves it out", id = id)));
         }
     }
     if let Some(id) = &config.initial_input_method {
         let engine = id.split('/').next().unwrap_or(id);
         if !valid_input_method(id) {
-            findings.push(Finding::problem(format!(
-                "config.toml: initial_input_method `{id}` must be an engine id, engine/method, or direct"
-            )));
+            findings.push(Finding::problem(tr!("config.toml: initial_input_method `{id}` must be an engine id, engine/method, or direct", id = id)));
         } else if id != "direct" && !installed.iter().any(|known| known == engine) {
-            findings.push(Finding::problem(format!(
-                "config.toml: initial_input_method `{id}` needs engine `{engine}`, which is not installed"
-            )));
+            findings.push(Finding::problem(tr!("config.toml: initial_input_method `{id}` needs engine `{engine}`, which is not installed", id = id, engine = engine)));
         } else if id != "direct"
             && config.engines.as_ref().is_some_and(|enabled| {
                 !enabled
@@ -286,9 +290,7 @@ pub fn config_findings(
                     .any(|entry| entry.split('/').next() == Some(engine))
             })
         {
-            findings.push(Finding::warning(format!(
-                "config.toml: initial_input_method `{id}` is disabled; enable it before the first login"
-            )));
+            findings.push(Finding::warning(tr!("config.toml: initial_input_method `{id}` is disabled; enable it before the first login", id = id)));
         }
     }
     for (name, value) in [
@@ -296,8 +298,11 @@ pub fn config_findings(
         ("next", &config.hotkeys.next),
     ] {
         if let Err(e) = HotkeySpec::parse(value) {
-            findings.push(Finding::problem(format!(
-                "config.toml: hotkey `{name}` = `{value}`: {e}"
+            findings.push(Finding::problem(tr!(
+                "config.toml: hotkey `{name}` = `{value}`: {e}",
+                name = name,
+                value = value,
+                e = e
             )));
         }
     }
@@ -320,14 +325,14 @@ pub fn engine_findings(
         .iter()
         .map(|(path, problem)| Finding::problem(format!("{}: {problem}", path.display())))
         .collect();
-    findings.extend(
-        warnings
-            .iter()
-            .map(|(id, warning)| Finding::problem(format!("engine {id}: {warning}"))),
-    );
+    findings.extend(warnings.iter().map(|(id, warning)| {
+        Finding::problem(tr!("engine {id}: {warning}", id = id, warning = warning))
+    }));
     findings.extend(unknown.iter().map(|(id, key)| {
-        Finding::warning(format!(
-            "engine {id}: omimed does not know `{key}` in its manifest and ignores it"
+        Finding::warning(tr!(
+            "engine {id}: omimed does not know `{key}` in its manifest and ignores it",
+            id = id,
+            key = key
         ))
     }));
     findings
@@ -348,21 +353,15 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
     };
     let mut findings = Vec::new();
     for (name, toolkit) in [
-        ("GTK_IM_MODULE", "GTK applications"),
-        ("QT_IM_MODULE", "Qt applications"),
+        ("GTK_IM_MODULE", omime_proto::i18n::text("GTK applications")),
+        ("QT_IM_MODULE", omime_proto::i18n::text("Qt applications")),
     ] {
         if value(name).is_some_and(|v| v == "ibus") {
-            findings.push(Finding::warning(format!(
-                "{name}=ibus: {toolkit} started from this environment look for IBus, \
-                 which omimed does not stand in for yet; set {name}=fcitx or unset it"
-            )));
+            findings.push(Finding::warning(tr!("{name}=ibus: {toolkit} started from this environment look for IBus, which omimed does not stand in for yet; set {name}=fcitx or unset it", name = name, toolkit = toolkit)));
         }
     }
     if !value("QT_IM_MODULE").is_some_and(|v| v == "fcitx" || v == "fcitx5") {
-        findings.push(Finding::warning(
-            "QT_IM_MODULE is not fcitx: Qt applications without native text-input support \
-             may fall back to Compose; session setup uses QT_IM_MODULE=fcitx with the \
-             Fcitx5 Qt plugin, and QT_IM_MODULES=wayland;fcitx lets newer Qt prefer Wayland"
+        findings.push(Finding::warning(tr!("QT_IM_MODULE is not fcitx: Qt applications without native text-input support may fall back to Compose; session setup uses QT_IM_MODULE=fcitx with the Fcitx5 Qt plugin, and QT_IM_MODULES=wayland;fcitx lets newer Qt prefer Wayland")
                 .to_owned(),
         ));
     }
@@ -371,20 +370,15 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
             .split(';')
             .any(|module| matches!(module.trim(), "fcitx" | "fcitx5"))
     {
-        findings.push(Finding::warning(
-            "QT_IM_MODULES overrides QT_IM_MODULE in newer Qt but has no Fcitx fallback; session setup uses wayland;fcitx",
+        findings.push(Finding::warning(tr!("QT_IM_MODULES overrides QT_IM_MODULE in newer Qt but has no Fcitx fallback; session setup uses wayland;fcitx"),
         ));
     }
     match value("XMODIFIERS") {
         Some(v) if ["@im=fcitx", "@im=ibus", "@im=omime"].contains(&v.as_str()) => {}
-        Some(_) => findings.push(Finding::warning(
-            "XMODIFIERS names an input method omimed does not answer by: X11 applications \
-             using XIM find none; set XMODIFIERS=@im=fcitx"
+        Some(_) => findings.push(Finding::warning(tr!("XMODIFIERS names an input method omimed does not answer by: X11 applications using XIM find none; set XMODIFIERS=@im=fcitx")
                 .to_owned(),
         )),
-        None => findings.push(Finding::warning(
-            "XMODIFIERS is not set: X11 applications using XIM (xterm, Java, Wine) find no \
-             input method; set XMODIFIERS=@im=fcitx"
+        None => findings.push(Finding::warning(tr!("XMODIFIERS is not set: X11 applications using XIM (xterm, Java, Wine) find no input method; set XMODIFIERS=@im=fcitx")
                 .to_owned(),
         )),
     }
@@ -419,8 +413,10 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
     findings.extend(config_check(&installed));
     findings.extend(engine_findings(&found.broken, &warnings, &unknown));
     findings.extend(found.unavailable.iter().map(|(id, program)| {
-        Finding::ok(format!(
-            "engine {id} is offered once `{program}` is installed"
+        Finding::ok(tr!(
+            "engine {id} is offered once `{program}` is installed",
+            id = id,
+            program = program
         ))
     }));
     let variables = application
@@ -447,18 +443,18 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
                     })
                     .collect();
                 if !keys.is_empty() {
-                    findings.push(Finding::warning(format!("{} differs from the systemd user manager: {}; restart the application or open a new terminal after session setup",
-                        if app_pid.is_some() { "the application's launch environment" } else { "this terminal's environment" }, keys.join(", "))));
+                    findings.push(Finding::warning(tr!("{arg0} differs from the systemd user manager: {arg1}; restart the application or open a new terminal after session setup", arg0 = if app_pid.is_some() { omime_proto::i18n::text("the application's launch environment") } else { omime_proto::i18n::text("this terminal's environment") }, arg1 = keys.join(", "))));
                 }
                 let vars: Vec<_> = manager.into_iter().collect();
                 for mut finding in environment_findings(&vars) {
-                    finding.text = format!("systemd application launches: {}", finding.text);
+                    finding.text = tr!("systemd application launches: {arg0}", arg0 = finding.text);
                     findings.push(finding);
                 }
             }
             Ok(None) => {}
-            Err(error) => findings.push(Finding::warning(format!(
-                "cannot inspect systemd application launch settings: {error:#}"
+            Err(error) => findings.push(Finding::warning(tr!(
+                "cannot inspect systemd application launch settings: {error_0}",
+                error_0 = format!("{:#}", error)
             ))),
         }
     }
@@ -481,26 +477,34 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
         Ok(true) => {}
         Ok(false) => return daemon_findings(None, others),
         Err(e) => {
-            return vec![Finding::problem(format!(
-                "cannot ask the session bus for {DAEMON_BUS_NAME}: {e}"
+            return vec![Finding::problem(tr!(
+                "cannot ask the session bus for {DAEMON_BUS_NAME}: {e}",
+                DAEMON_BUS_NAME = DAEMON_BUS_NAME,
+                e = e
             ))];
         }
     }
     let proxy = match DaemonProxy::new(&conn).await {
         Ok(proxy) => proxy,
-        Err(e) => return vec![Finding::problem(format!("cannot reach omimed: {e}"))],
+        Err(e) => return vec![Finding::problem(tr!("cannot reach omimed: {e}", e = e))],
     };
     let reply = match proxy.diagnose().await {
         Ok(reply) => reply,
         Err(e) => {
-            return vec![Finding::problem(format!(
-                "omimed did not answer `Diagnose`: {e}"
+            return vec![Finding::problem(tr!(
+                "omimed did not answer `Diagnose`: {e}",
+                e = e
             ))];
         }
     };
     let diagnosis = match decode_diagnosis(&reply) {
         Ok(diagnosis) => diagnosis,
-        Err(e) => return vec![Finding::problem(format!("omimed's `Diagnose` reply: {e}"))],
+        Err(e) => {
+            return vec![Finding::problem(tr!(
+                "omimed's `Diagnose` reply: {e}",
+                e = e
+            ))];
+        }
     };
     let engines: Vec<Engine> = match proxy.list_engines().await {
         Ok(engines) => engines
@@ -508,8 +512,9 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
             .map(|(id, _name, enabled, state)| Engine { id, enabled, state })
             .collect(),
         Err(e) => {
-            return vec![Finding::problem(format!(
-                "omimed did not answer `ListEngines`: {e}"
+            return vec![Finding::problem(tr!(
+                "omimed did not answer `ListEngines`: {e}",
+                e = e
             ))];
         }
     };
@@ -522,8 +527,9 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
     }
     let mut findings = daemon_findings(Some(&Daemon { diagnosis, engines }), others);
     if let Some(error) = crate::string(&reply, "input-method-error") {
-        findings.push(Finding::problem(format!(
-            "input method selection failed: {error}"
+        findings.push(Finding::problem(tr!(
+            "input method selection failed: {error}",
+            error = error
         )));
     }
     findings
@@ -533,13 +539,13 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
 fn decode_diagnosis(reply: &HashMap<String, OwnedVariant>) -> anyhow::Result<Diagnosis> {
     let seats: Vec<(String, bool)> = reply
         .get("seats")
-        .context("there is no `seats` entry")?
+        .context(tr!("there is no `seats` entry"))?
         .try_clone()?
         .try_into()?;
     let focused_app = bool::try_from(
         reply
             .get("focused-app")
-            .context("there is no `focused-app` entry")?
+            .context(tr!("there is no `focused-app` entry"))?
             .try_clone()?,
     )?;
     Ok(Diagnosis {
@@ -614,10 +620,10 @@ fn environment() -> Vec<(String, String)> {
 /// the CLI has no libc wrapper of its own.
 fn processes() -> anyhow::Result<Vec<(u32, String)>> {
     let uid = std::fs::metadata("/proc/self")
-        .context("cannot read /proc/self")?
+        .context(tr!("cannot read /proc/self"))?
         .uid();
     let mut processes = Vec::new();
-    for entry in std::fs::read_dir("/proc").context("cannot read /proc")? {
+    for entry in std::fs::read_dir("/proc").context(tr!("cannot read /proc"))? {
         let Ok(entry) = entry else {
             continue;
         };

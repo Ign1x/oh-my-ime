@@ -33,6 +33,7 @@ slint::slint! {
 
     export component Popup inherits Window {
         title: "Sparkle";
+        in property <string> hint;
         no-frame: true;
         background: transparent;
         width: 584px;
@@ -76,7 +77,7 @@ slint::slint! {
             Text {
                 x: parent.width - self.width - 18px;
                 y: 13px;
-                text: "⇥ choose   ⏎ insert   esc keep text";
+                text: root.hint;
                 color: #d9ccff99;
                 font-size: 10px;
             }
@@ -241,20 +242,10 @@ fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
 impl Sparkle {
     /// The menu: the panel's switch, which needs a desktop to show the panel on.
     fn properties(&self, on: bool) -> Vec<Property> {
-        let chinese = ["LC_ALL", "LC_MESSAGES", "LANG"]
-            .iter()
-            .filter_map(|name| std::env::var(name).ok())
-            .find(|value| !value.is_empty())
-            .is_some_and(|locale| locale.starts_with("zh"));
         vec![Property {
             id: PANEL_PROPERTY.to_owned(),
             kind: PropertyKind::Toggle,
-            label: if chinese {
-                "最近使用的表情面板"
-            } else {
-                "Recent emoji panel"
-            }
-            .to_owned(),
+            label: omime_proto::i18n::text("Recent emoji panel").to_owned(),
             icon: Some("face-smile".to_owned()),
             checked: on,
             enabled: host_display().is_some(),
@@ -419,6 +410,7 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ui = Popup::new()?;
+    ui.set_hint(omime_proto::i18n::text("⇥ choose   ⏎ insert   esc keep text").into());
     let shared = Arc::new(Mutex::new(Shared {
         saved: panel::Saved::load(),
         ..Shared::default()

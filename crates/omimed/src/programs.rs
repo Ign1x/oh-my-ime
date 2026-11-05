@@ -34,7 +34,8 @@ pub fn open_settings_page(display: Option<&str>, page: &str) -> Result<(), Strin
 }
 
 fn open(display: Option<&str>, args: &[&str]) -> Result<(), String> {
-    let program = find(SETTINGS).ok_or_else(|| format!("{SETTINGS} is not installed"))?;
+    let program = find(SETTINGS)
+        .ok_or_else(|| omime_proto::tr!("{program} is not installed", program = SETTINGS))?;
     let mut command = std::process::Command::new(program);
     command.args(args);
     if let Some(display) = display {
@@ -42,7 +43,7 @@ fn open(display: Option<&str>, args: &[&str]) -> Result<(), String> {
     }
     let mut child = command
         .spawn()
-        .map_err(|e| format!("cannot open the settings: {e}"))?;
+        .map_err(|e| omime_proto::tr!("cannot open the settings: {e}", e = e))?;
     info!(pid = child.id(), "opened the settings");
     // Collects its exit status, so that no zombie stays behind.
     let reaper = std::thread::Builder::new()

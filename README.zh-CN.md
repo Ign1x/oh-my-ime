@@ -241,6 +241,10 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 
 非常欢迎贡献！提交前请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+平台设置、托盘、通知、切换浮层和命令行支持英文与简体中文，跟随桌面语言。
+可运行 `LC_ALL=zh_CN.UTF-8 omime help` 预览中文帮助；语言设置和添加翻译的方法见
+[本地化指南](docs/zh-CN/localization.md)。
+
 ## 许可证
 
 本项目采用以下任一许可证，由你自行选择：

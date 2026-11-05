@@ -528,6 +528,12 @@ impl TestEnv {
         &self.dir
     }
 
+    /// Language of subsequently launched processes, including the daemon.
+    pub fn set_locale(&mut self, locale: &str) {
+        self.env.retain(|(key, _)| key != "LC_ALL");
+        self.env.push(("LC_ALL".into(), locale.into()));
+    }
+
     /// A command that runs inside this environment. The programs under test come first
     /// on its `$PATH`, for manifests that name them.
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -542,6 +548,10 @@ impl TestEnv {
         let mut command = Command::new(program);
         command
             .env("PATH", path)
+            // Most assertions use English messages. Locale-specific tests override
+            // this per private session or command, never in the test process.
+            .env("LC_ALL", "C.UTF-8")
+            .env_remove("LANGUAGE")
             .env_remove("DISPLAY")
             .env_remove("WAYLAND_SOCKET")
             .env_remove("GTK_IM_MODULE")

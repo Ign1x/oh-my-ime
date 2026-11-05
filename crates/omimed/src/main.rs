@@ -23,7 +23,8 @@ use std::process::ExitCode;
 
 use tracing_subscriber::EnvFilter;
 
-const USAGE: &str = "\
+const USAGE: &str = omime_proto::i18n::message(
+    "\
 Usage: omimed [OPTIONS]
 
 The oh-my-ime daemon. It becomes the input method of the Wayland compositor and
@@ -39,7 +40,8 @@ Environment:
   OMIME_LOG         Log filter, e.g. `debug` or `omimed=trace`
                     (default: info,wl_proxy=error)
   OMIME_ENGINE_PATH Extra directories to look for engines in (colon separated)
-  OMIME_WL_DEBUG    Log every Wayland message (may include typed keys!)";
+  OMIME_WL_DEBUG    Log every Wayland message (may include typed keys!)",
+);
 
 fn main() -> ExitCode {
     let mut options = daemon::Options::default();
@@ -47,7 +49,7 @@ fn main() -> ExitCode {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{}", omime_proto::i18n::text(USAGE));
                 return ExitCode::SUCCESS;
             }
             "-V" | "--version" => {
@@ -56,13 +58,18 @@ fn main() -> ExitCode {
             }
             "--display" => match args.next() {
                 Some(display) => options.display = Some(display),
-                None => return usage_error("--display needs a value"),
+                None => return usage_error(omime_proto::i18n::text("--display needs a value")),
             },
             "--engine" => match args.next() {
                 Some(engine) => options.engine = Some(engine),
-                None => return usage_error("--engine needs an engine id"),
+                None => return usage_error(omime_proto::i18n::text("--engine needs an engine id")),
             },
-            other => return usage_error(&format!("unknown argument `{other}`")),
+            other => {
+                return usage_error(&omime_proto::tr!(
+                    "unknown argument `{other}`",
+                    other = other
+                ));
+            }
         }
     }
 
@@ -88,6 +95,6 @@ fn main() -> ExitCode {
 }
 
 fn usage_error(message: &str) -> ExitCode {
-    eprintln!("omimed: {message}\n\n{USAGE}");
+    eprintln!("omimed: {message}\n\n{}", omime_proto::i18n::text(USAGE));
     ExitCode::from(2)
 }

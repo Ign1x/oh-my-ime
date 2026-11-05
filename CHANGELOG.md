@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Shared localization for settings, tray menus, notifications, the switcher, CLI
+  help, diagnostics, setup and engine management, plus Rime settings and Sparkle's
+  operation hint. Simplified Chinese joins the English source text in an embedded
+  PO catalog. Language selection honors nonempty `LC_ALL`, `LC_MESSAGES`, `LANG`
+  and `LANGUAGE` preferences; unsupported messages fall back to English. CI checks
+  translation coverage and placeholders. Command IDs, JSON keys and configuration
+  markers keep their original spelling across languages.
 - Session setup now configures systemd and UWSM application launches as well as
   Hyprland, with preview, preservation of existing settings and journaled undo.
   `omime setup --start` updates the current D-Bus activation and user-manager

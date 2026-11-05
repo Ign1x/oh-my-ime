@@ -9,6 +9,7 @@
 //! socket: they are ready once they created an input method on the bridge. They run
 //! on a private session bus (see [`super::bus`]).
 
+use omime_proto::tr;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
@@ -133,9 +134,9 @@ impl HostObject {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<Dict> {
         if id != self.engine {
-            return Err(zbus::fdo::Error::AccessDenied(format!(
-                "this socket belongs to engine `{}`",
-                self.engine
+            return Err(zbus::fdo::Error::AccessDenied(tr!(
+                "this socket belongs to engine `{arg0}`",
+                arg0 = self.engine
             )));
         }
         let ours = ApiVersion::CURRENT;
@@ -144,8 +145,10 @@ impl HostObject {
             minor: api_minor,
         };
         if !ours.is_compatible_with(theirs) {
-            return Err(zbus::fdo::Error::NotSupported(format!(
-                "engine protocol {theirs} is not supported (daemon speaks {ours})"
+            return Err(zbus::fdo::Error::NotSupported(tr!(
+                "engine protocol {theirs} is not supported (daemon speaks {ours})",
+                theirs = theirs,
+                ours = ours
             )));
         }
         let _ = self.events.send(CoreEvent::Registered {
@@ -498,7 +501,7 @@ impl EngineManager {
                 self.start(id)
             }
             Some(_) => Ok(()),
-            None => anyhow::bail!("no engine `{id}` is installed"),
+            None => anyhow::bail!("{}", tr!("no engine `{id}` is installed", id = id)),
         }
     }
 
@@ -508,7 +511,7 @@ impl EngineManager {
         let bridge = self.ui_connections.clone();
         let host_display = self.host_display.clone();
         let Some(slot) = self.slots.get_mut(id) else {
-            anyhow::bail!("no engine `{id}` is installed");
+            anyhow::bail!("{}", tr!("no engine `{id}` is installed", id = id));
         };
         let hosted = slot.installed.manifest.is_hosted();
         if !slot.sockets_ready {
@@ -520,7 +523,9 @@ impl EngineManager {
         }
         let dir = runtime_dir::engine_dir(id)?;
         let argv = slot.installed.command();
-        let (program, args) = argv.split_first().context("the engine has no command")?;
+        let (program, args) = argv
+            .split_first()
+            .context(tr!("the engine has no command"))?;
         let mut command = tokio::process::Command::new(program);
         command
             .args(args)
@@ -572,7 +577,14 @@ impl EngineManager {
             let Some(path) = find_program(program) else {
                 slot.state = EngineState::Stopped;
                 slot.kill = None;
-                anyhow::bail!("cannot launch `{program}` for engine `{id}`: it is not installed");
+                anyhow::bail!(
+                    "{}",
+                    tr!(
+                        "cannot launch `{program}` for engine `{id}`: it is not installed",
+                        program = program,
+                        id = id
+                    )
+                );
             };
             // The input method reaches the bridge through a connected socket of its own
             // (WAYLAND_SOCKET), which its Wayland library takes and forgets: the programs
@@ -613,8 +625,13 @@ impl EngineManager {
             Err(e) => {
                 slot.state = EngineState::Stopped;
                 slot.kill = None;
-                return Err(e)
-                    .with_context(|| format!("cannot launch `{program}` for engine `{id}`"));
+                return Err(e).with_context(|| {
+                    tr!(
+                        "cannot launch `{program}` for engine `{id}`",
+                        program = program,
+                        id = id
+                    )
+                });
             }
         };
         info!(
@@ -676,7 +693,8 @@ impl EngineManager {
         };
         anyhow::ensure!(
             matches!(slot.state, EngineState::Starting { .. }),
-            "engine `{id}` is not waiting for registration"
+            "{}",
+            tr!("engine `{id}` is not waiting for registration", id = id)
         );
         slot.proxy = Some(proxy);
         slot.api_minor = api_minor;
@@ -706,17 +724,25 @@ impl EngineManager {
         let slot = self
             .slots
             .get(id)
-            .with_context(|| format!("no engine `{id}`"))?;
+            .with_context(|| tr!("no engine `{id}`", id = id))?;
         anyhow::ensure!(
             slot.properties.iter().any(|p| p.id == property),
-            "engine `{id}` has no property `{property}`"
+            "{}",
+            tr!(
+                "engine `{id}` has no property `{property}`",
+                id = id,
+                property = property
+            )
         );
         if let Some(clicks) = &slot.menu_clicks {
-            let entry = property.parse().context("not an entry of the menu")?;
-            clicks.send(entry).ok().context("the engine has no menu")?;
+            let entry = property.parse().context(tr!("not an entry of the menu"))?;
+            clicks
+                .send(entry)
+                .ok()
+                .context(tr!("the engine has no menu"))?;
             return Ok(());
         }
-        let proxy = slot.proxy.clone().context("the engine does not run")?;
+        let proxy = slot.proxy.clone().context(tr!("the engine does not run"))?;
         let property = property.to_owned();
         tokio::task::spawn_local(async move {
             let _ = proxy.activate_property(&property).await;
@@ -992,23 +1018,24 @@ impl EngineManager {
         let slot = self
             .slots
             .get(id)
-            .with_context(|| format!("no engine `{id}` is installed"))?;
+            .with_context(|| tr!("no engine `{id}` is installed", id = id))?;
         let settings = slot
             .installed
             .manifest
             .engine
             .settings
             .clone()
-            .with_context(|| format!("engine `{id}` has no settings"))?;
+            .with_context(|| tr!("engine `{id}` has no settings", id = id))?;
         let argv = slot.installed.settings_command().with_context(|| {
-            format!(
-                "`{}`, the settings of engine `{id}`, is not installed",
-                settings.exec[0]
+            tr!(
+                "`{arg0}`, the settings of engine `{id}`, is not installed",
+                arg0 = settings.exec[0],
+                id = id
             )
         })?;
         // The program talks to the engine.
         self.ensure_started(id, true)?;
-        let (program, args) = argv.split_first().context("no settings program")?;
+        let (program, args) = argv.split_first().context(tr!("no settings program"))?;
         let mut command = tokio::process::Command::new(program);
         command
             .args(args)
@@ -1029,7 +1056,7 @@ impl EngineManager {
         }
         let mut child = command
             .spawn()
-            .with_context(|| format!("cannot start `{program}`"))?;
+            .with_context(|| tr!("cannot start `{program}`", program = program))?;
         info!(engine = id, program, "settings opened");
         log_output(id, &mut child);
         let engine = id.to_owned();

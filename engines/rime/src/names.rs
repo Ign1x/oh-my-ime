@@ -51,15 +51,11 @@ const SIMPLIFIED: [(char, char); 41] = [
 
 /// Whether the user reads traditional Chinese, after the locale.
 fn traditional() -> bool {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
-        .is_some_and(|locale| {
-            ["zh_TW", "zh_HK", "zh_MO"]
-                .iter()
-                .any(|l| locale.starts_with(l))
-        })
+    let locale = omime_proto::i18n::normalize(&omime_proto::i18n::locale());
+    locale.starts_with("zh-")
+        && locale
+            .split('-')
+            .any(|part| matches!(part, "tw" | "hk" | "mo" | "hant"))
 }
 
 /// The name of a schema to show.

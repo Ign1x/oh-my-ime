@@ -9,6 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+omime-proto.workspace = true
 omime-sdk.workspace = true
 # The candidate window's settings, rime.toml.
 serde.workspace = true

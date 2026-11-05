@@ -9,6 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+omime-proto.workspace = true
 omime-overlay.workspace = true
 anyhow.workspace = true
 futures-util = { version = "0.3", default-features = false }

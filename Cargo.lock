@@ -2994,6 +2994,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "omime-overlay",
+ "omime-proto",
  "slint",
  "tokio",
  "tracing",
@@ -3016,6 +3017,7 @@ dependencies = [
 name = "omime-rime"
 version = "0.3.0"
 dependencies = [
+ "omime-proto",
  "omime-sdk",
  "serde",
  "slint",
@@ -3057,6 +3059,7 @@ dependencies = [
  "emojis",
  "fontique",
  "omime-overlay",
+ "omime-proto",
  "omime-sdk",
  "slint",
  "swash",

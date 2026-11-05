@@ -72,73 +72,32 @@ impl Trouble {
         }
     }
 
-    /// The summary and body of the notification, in Chinese for Chinese locales.
-    fn text(&self, chinese: bool) -> (String, String) {
-        match (self, chinese) {
-            (Self::Engine { name, why, .. }, false) => {
+    /// The summary and body, translated together with the rest of the platform.
+    fn text(&self, tr: &omime_proto::i18n::Translator) -> (String, String) {
+        match self {
+            Self::Engine { name, why, .. } => {
                 let why = match why {
-                    EngineFailure::Crashed => "It crashed again and again.".to_owned(),
-                    EngineFailure::NoStart => "It did not start in time.".to_owned(),
-                    EngineFailure::Protocol => {
-                        "It sent the compositor a request that the compositor refused.".to_owned()
-                    }
-                    EngineFailure::Launch(error) => format!("It could not be started: {error}."),
+                    EngineFailure::Crashed => tr.text("It crashed again and again.").to_owned(),
+                    EngineFailure::NoStart => tr.text("It did not start in time.").to_owned(),
+                    EngineFailure::Protocol => tr.text("It sent the compositor a request that the compositor refused.").to_owned(),
+                    EngineFailure::Launch(error) => tr.format("It could not be started: {error}.", &[("error", error)]),
                 };
                 (
-                    format!("{name} stopped"),
-                    format!(
-                        "{why} Until you switch to it again, your keys go to applications as you type them."
-                    ),
+                    tr.format("{name} stopped", &[("name", name)]),
+                    tr.format("{why} Until you switch to it again, your keys go to applications as you type them.", &[("why", &why)]),
                 )
             }
-            (Self::Engine { name, why, .. }, true) => {
-                let why = match why {
-                    EngineFailure::Crashed => "它一再崩溃。".to_owned(),
-                    EngineFailure::NoStart => "它没能及时启动。".to_owned(),
-                    EngineFailure::Protocol => "它向合成器发送了被拒绝的请求。".to_owned(),
-                    EngineFailure::Launch(error) => format!("无法启动它：{error}。"),
-                };
-                (
-                    format!("{name}已停止"),
-                    format!("{why}在你再次切换到它之前，按键会原样交给应用。"),
-                )
-            }
-            (Self::Seat { name }, false) => (
-                "Another input method is running".to_owned(),
-                format!(
-                    "It holds the keyboard of seat {name}, so oh-my-ime cannot serve it. \
-                     Quit it (Fcitx 5 or IBus, say), or run `omime setup --take-over`; \
-                     oh-my-ime takes over once it is gone."
-                ),
+            Self::Seat { name } => (
+                tr.text("Another input method is running").to_owned(),
+                tr.format("It holds the keyboard of seat {name}, so oh-my-ime cannot serve it. Quit it (Fcitx 5 or IBus, say), or run `omime setup --take-over`; oh-my-ime takes over once it is gone.", &[("name", name)]),
             ),
-            (Self::Seat { name }, true) => (
-                "另一个输入法正在运行".to_owned(),
-                format!(
-                    "它占用了座位 {name} 的键盘，oh-my-ime 无法为其服务。请退出它（例如 Fcitx 5 \
-                     或 IBus），或运行 `omime setup --take-over`；它退出后 oh-my-ime 会自动接管。"
-                ),
-            ),
-            (Self::Config { error, kept }, false) => (
-                "config.toml has a mistake".to_owned(),
-                if *kept {
-                    format!(
-                        "{}. oh-my-ime keeps the configuration it had.",
-                        brief(error)
-                    )
+            Self::Config { error, kept } => (
+                tr.text("config.toml has a mistake").to_owned(),
+                tr.format(if *kept {
+                    omime_proto::i18n::message("{error}. oh-my-ime keeps the configuration it had.")
                 } else {
-                    format!(
-                        "{}. oh-my-ime uses the defaults until it is fixed.",
-                        brief(error)
-                    )
-                },
-            ),
-            (Self::Config { error, kept }, true) => (
-                "config.toml 有错误".to_owned(),
-                if *kept {
-                    format!("{}。oh-my-ime 继续使用之前的配置。", brief(error))
-                } else {
-                    format!("{}。在改正之前，oh-my-ime 使用默认配置。", brief(error))
-                },
+                    omime_proto::i18n::message("{error}. oh-my-ime uses the defaults until it is fixed.")
+                }, &[("error", &brief(error))]),
             ),
         }
     }
@@ -304,15 +263,6 @@ impl Ledger {
     }
 }
 
-/// Whether the user reads Chinese, after the locale.
-fn chinese() -> bool {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
-        .is_some_and(|locale| locale.starts_with("zh"))
-}
-
 async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<String>) {
     let mut ledger = Ledger::default();
     let mut server: Option<NotificationsProxy<'static>> = None;
@@ -347,12 +297,12 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                             }
                         }
                         let Some(proxy) = &server else { continue };
-                        let (summary, body) = trouble.text(chinese());
+                        let (summary, body) = trouble.text(omime_proto::i18n::current());
                         let hints = HashMap::from([
                             ("desktop-entry", Variant::from("io.github.ign1x.OhMyIme.Settings")),
                             ("urgency", Variant::U8(1)),
                         ]);
-                        let actions = ["default", if chinese() { "打开设置" } else { "Open settings" }];
+                        let actions = ["default", omime_proto::i18n::text("Open settings")];
                         match proxy
                             .notify("oh-my-ime", replaces, "input-keyboard", &summary, &body, &actions, hints, -1)
                             .await
@@ -434,10 +384,10 @@ mod tests {
             name: "Sparkle".to_owned(),
             why: EngineFailure::Launch("`omime-sparkle` is not installed".to_owned()),
         };
-        let (summary, body) = trouble.text(false);
+        let (summary, body) = trouble.text(&omime_proto::i18n::Translator::for_locale("en"));
         assert_eq!(summary, "Sparkle stopped");
         assert!(body.starts_with("It could not be started: `omime-sparkle` is not installed."));
-        let (summary, _) = trouble.text(true);
+        let (summary, _) = trouble.text(&omime_proto::i18n::Translator::for_locale("zh"));
         assert_eq!(summary, "Sparkle已停止");
         // TOML errors show a snippet of the file, which a notification does without.
         let config = Trouble::Config {
@@ -448,7 +398,9 @@ mod tests {
             kept: true,
         };
         assert_eq!(
-            config.text(false).1,
+            config
+                .text(&omime_proto::i18n::Translator::for_locale("en"))
+                .1,
             "TOML parse error at line 2, column 11: invalid type: string \"yes\", expected \
              a boolean. oh-my-ime keeps the configuration it had."
         );

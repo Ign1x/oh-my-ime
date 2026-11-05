@@ -4,6 +4,7 @@
 //! single owner for all input state makes ordering trivial to reason about. Background
 //! tasks (engine calls, sockets, D-Bus) report back through channels.
 
+use omime_proto::tr;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -61,7 +62,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .context("failed to start the async runtime")?;
+        .context(tr!("failed to start the async runtime"))?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async { Daemon::new(options).await?.run().await })
 }
@@ -75,7 +76,7 @@ fn read_config() -> Result<Config, String> {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        Err(e) => return Err(tr!("cannot read {arg0}: {e}", arg0 = path.display(), e = e)),
     };
     let (config, unknown) = Config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     info!("using {}", path.display());
@@ -365,7 +366,7 @@ impl Daemon {
                     // after reconnect, so its own crash budget stops it first.
                     if recent_failures.len() > crate::core::engines::MAX_CRASHES + 1 {
                         self.core.shutdown();
-                        return Err(e.context("the connection keeps failing; giving up"));
+                        return Err(e.context(tr!("the connection keeps failing; giving up")));
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     info!("reconnecting");
@@ -381,7 +382,7 @@ impl Daemon {
         mut startup_engine: Option<String>,
     ) -> anyhow::Result<SessionEnd> {
         let poll_fd = watch(PollFd(frontend.state().poll_fd().clone()))
-            .context("failed to watch the Wayland connection")?;
+            .context(tr!("failed to watch the Wayland connection"))?;
 
         let end = loop {
             // Launch the startup engine once the compositor's globals are known, so
@@ -667,11 +668,11 @@ impl Daemon {
     ) -> Result<(), String> {
         let path = omime_proto::paths::config_dir()
             .map(|dir| dir.join(CONFIG_FILE))
-            .ok_or("cannot find the configuration directory")?;
+            .ok_or_else(|| tr!("cannot find the configuration directory"))?;
         let mut text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+            Err(e) => return Err(tr!("cannot read {arg0}: {e}", arg0 = path.display(), e = e)),
         };
         let installed: Vec<String> = self.core.engines().into_iter().map(|e| e.id).collect();
         for (key, value) in changes {
@@ -679,7 +680,7 @@ impl Daemon {
                 for entry in entries {
                     let engine = crate::core::split_target(entry).0;
                     if !installed.iter().any(|id| id == engine) {
-                        return Err(format!("no engine `{engine}` is installed"));
+                        return Err(tr!("no engine `{engine}` is installed", engine = engine));
                     }
                 }
             }
@@ -687,7 +688,7 @@ impl Daemon {
                 omime_proto::config::edit(&text, &key, value).map_err(|e| format!("{key}: {e}"))?;
         }
         write_atomically(&path, &text)
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            .map_err(|e| tr!("cannot write {arg0}: {e}", arg0 = path.display(), e = e))?;
         self.reload(frontend).await
     }
 
@@ -746,7 +747,7 @@ impl Daemon {
         {
             control.config_changed();
         }
-        result.map_err(|e| format!("{e}\nomimed keeps the configuration it had"))
+        result.map_err(|e| tr!("{e}\nomimed keeps the configuration it had", e = e))
     }
 }
 

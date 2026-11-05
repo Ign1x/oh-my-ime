@@ -331,39 +331,17 @@ impl MenuEntry {
     }
 }
 
-/// Whether text for the user should be Chinese.
-fn chinese() -> bool {
-    std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .or_else(|_| std::env::var("LANG"))
-        .is_ok_and(|locale| locale.starts_with("zh"))
-}
-
-/// "Direct input", in Chinese for Chinese locales.
+/// The direct-input entry in the tray.
 fn direct_input_label() -> &'static str {
-    if chinese() {
-        "直接输入"
-    } else {
-        "Direct input"
-    }
+    omime_proto::i18n::text("Direct input")
 }
 
-/// "Configure Fcitx 5…", in Chinese for Chinese locales.
 fn settings_label(engine: &str) -> String {
-    if chinese() {
-        format!("配置 {engine}…")
-    } else {
-        format!("Configure {engine}…")
-    }
+    omime_proto::tr!("Configure {engine}…", engine = engine)
 }
 
-/// "Settings…", oh-my-ime's own, in Chinese for Chinese locales.
 fn own_settings_label() -> &'static str {
-    if chinese() {
-        "设置…"
-    } else {
-        "Settings…"
-    }
+    omime_proto::i18n::text("Settings…")
 }
 
 /// Asks the daemon loop.

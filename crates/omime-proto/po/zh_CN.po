@@ -1,0 +1,1048 @@
+# Simplified Chinese translation of the oh-my-ime platform.
+# Terms follow docs/zh-CN: 热键, 切换浮层, 托盘, 直接输入.
+msgid ""
+msgstr ""
+"Project-Id-Version: oh-my-ime\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "oh-my-ime Settings"
+msgstr "oh-my-ime 设置"
+
+msgid "Input methods"
+msgstr "输入法"
+
+msgid "Hotkeys"
+msgstr "热键"
+
+msgid "Applications"
+msgstr "应用"
+
+msgid "General"
+msgstr "通用"
+
+msgid "About"
+msgstr "关于"
+
+msgid "Dismiss"
+msgstr "关闭提示"
+
+msgid "Connecting to oh-my-ime…"
+msgstr "正在连接 oh-my-ime…"
+
+msgid "oh-my-ime is not running"
+msgstr "oh-my-ime 没有运行"
+
+msgid "Start it with “systemctl --user start omimed”, or run omimed. The settings show here as soon as it runs."
+msgstr "用“systemctl --user start omimed”启动它，或者直接运行 omimed。它一运行，设置就会出现在这里。"
+
+msgid "Direct input"
+msgstr "直接输入"
+
+msgid "The input methods you switch between, in the order of switching. Direct input is always there too."
+msgstr "在这些输入法之间切换，顺序即切换顺序。直接输入始终可用。"
+
+msgid "In use"
+msgstr "正在使用"
+
+msgid "Move {} up"
+msgstr "上移{}"
+
+msgid "Move {} down"
+msgstr "下移{}"
+
+msgid "Settings of {}"
+msgstr "{}的设置"
+
+msgid "Remove {}"
+msgstr "移除{}"
+
+msgid "No input methods yet"
+msgstr "还没有输入法"
+
+msgid "Add one to type in another language."
+msgstr "添加一个，就能输入其他语言。"
+
+msgid "Add input method…"
+msgstr "添加输入法…"
+
+msgid "Add an input method"
+msgstr "添加输入法"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Search"
+msgstr "搜索"
+
+msgid "Add"
+msgstr "添加"
+
+msgid "Add {}"
+msgstr "添加{}"
+
+msgid "Every input method there is is in your list already. Install another framework or engine to get more."
+msgstr "所有可用的输入法都已在列表里。安装其他输入法框架或引擎，可以获得更多。"
+
+msgid "No input method matches “{}”."
+msgstr "没有与“{}”匹配的输入法。"
+
+msgid "Chinese (Simplified)"
+msgstr "简体中文"
+
+msgid "Chinese (Traditional)"
+msgstr "繁体中文"
+
+msgid "Chinese"
+msgstr "中文"
+
+msgid "Japanese"
+msgstr "日语"
+
+msgid "Korean"
+msgstr "韩语"
+
+msgid "English"
+msgstr "英语"
+
+msgid "Vietnamese"
+msgstr "越南语"
+
+msgid "Thai"
+msgstr "泰语"
+
+msgid "Other"
+msgstr "其他"
+
+msgid "Keys that switch input methods while you type in an application."
+msgstr "在应用里打字时，用这些按键切换输入法。"
+
+msgid "Direct input and back"
+msgstr "切换直接输入"
+
+msgid "Switches between direct input and the input method you used last"
+msgstr "在直接输入和上次用的输入法之间切换"
+
+msgid "Next input method"
+msgstr "下一个输入法"
+
+msgid "Switches to the next input method in your list"
+msgstr "切换到列表里的下一个输入法"
+
+msgid "Press the new keys…"
+msgstr "请按下新的按键…"
+
+msgid "Off"
+msgstr "未设置"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Change"
+msgstr "更改"
+
+msgid "Change {}"
+msgstr "更改“{}”"
+
+msgid "Turn {} off"
+msgstr "关闭“{}”"
+
+msgid "To record keys, click Change and press them together; Escape cancels. Keys your compositor binds itself, such as Hyprland's binds, never reach oh-my-ime."
+msgstr "点“更改”，然后同时按下新的组合键即可录制；按 Esc 取消。合成器自己绑定的按键（如 Hyprland 的 bind）不会传给 oh-my-ime。"
+
+msgid "Each application can keep the input method you used in it last."
+msgstr "每个应用都可以记住你上次在其中使用的输入法。"
+
+msgid "Remember the input method of each application"
+msgstr "为每个应用记住输入法"
+
+msgid "When you come back to an application, its input method comes back too"
+msgstr "回到某个应用时，自动换回它的输入法"
+
+msgid "Input method of {}"
+msgstr "{}的输入法"
+
+msgid "Forget {}"
+msgstr "忘记{}"
+
+msgid "No application has an input method of its own yet: switch input methods in one, and it shows here."
+msgstr "还没有应用记住了输入法：在某个应用里切换一次输入法，它就会出现在这里。"
+
+msgid "Show in the tray"
+msgstr "在托盘中显示"
+
+msgid "An icon in the status bar shows the input method in use, and its menu switches"
+msgstr "状态栏里的图标显示正在使用的输入法，从它的菜单可以切换"
+
+msgid "Show the switcher"
+msgstr "显示切换浮层"
+
+msgid "Your input methods appear for a moment when you switch with the hotkeys"
+msgstr "用热键切换时，屏幕上会短暂显示你的输入法"
+
+msgid "Show notifications"
+msgstr "显示通知"
+
+msgid "Tell you when something goes wrong: an input method stopped, another input method holds the keyboard, or config.toml has a mistake"
+msgstr "出现问题时通知你：输入法停止运行、另一个输入法占用了键盘，或 config.toml 有错误"
+
+msgid "Waiting for an input method"
+msgstr "等待输入法的时间"
+
+msgid "How long a key waits for the input method's answer before it goes to the application as it is"
+msgstr "按键等待输入法回应的最长时间，超时后按键原样交给应用"
+
+msgid "omimed {}, settings {}"
+msgstr "omimed {}，设置程序 {}"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Connected to the compositor at {}"
+msgstr "已连接合成器 {}"
+
+msgid "oh-my-ime is the input method of seat {}"
+msgstr "oh-my-ime 是座位 {} 的输入法"
+
+msgid "Another input method holds seat {}"
+msgstr "座位 {} 被另一个输入法占用"
+
+msgid "The compositor reports which application has focus"
+msgstr "合成器会报告哪个应用有焦点"
+
+msgid "The compositor does not report which application has focus, so applications cannot keep their input method"
+msgstr "合成器不报告哪个应用有焦点，因此应用无法记住各自的输入法"
+
+msgid "The input method could not be selected: {}"
+msgstr "无法选中输入法：{}"
+
+msgid "For a full check, run “omime doctor”. If one application cannot type, use “omime doctor --app PID” to inspect its launch settings and input plugins. Log: “journalctl --user -u omimed”."
+msgstr "全面检查请运行“omime doctor”。某个应用无法输入时，用“omime doctor --app PID”检查其启动环境和输入插件。日志：“journalctl --user -u omimed”。"
+
+msgid "--app needs a positive process id"
+msgstr "--app 需要一个正整数进程 ID"
+
+msgid "--config must name Hyprland's main configuration, not an oh-my-ime file"
+msgstr "--config 应指定 Hyprland 主配置文件，不能指定 oh-my-ime 的文件"
+
+msgid "--config must name a .lua or .conf Hyprland configuration"
+msgstr "--config 应指定 .lua 或 .conf 格式的 Hyprland 配置文件"
+
+msgid "--config needs a Hyprland configuration path"
+msgstr "--config 需要 Hyprland 配置文件的路径"
+
+msgid "--engine needs an input method id"
+msgstr "--engine 需要输入法 ID"
+
+msgid "--start cannot reach the session bus"
+msgstr "--start 无法连接会话总线"
+
+msgid "--start needs a Wayland session (WAYLAND_DISPLAY is not set); run setup without --start for the next login"
+msgstr "--start 需要 Wayland 会话（未设置 WAYLAND_DISPLAY）；如需配置下次登录，请运行不带 --start 的 setup"
+
+msgid "; {arg0} (pid {arg1}) is running"
+msgstr "；{arg0}（进程 {arg1}）正在运行"
+
+msgid "Application launch settings updated for D-Bus (no systemd user manager on this bus)."
+msgstr "已更新 D-Bus 的应用启动环境（此总线上没有 systemd 用户管理器）。"
+
+msgid "Application launch settings updated for D-Bus and the systemd user manager."
+msgstr "已更新 D-Bus 和 systemd 用户管理器的应用启动环境。"
+
+msgid "Configuration is already up to date."
+msgstr "配置已是最新。"
+
+msgid "D-Bus did not update the launch environment in time"
+msgstr "D-Bus 未能及时更新启动环境"
+
+msgid "First-login input method: {engine}."
+msgstr "首次登录的输入法：{engine}。"
+
+msgid "Hyprland already starts {program}; use --take-over to suspend that startup, or remove it yourself before setup"
+msgstr "Hyprland 已配置为启动 {program}；使用 --take-over 暂停该自启动，或先手动移除它再配置"
+
+msgid "Hyprland contains an omime setup block without its journal; restore the journal before proceeding"
+msgstr "Hyprland 配置中有 omime setup 管理的配置块，但缺少修改记录；请先恢复记录再继续"
+
+msgid "Hyprland setup is ready. Use omime setup --undo to restore the managed settings."
+msgstr "Hyprland 配置已就绪。可用 omime setup --undo 恢复修改前的设置。"
+
+msgid "Input is ready: {arg0}."
+msgstr "输入已就绪：{arg0}。"
+
+msgid "Installed {arg0} ({arg1}) into {arg2}"
+msgstr "已将 {arg0}（{arg1}）安装到 {arg2}"
+
+msgid "Managed setup removed. Log out and back in to restore the previous session startup and input environment."
+msgstr "已撤销管理的配置。注销并重新登录后，将恢复之前的会话启动和输入环境。"
+
+msgid "No setup to undo."
+msgstr "没有需要撤销的配置。"
+
+msgid "QT_IM_MODULE is not fcitx: Qt applications without native text-input support may fall back to Compose; session setup uses QT_IM_MODULE=fcitx with the Fcitx5 Qt plugin, and QT_IM_MODULES=wayland;fcitx lets newer Qt prefer Wayland"
+msgstr "QT_IM_MODULE 不是 fcitx：不支持原生 text-input 的 Qt 应用可能退回 Compose；会话配置使用 QT_IM_MODULE=fcitx 配合 Fcitx5 Qt 插件，QT_IM_MODULES=wayland;fcitx 则让新版 Qt 优先使用 Wayland"
+
+msgid "QT_IM_MODULES overrides QT_IM_MODULE in newer Qt but has no Fcitx fallback; session setup uses wayland;fcitx"
+msgstr "新版 Qt 中 QT_IM_MODULES 会覆盖 QT_IM_MODULE，但当前没有 Fcitx 备用模块；会话配置使用 wayland;fcitx"
+
+msgid "Qt applications need their Fcitx5 input module (fcitx5-qt); see docs/hyprland.md for application requirements."
+msgstr "Qt 应用需要匹配的 Fcitx5 输入模块（fcitx5-qt）；应用要求见 docs/zh-CN/hyprland.md。"
+
+msgid "Recognized Fcitx5/IBus autostart commands in the selected Hyprland file will be suspended."
+msgstr "将暂停所选 Hyprland 文件中已识别的 Fcitx5/IBus 自启动命令。"
+
+msgid "Restart existing applications to inherit these settings. Compositor and terminal launchers may need a new login."
+msgstr "重启已打开的应用以使用这些设置。合成器和终端启动的应用可能需要重新登录后才能生效。"
+
+msgid "Session configuration is ready for Hyprland, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
+msgstr "Hyprland、UWSM 和 systemd 的应用启动环境已配置。注销并重新登录，让各启动器继承配置，然后运行 omime doctor。"
+
+msgid "Start omimed and select the requested input method after configuring."
+msgstr "配置后启动 omimed 并选择指定的输入法。"
+
+msgid "Take over from {arg0} in this session."
+msgstr "在当前会话中接管 {arg0}。"
+
+msgid "This check reads launch settings and loaded libraries. It does not verify key delivery."
+msgstr "此检查读取启动设置和已加载的库，不验证按键是否送达。"
+
+msgid "Uninstalled {engine}"
+msgstr "已卸载 {engine}"
+
+msgid "XMODIFIERS is not set: X11 applications using XIM (xterm, Java, Wine) find no input method; set XMODIFIERS=@im=fcitx"
+msgstr "未设置 XMODIFIERS：使用 XIM 的 X11 应用（xterm、Java、Wine）找不到输入法；请设置 XMODIFIERS=@im=fcitx"
+
+msgid "XMODIFIERS names an input method omimed does not answer by: X11 applications using XIM find none; set XMODIFIERS=@im=fcitx"
+msgstr "XMODIFIERS 指定的输入法名称不由 omimed 提供：使用 XIM 的 X11 应用将找不到输入法；请设置 XMODIFIERS=@im=fcitx"
+
+msgid "`engines` must be a list of engine ids"
+msgstr "`engines` 必须是引擎 ID 列表"
+
+msgid "`{key}` is a number of milliseconds"
+msgstr "`{key}` 应为毫秒数"
+
+msgid "`{key}` is true or false"
+msgstr "`{key}` 应为 true 或 false"
+
+msgid "`{program}` is not in PATH, so omimed cannot start this engine"
+msgstr "PATH 中没有 `{program}`，omimed 无法启动此引擎"
+
+msgid "a compound {name} startup also performs other actions; split that startup in Hyprland before using setup"
+msgstr "{name} 的复合启动命令还执行了其他操作；使用 setup 前，请先在 Hyprland 中拆分该命令"
+
+msgid "an earlier setup was interrupted; run omime setup --undo to recover it before applying again"
+msgstr "之前的配置被中断；请先运行 omime setup --undo 恢复，再重新配置"
+
+msgid "another omime setup is running"
+msgstr "另一个 omime setup 正在运行"
+
+msgid "application {arg0} ({arg1}): launch environment"
+msgstr "应用 {arg0}（{arg1}）：启动环境"
+
+msgid "application {pid} belongs to another user"
+msgstr "应用 {pid} 属于其他用户"
+
+msgid "application {pid} is no longer running or cannot be inspected"
+msgstr "应用 {pid} 已退出或无法检查"
+
+msgid "cannot ask the session bus for {DAEMON_BUS_NAME}: {e}"
+msgstr "无法通过会话总线查询 {DAEMON_BUS_NAME}：{e}"
+
+msgid "cannot connect to the session bus"
+msgstr "无法连接会话总线"
+
+msgid "cannot copy {arg0} to {arg1}"
+msgstr "无法将 {arg0} 复制到 {arg1}"
+
+msgid "cannot create {arg0}"
+msgstr "无法创建 {arg0}"
+
+msgid "cannot find XDG_CONFIG_HOME or HOME"
+msgstr "找不到 XDG_CONFIG_HOME 或 HOME"
+
+msgid "cannot find XDG_STATE_HOME or HOME"
+msgstr "找不到 XDG_STATE_HOME 或 HOME"
+
+msgid "cannot find the configuration directory"
+msgstr "找不到配置目录"
+
+msgid "cannot find the data directory"
+msgstr "找不到数据目录"
+
+msgid "cannot find {arg0}"
+msgstr "找不到 {arg0}"
+
+msgid "cannot follow omimed's bus name"
+msgstr "无法监听 omimed 的总线名称"
+
+msgid "cannot inspect systemd application launch settings: {error_0}"
+msgstr "无法检查 systemd 应用启动设置：{error_0}"
+
+msgid "cannot inspect {arg0}"
+msgstr "无法检查 {arg0}"
+
+msgid "cannot install {arg0} into itself ({arg1})"
+msgstr "无法将 {arg0} 安装到它自身（{arg1}）"
+
+msgid "cannot listen for SIGINT"
+msgstr "无法监听 SIGINT"
+
+msgid "cannot listen for SIGTERM"
+msgstr "无法监听 SIGTERM"
+
+msgid "cannot listen for status changes"
+msgstr "无法监听状态变化"
+
+msgid "cannot locate omime"
+msgstr "找不到 omime"
+
+msgid "cannot move the copy to {arg0}"
+msgstr "无法将副本移动到 {arg0}"
+
+msgid "cannot reach omimed: {e}"
+msgstr "无法连接 omimed：{e}"
+
+msgid "cannot read /proc"
+msgstr "无法读取 /proc"
+
+msgid "cannot read /proc/self"
+msgstr "无法读取 /proc/self"
+
+msgid "cannot read application {pid}'s launch environment"
+msgstr "无法读取应用 {pid} 的启动环境"
+
+msgid "cannot read setup journal {arg0}"
+msgstr "无法读取配置修改记录 {arg0}"
+
+msgid "cannot read the NameOwnerChanged signal"
+msgstr "无法读取 NameOwnerChanged 信号"
+
+msgid "cannot read the StatusChanged signal"
+msgstr "无法读取 StatusChanged 信号"
+
+msgid "cannot read the status"
+msgstr "无法读取状态"
+
+msgid "cannot read {arg0}"
+msgstr "无法读取 {arg0}"
+
+msgid "cannot remove {arg0}"
+msgstr "无法删除 {arg0}"
+
+msgid "cannot replace {arg0}"
+msgstr "无法替换 {arg0}"
+
+msgid "cannot resolve {arg0}"
+msgstr "无法解析 {arg0}"
+
+msgid "cannot run {arg0}"
+msgstr "无法运行 {arg0}"
+
+msgid "cannot start {arg0}"
+msgstr "无法启动 {arg0}"
+
+msgid "cannot update {arg0}"
+msgstr "无法更新 {arg0}"
+
+msgid "cannot write the status"
+msgstr "无法写入状态"
+
+msgid "cannot write {arg0}"
+msgstr "无法写入 {arg0}"
+
+msgid "config.toml: engine `{id}` is in `engines` but not installed; omimed leaves it out"
+msgstr "config.toml：`engines` 中的引擎 `{id}` 未安装，omimed 将跳过它"
+
+msgid "config.toml: hotkey `{name}` = `{value}`: {e}"
+msgstr "config.toml：热键 `{name}` = `{value}`：{e}"
+
+msgid "config.toml: initial_input_method `{id}` is disabled; enable it before the first login"
+msgstr "config.toml：initial_input_method `{id}` 已被停用，请在首次登录前启用它"
+
+msgid "config.toml: initial_input_method `{id}` must be an engine id, engine/method, or direct"
+msgstr "config.toml：initial_input_method `{id}` 必须为引擎 ID、engine/method 或 direct"
+
+msgid "config.toml: initial_input_method `{id}` needs engine `{engine}`, which is not installed"
+msgstr "config.toml：initial_input_method `{id}` 需要引擎 `{engine}`，但该引擎尚未安装"
+
+msgid "config.toml: omimed does not know `{key}` and ignores it (misspelt, or for a newer version?)"
+msgstr "config.toml：omimed 不识别 `{key}`，将忽略它（请检查拼写，或确认是否需要更新版本）"
+
+msgid "config.toml: {display}"
+msgstr "config.toml：{display}"
+
+msgid "config.toml: {display}: {e}; {BROKEN_CONFIG}"
+msgstr "config.toml：{display}：{e}；{BROKEN_CONFIG}"
+
+msgid "configuration path has no parent"
+msgstr "配置路径没有父目录"
+
+msgid "configuration paths must be UTF-8"
+msgstr "配置路径必须使用 UTF-8 编码"
+
+msgid "configuration paths must not contain control characters"
+msgstr "配置路径不能包含控制字符"
+
+msgid "duplicate setup option {arg}"
+msgstr "重复的 setup 选项 {arg}"
+
+msgid "engine `{id}` is already installed in {arg0} (use --force to replace it)"
+msgstr "引擎 `{id}` 已安装在 {arg0}（使用 --force 替换）"
+
+msgid "engine `{id}` is installed in {arg0}, outside your user directory; remove it with whatever installed it"
+msgstr "引擎 `{id}` 安装在用户目录之外的 {arg0}，请使用原安装工具卸载"
+
+msgid "engine {arg0} keeps crashing; omimed gave up on it (see its log)"
+msgstr "引擎 {arg0} 持续崩溃，omimed 已将其停用（请查看日志）"
+
+msgid "engine {id} failed to start; run omime doctor and inspect {arg0}"
+msgstr "引擎 {id} 启动失败；请运行 omime doctor 并查看 {arg0}"
+
+msgid "engine {id} is offered once `{program}` is installed"
+msgstr "安装 `{program}` 后即可使用引擎 {id}"
+
+msgid "engine {id}: omimed does not know `{key}` in its manifest and ignores it"
+msgstr "引擎 {id}：omimed 不识别清单中的 `{key}`，将忽略它"
+
+msgid "engine {id}: {warning}"
+msgstr "引擎 {id}：{warning}"
+
+msgid "engines: {arg0}"
+msgstr "引擎：{arg0}"
+
+msgid "input is running, but application launch settings could not be updated; retry setup --start or log out and back in"
+msgstr "输入服务正在运行，但无法更新应用启动设置；请重试 setup --start，或注销并重新登录"
+
+msgid "input method engine `{id}` is not installed or its required program is unavailable (see omime doctor)"
+msgstr "输入法引擎 `{id}` 未安装，或所需程序不可用（请运行 omime doctor）"
+
+msgid "input method selection failed: {error}"
+msgstr "输入法选择失败：{error}"
+
+msgid "invalid input method id `{id}`"
+msgstr "无效的输入法 ID `{id}`"
+
+msgid "invalid {arg0}"
+msgstr "{arg0} 无效"
+
+msgid "loaded input backend: {plugin}"
+msgstr "已加载的输入后端：{plugin}"
+
+msgid "no config.toml, using the defaults"
+msgstr "没有 config.toml，使用默认配置"
+
+msgid "no configuration directory"
+msgstr "没有配置目录"
+
+msgid "no engine `{engine}` is installed (see `omime engines`)"
+msgstr "尚未安装引擎 `{engine}`（请运行 `omime engines`）"
+
+msgid "no engine `{id}` is installed"
+msgstr "尚未安装引擎 `{id}`"
+
+msgid "no engine is enabled"
+msgstr "尚未启用任何引擎"
+
+msgid "note: {engine} does not list `{arg0}` yet; it gets it when you switch to it"
+msgstr "提示：{engine} 尚未列出 `{arg0}`，切换到它时会获取列表"
+
+msgid "omimed belongs to another Wayland display ({actual}); use the matching session bus"
+msgstr "omimed 属于另一个 Wayland 显示（{actual}）；请使用对应的会话总线"
+
+msgid "omimed did not answer `Diagnose`: {e}"
+msgstr "omimed 未响应 `Diagnose`：{e}"
+
+msgid "omimed did not answer `ListEngines`: {e}"
+msgstr "omimed 未响应 `ListEngines`：{e}"
+
+msgid "omimed did not report its seats"
+msgstr "omimed 未报告输入座位"
+
+msgid "omimed did not start; see {arg0}"
+msgstr "omimed 未启动，请查看 {arg0}"
+
+msgid "omimed exited with {status}; see {arg0}"
+msgstr "omimed 已退出，状态为 {status}；请查看 {arg0}"
+
+msgid "omimed has not acquired its input seat or selected input method; stop any remaining session input method and run omime doctor (log: {arg0})"
+msgstr "omimed 尚未取得输入座位或选定输入法；请停止会话中其他输入法并运行 omime doctor（日志：{arg0}）"
+
+msgid "omimed is not installed; install the platform before setup"
+msgstr "尚未安装 omimed；请先安装平台再配置"
+
+msgid "omimed is not running (nobody owns {DAEMON_BUS_NAME} at {DAEMON_OBJECT_PATH})"
+msgstr "omimed 未运行（没有进程在 {DAEMON_OBJECT_PATH} 提供 {DAEMON_BUS_NAME}）"
+
+msgid "omimed is not running; it will find the engine when it starts."
+msgstr "omimed 未运行，启动时会自动发现该引擎。"
+
+msgid "omimed is not running; start it with omimed or systemctl --user start omimed"
+msgstr "omimed 未运行；请运行 omimed 或 systemctl --user start omimed 启动"
+
+msgid "omimed is running, connected to {arg0}"
+msgstr "omimed 正在运行，已连接到 {arg0}"
+
+msgid "omimed is too old for setup --start; restart it with the installed version"
+msgstr "当前运行的 omimed 版本过旧，不支持 setup --start；请用已安装的版本重启"
+
+msgid "omimed's `Diagnose` reply: {e}"
+msgstr "omimed 的 `Diagnose` 回复：{e}"
+
+msgid "seat {seat}: another input method holds it"
+msgstr "座位 {seat}：被另一个输入法占用"
+
+msgid "seat {seat}: oh-my-ime is the input method"
+msgstr "座位 {seat}：输入法由 oh-my-ime 提供"
+
+msgid "settings were saved, but input could not be started; correct the reported problem and retry omime setup --start"
+msgstr "设置已保存，但输入服务未能启动；请修复报告的问题，再运行 omime setup --start"
+
+msgid "setup --undo accepts only --dry-run"
+msgstr "setup --undo 仅接受 --dry-run 选项"
+
+msgid "setup already manages {arg0}; undo it before choosing another config"
+msgstr "setup 已在管理 {arg0}；请先撤销，再选择其他配置文件"
+
+msgid "systemd application launches: {arg0}"
+msgstr "systemd 应用启动环境：{arg0}"
+
+msgid "systemd did not update the launch environment in time"
+msgstr "systemd 未能及时更新启动环境"
+
+msgid "the compositor does not report the focused window, so per-application engines (`[apps] remember`) cannot work"
+msgstr "合成器未报告焦点窗口，按应用记忆输入法（`[apps] remember`）不可用"
+
+msgid "the compositor reports the focused window"
+msgstr "合成器已报告焦点窗口"
+
+msgid "the input method could not be selected: {error}"
+msgstr "无法选择输入法：{error}"
+
+msgid "the session bus connection closed"
+msgstr "会话总线连接已关闭"
+
+msgid "the session manager did not answer"
+msgstr "会话管理器未响应"
+
+msgid "the user manager belongs to Wayland display {actual}; launch settings were not changed for another session"
+msgstr "用户管理器属于 Wayland 显示 {actual}；未修改其他会话的启动设置"
+
+msgid "there is no `focused-app` entry"
+msgstr "缺少 `focused-app` 项"
+
+msgid "there is no `seats` entry"
+msgstr "缺少 `seats` 项"
+
+msgid "this path cannot be represented as a literal Hyprland .conf include; use a .lua configuration"
+msgstr "此路径无法用于 Hyprland .conf 的字面 include；请使用 .lua 配置"
+
+msgid "unknown setup option `{arg}`"
+msgstr "未知的 setup 选项 `{arg}`"
+
+msgid "unsupported setup journal version {arg0}; keep {arg1} for recovery"
+msgstr "不支持的配置修改记录版本 {arg0}；请保留 {arg1} 以便恢复"
+
+msgid "warning: omimed does not know `{key}` in the manifest and ignores it"
+msgstr "警告：omimed 不识别清单中的 `{key}`，将忽略它"
+
+msgid "warning: omimed kept its configuration: {arg0}"
+msgstr "警告：omimed 保留了之前的配置：{arg0}"
+
+msgid "warning: {warning}"
+msgstr "警告：{warning}"
+
+msgid "{arg0} (pid {arg1}) is running; it is not using the seat now, but may take it when omimed restarts"
+msgstr "{arg0}（进程 {arg1}）正在运行；目前未占用输入座位，但可能在 omimed 重启时占用"
+
+msgid "{arg0} already exists outside setup"
+msgstr "{arg0} 已存在，且不由 setup 管理"
+
+msgid "{arg0} already exists outside setup; keep it and choose another configuration location"
+msgstr "{arg0} 已存在，且不由 setup 管理；请保留它并选择其他配置位置"
+
+msgid "{arg0} changed during rollback; recover it using the setup journal"
+msgstr "{arg0} 在回滚期间发生了变化；请使用配置修改记录恢复"
+
+msgid "{arg0} changed while setup was preparing; retry after reviewing it"
+msgstr "{arg0} 在准备配置期间发生了变化；请检查后重试"
+
+msgid "{arg0} did not exit ({reply_1}); stop its session service and retry --start"
+msgstr "{arg0} 未退出（{reply_1}）；请停止其会话服务，再重试 --start"
+
+msgid "{arg0} differs from the systemd user manager: {arg1}; restart the application or open a new terminal after session setup"
+msgstr "{arg0} 与 systemd 用户管理器不同：{arg1}；完成会话配置后，请重启应用或打开新终端"
+
+msgid "{arg0} has a setup block without its journal"
+msgstr "{arg0} 有 setup 管理的配置块，但缺少修改记录"
+
+msgid "{arg0} is a symlink managed outside setup; use a writable --config path or manage the include in your dotfile configuration"
+msgstr "{arg0} 是由其他工具管理的符号链接；请用 --config 指定可写路径，或在配置仓库中管理 include"
+
+msgid "{arg0} is already running in this session; use --take-over to request its exit before starting omimed"
+msgstr "{arg0} 已在此会话中运行；使用 --take-over 请求其退出，再启动 omimed"
+
+msgid "{arg0} is not a regular file"
+msgstr "{arg0} 不是普通文件"
+
+msgid "{arg0} is not a regular file, a directory or a symlink"
+msgstr "{arg0} 不是普通文件、目录或符号链接"
+
+msgid "{arg0} must be a regular log file"
+msgstr "{arg0} 必须是普通日志文件"
+
+msgid "{error_0}; rollback needs attention: {arg0}. Journal: {arg1}"
+msgstr "{error_0}；回滚需要处理：{arg0}。修改记录：{arg1}"
+
+msgid "{message}; Compose does not connect to the platform's Chinese input methods"
+msgstr "{message}；Compose 无法连接平台的中文输入法"
+
+msgid "{name}=ibus: {toolkit} started from this environment look for IBus, which omimed does not stand in for yet; set {name}=fcitx or unset it"
+msgstr "{name}=ibus：从此环境启动的{toolkit}会寻找 IBus，omimed 尚未提供该接入方式；请设置 {name}=fcitx 或取消此变量"
+
+msgid "{program} does not exist, so omimed cannot start this engine"
+msgstr "{program} 不存在，omimed 无法启动此引擎"
+
+msgid "{program} is not executable, so omimed cannot start this engine"
+msgstr "{program} 不可执行，omimed 无法启动此引擎"
+
+msgid "{path} changed in a section managed by setup; keep the journal and reconcile that section before --undo"
+msgstr "{path} 中由 setup 管理的部分已被修改；请保留修改记录，并协调该部分后再运行 --undo"
+
+msgid "omimed starts with the defaults then, and `omime reload` keeps the configuration it has"
+msgstr "omimed 启动时将使用默认配置，`omime reload` 则保留现有配置"
+
+msgid "(unset)"
+msgstr "（未设置）"
+
+msgid "GTK applications"
+msgstr "GTK 应用"
+
+msgid "Qt applications"
+msgstr "Qt 应用"
+
+msgid "the application's launch environment"
+msgstr "应用的启动环境"
+
+msgid "this terminal's environment"
+msgstr "当前终端的环境"
+
+msgid "; stop the other input method (see docs/hyprland.md)"
+msgstr "；请停止其他输入法（见 docs/zh-CN/hyprland.md）"
+
+msgid "no known input plugin is visible in this process's loaded libraries; static plugins and toolkit defaults may still work"
+msgstr "进程加载的库中未发现已知输入插件；静态插件或工具包默认方式仍可能可用"
+
+msgid "loaded libraries cannot be inspected; input plugin detection is unavailable"
+msgstr "无法检查已加载的库，不能检测输入插件"
+
+msgid "Qt Wayland (display backend)"
+msgstr "Qt Wayland（显示后端）"
+
+msgid "Qt X11 (display backend)"
+msgstr "Qt X11（显示后端）"
+
+msgid "Would Remove {path}"
+msgstr "将删除 {path}"
+
+msgid "Would Create {path}"
+msgstr "将创建 {path}"
+
+msgid "Would Update {path}"
+msgstr "将更新 {path}"
+
+msgid "Remove {path}"
+msgstr "删除 {path}"
+
+msgid "Create {path}"
+msgstr "创建 {path}"
+
+msgid "Update {path}"
+msgstr "更新 {path}"
+
+msgid "direct input"
+msgstr "直接输入"
+
+msgid "omimed is not running"
+msgstr "omimed 未运行"
+
+msgid "ready"
+msgstr "就绪"
+
+msgid "starting"
+msgstr "启动中"
+
+msgid "stopped"
+msgstr "已停止"
+
+msgid "failed"
+msgstr "失败"
+
+msgid "Configure {engine}…"
+msgstr "配置 {engine}…"
+
+msgid "Settings…"
+msgstr "设置…"
+
+msgid "Open settings"
+msgstr "打开设置"
+
+msgid "It crashed again and again."
+msgstr "它一再崩溃。"
+
+msgid "It did not start in time."
+msgstr "它没能及时启动。"
+
+msgid "It sent the compositor a request that the compositor refused."
+msgstr "它向合成器发送了被拒绝的请求。"
+
+msgid "It could not be started: {error}."
+msgstr "无法启动它：{error}。"
+
+msgid "{name} stopped"
+msgstr "{name}已停止"
+
+msgid "{why} Until you switch to it again, your keys go to applications as you type them."
+msgstr "{why}在你再次切换到它之前，按键会原样交给应用。"
+
+msgid "Another input method is running"
+msgstr "另一个输入法正在运行"
+
+msgid "It holds the keyboard of seat {name}, so oh-my-ime cannot serve it. Quit it (Fcitx 5 or IBus, say), or run `omime setup --take-over`; oh-my-ime takes over once it is gone."
+msgstr "它占用了座位 {name} 的键盘，oh-my-ime 无法为其服务。请退出它（例如 Fcitx 5 或 IBus），或运行 `omime setup --take-over`；它退出后 oh-my-ime 会自动接管。"
+
+msgid "config.toml has a mistake"
+msgstr "config.toml 有错误"
+
+msgid "{error}. oh-my-ime keeps the configuration it had."
+msgstr "{error}。oh-my-ime 继续使用之前的配置。"
+
+msgid "{error}. oh-my-ime uses the defaults until it is fixed."
+msgstr "{error}。在改正之前，oh-my-ime 使用默认配置。"
+
+msgid "⇥ choose   ⏎ insert   esc keep text"
+msgstr "⇥ 选择   ⏎ 插入   Esc 保留文字"
+
+msgid "Rime Settings"
+msgstr "Rime 设置"
+
+msgid "Schemas"
+msgstr "方案"
+
+msgid "The schemas checked are Rime's input methods; oh-my-ime's settings put them in the switching order."
+msgstr "勾选的方案是 Rime 的输入法；在 oh-my-ime 的设置里把它们加入切换顺序。"
+
+msgid "Typing"
+msgstr "输入"
+
+msgid "Candidates per page"
+msgstr "每页候选数"
+
+msgid "Shift alone"
+msgstr "单按 Shift"
+
+msgid "Candidate window"
+msgstr "候选窗"
+
+msgid "Layout"
+msgstr "排列"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Font size"
+msgstr "字号"
+
+msgid "Open the user folder"
+msgstr "打开用户文件夹"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Switches, keeping the letters typed"
+msgstr "切换中英，已输入的字母上屏"
+
+msgid "Switches, committing the candidate"
+msgstr "切换中英，候选上屏"
+
+msgid "Switches, clearing what was typed"
+msgstr "切换中英，清除已输入的内容"
+
+msgid "Does nothing"
+msgstr "不切换"
+
+msgid "In a row"
+msgstr "横排"
+
+msgid "In a column"
+msgstr "竖排"
+
+msgid "As the desktop"
+msgstr "跟随系统"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "Rime's settings cannot be read, only the candidate window's:"
+msgstr "无法读取 Rime 的设置，只能更改候选窗："
+
+msgid "Could not save all settings. Please retry:"
+msgstr "保存未完成，请修复后重试："
+
+msgid "Rime is deploying…"
+msgstr "Rime 正在部署…"
+
+msgid "Deploy again"
+msgstr "重新部署"
+
+msgid "English letters"
+msgstr "英文"
+
+msgid "Full width"
+msgstr "全角"
+
+msgid "Simplified characters"
+msgstr "简体"
+
+msgid "English punctuation"
+msgstr "英文标点"
+
+msgid "Recent emoji panel"
+msgstr "最近使用的表情面板"
+
+msgid "config.toml: {display}: {e}\n{BROKEN_CONFIG}"
+msgstr "config.toml：{display}：{e}\n{BROKEN_CONFIG}"
+
+msgid "unknown command line `{arg0}`\n\n{USAGE}"
+msgstr "未知命令 `{arg0}`\n\n{USAGE}"
+
+msgid "Usage: omime <COMMAND>\n\nCommands:\n  list [--all]     List the input methods to choose from (* marks the one in use);\n                   with --all also those you can enable (marked -)\n  engines          List installed engines (* marks enabled ones)\n  status [--json] [--watch]\n                   Show the input method in use (`--watch` keeps streaming changes)\n  switch <ID>      Switch to an input method from `list`, such as `sparkle` or\n                   `fcitx5/shuangpin` (`direct` for no input method)\n  next             Switch to the next input method\n  toggle           Switch between direct input and the last engine\n  enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)\n  disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)\n  settings [<ENGINE>]\n                   Open oh-my-ime's settings, or those of an engine, such as `fcitx5`\n  properties       Show the menu of the input method in use (switches such as\n                   Chinese or English punctuation)\n  activate <ID>    Activate an entry of that menu\n  apps [forget <APP>]\n                   Show the input method each application gets back with\n                   `[apps] remember`, or forget one\n  config [<KEY> <VALUE>]\n                   Show the options of config.toml, or set one, such as\n                   `omime config apps.remember true`\n  install <DIR>    Install an engine from a directory (`--force` to replace it)\n  uninstall <ID>   Remove an engine installed in your user directory\n  reload           Re-read config.toml and look for installed or removed engines\n  doctor [--app PID]\n                   Check the setup, or an application's input environment and plugins\n  setup [--engine ID] [--config PATH] [--dry-run] [--start] [--take-over]\n                   Configure Hyprland; --start also starts input in this session\n  setup --undo [--dry-run]\n                   Undo the managed setup, preserving other configuration changes\n  help             Print this help\n\nThe other commands talk to a running `omimed` over the session bus; `install`,\n`uninstall`, `setup` and `doctor` also work without it, `status --watch` keeps watching\nfor it, and the settings wait for it."
+msgstr "用法：omime <命令>\n\n命令：\n  list [--all]     列出可切换的输入法（* 表示当前输入法）；\n                   --all 还列出可启用的输入法（用 - 标记）\n  engines          列出已安装的引擎（* 表示已启用）\n  status [--json] [--watch]\n                   显示当前输入法（--watch 持续输出状态变化）\n  switch <ID>      切换到 list 中的输入法，例如 sparkle、fcitx5/shuangpin；\n                   direct 表示直接输入\n  next             切换到下一个输入法\n  toggle           在直接输入和上一个引擎之间切换\n  enable <引擎>    启用引擎（加入 config.toml 的 engines）\n  disable <引擎>   停用引擎（从 config.toml 的 engines 移除）\n  settings [<引擎>]\n                   打开平台设置，或指定引擎（例如 fcitx5）的设置\n  properties       显示当前输入法菜单（如中英文标点开关）\n  activate <ID>    激活菜单中的指定项\n  apps [forget <应用>]\n                   查看 [apps] remember 记住的各应用输入法，或清除某项记忆\n  config [<选项> <值>]\n                   显示或修改 config.toml 选项，例如：\n                   omime config apps.remember true\n  install <目录>   从目录安装引擎（--force 替换已安装的引擎）\n  uninstall <ID>   卸载用户目录中的引擎\n  reload           重新读取 config.toml 并发现已安装或移除的引擎\n  doctor [--app PID]\n                   检查配置，或检查指定应用的输入环境和插件\n  setup [--engine ID] [--config 路径] [--dry-run] [--start] [--take-over]\n                   配置 Hyprland；--start 同时启动当前会话的输入服务\n  setup --undo [--dry-run]\n                   撤销管理的配置，保留其他修改\n  help             显示此帮助\n\n其他命令通过会话总线连接运行中的 omimed；install、uninstall、setup 和 doctor\n也可在 omimed 未运行时使用。status --watch 会持续等待服务，设置窗口也会等待服务启动。"
+
+msgid "`{arg0}`, the settings of engine `{id}`, is not installed"
+msgstr "引擎 `{id}` 的设置程序 `{arg0}` 未安装"
+
+msgid "`{id}` has no input method `{inner}`"
+msgstr "`{id}` 没有输入法 `{inner}`"
+
+msgid "`{key}` does not take {arg0}"
+msgstr "`{key}` 不接受 {arg0} 类型的值"
+
+msgid "`{text}` has no key"
+msgstr "`{text}` 未指定按键"
+
+msgid "cannot launch `{program}` for engine `{id}`"
+msgstr "无法为引擎 `{id}` 启动 `{program}`"
+
+msgid "cannot launch `{program}` for engine `{id}`: it is not installed"
+msgstr "无法为引擎 `{id}` 启动 `{program}`：该程序未安装"
+
+msgid "cannot read {arg0}: {e}"
+msgstr "无法读取 {arg0}：{e}"
+
+msgid "cannot start `{program}`"
+msgstr "无法启动 `{program}`"
+
+msgid "cannot write {arg0}: {e}"
+msgstr "无法写入 {arg0}：{e}"
+
+msgid "engine `{id}` has no property `{property}`"
+msgstr "引擎 `{id}` 没有菜单项 `{property}`"
+
+msgid "engine `{id}` has no settings"
+msgstr "引擎 `{id}` 没有设置"
+
+msgid "engine `{id}` is not waiting for registration"
+msgstr "引擎 `{id}` 当前不在等待注册"
+
+msgid "engine protocol {theirs} is not supported (daemon speaks {ours})"
+msgstr "不支持引擎协议 {theirs}（守护进程使用 {ours}）"
+
+msgid "failed to start the async runtime"
+msgstr "无法启动异步运行时"
+
+msgid "failed to watch the Wayland connection"
+msgstr "无法监听 Wayland 连接"
+
+msgid "no engine `{engine}` is installed"
+msgstr "尚未安装引擎 `{engine}`"
+
+msgid "no engine `{id}`"
+msgstr "没有引擎 `{id}`"
+
+msgid "no engine is in use"
+msgstr "当前未使用引擎"
+
+msgid "no engines are enabled"
+msgstr "尚未启用任何引擎"
+
+msgid "no settings program"
+msgstr "没有设置程序"
+
+msgid "not an entry of the menu"
+msgstr "不是菜单项"
+
+msgid "nothing is remembered for `{app}`"
+msgstr "没有为 `{app}` 记住输入法"
+
+msgid "the connection keeps failing; giving up"
+msgstr "连接持续失败，已停止重试"
+
+msgid "the engine does not run"
+msgstr "引擎未运行"
+
+msgid "the engine has no command"
+msgstr "引擎没有启动命令"
+
+msgid "the engine has no menu"
+msgstr "引擎没有菜单"
+
+msgid "there is no option `{key}`"
+msgstr "没有选项 `{key}`"
+
+msgid "this socket belongs to engine `{arg0}`"
+msgstr "此 socket 属于引擎 `{arg0}`"
+
+msgid "unknown modifier `{other}` in `{text}`"
+msgstr "`{text}` 中有未知修饰键 `{other}`"
+
+msgid "`engine.key_timeout_ms` must be at least 1"
+msgstr "`engine.key_timeout_ms` 必须至少为 1"
+
+msgid "`initial_input_method` must be an engine id, engine/method, or direct"
+msgstr "`initial_input_method` 必须为引擎 ID、engine/method 或 direct"
+
+msgid "the daemon is shutting down"
+msgstr "守护进程正在退出"
+
+msgid "{e}\nomimed keeps the configuration it had"
+msgstr "{e}\nomimed 保留了之前的配置"
+
+msgid "Usage: omimed [OPTIONS]\n\nThe oh-my-ime daemon. It becomes the input method of the Wayland compositor and\nroutes keyboard input to input method engines.\n\nOptions:\n  --display <NAME>  Connect to this Wayland display instead of $WAYLAND_DISPLAY\n  --engine <ID>     Select this engine at startup (default: the last one used)\n  -h, --help        Print this help\n  -V, --version     Print the version\n\nEnvironment:\n  OMIME_LOG         Log filter, e.g. `debug` or `omimed=trace`\n                    (default: info,wl_proxy=error)\n  OMIME_ENGINE_PATH Extra directories to look for engines in (colon separated)\n  OMIME_WL_DEBUG    Log every Wayland message (may include typed keys!)"
+msgstr "用法：omimed [选项]\n\noh-my-ime 守护进程。接入 Wayland 合成器，将键盘输入路由到输入法引擎。\n\n选项：\n  --display <名称>  连接指定的 Wayland 显示，替代 $WAYLAND_DISPLAY\n  --engine <ID>     启动时选择指定引擎（默认恢复上次使用的引擎）\n  -h, --help        显示此帮助\n  -V, --version     显示版本\n\n环境变量：\n  OMIME_LOG         日志过滤，例如 debug 或 omimed=trace\n                    （默认：info,wl_proxy=error）\n  OMIME_ENGINE_PATH 额外的引擎搜索目录（以冒号分隔）\n  OMIME_WL_DEBUG    记录每条 Wayland 消息（可能包含输入的按键！）"
+
+msgid "--display needs a value"
+msgstr "--display 需要显示名称"
+
+msgid "--engine needs an engine id"
+msgstr "--engine 需要引擎 ID"
+
+msgid "unknown argument `{other}`"
+msgstr "未知参数 `{other}`"
+
+msgid "{program} is not installed"
+msgstr "尚未安装 {program}"
+
+msgid "cannot open the settings: {e}"
+msgstr "无法打开设置：{e}"
+
+msgid "Usage: omime-settings [PAGE]\n\nShows oh-my-ime's settings. PAGE opens a page other than the input methods: hotkeys,\napplications, general or about."
+msgstr "用法：omime-settings [页面]\n\n打开 oh-my-ime 设置。省略页面时显示输入法；也可指定 hotkeys（热键）、\napplications（应用）、general（通用）或 about（关于）。"
+
+msgid "there is no page `{name}`"
+msgstr "没有页面 `{name}`"

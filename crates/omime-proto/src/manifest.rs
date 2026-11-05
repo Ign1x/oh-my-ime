@@ -243,7 +243,8 @@ impl Manifest {
     }
 
     /// The engine's name in `locale` (e.g. `zh-CN` or `zh_CN.UTF-8`), falling back to
-    /// the language alone and then to the untranslated name.
+    /// the language alone and then to the untranslated name. A colon-separated
+    /// LANGUAGE preference list is also accepted.
     pub fn localized_name(&self, locale: &str) -> &str {
         self.translation(locale, |t| t.name.as_deref())
             .unwrap_or(&self.engine.name)
@@ -260,11 +261,22 @@ impl Manifest {
         locale: &str,
         field: impl Fn(&'a Translation) -> Option<&'a str>,
     ) -> Option<&'a str> {
-        let locale = locale.split('.').next().unwrap_or(locale).replace('_', "-");
-        let language = locale.split('-').next().unwrap_or(&locale);
-        [locale.as_str(), language]
-            .iter()
-            .find_map(|l| self.engine.i18n.get(*l).and_then(&field))
+        for candidate in locale.split(':').flat_map(crate::i18n::candidates) {
+            if let Some(value) = self
+                .engine
+                .i18n
+                .iter()
+                .find(|(tag, _)| crate::i18n::normalize(tag) == candidate)
+                .and_then(|(_, translation)| field(translation))
+            {
+                return Some(value);
+            }
+            // An explicit source-language preference stops later translations.
+            if matches!(candidate.as_str(), "en" | "c" | "posix") {
+                return None;
+            }
+        }
+        None
     }
 }
 
@@ -427,6 +439,10 @@ name = "回声"
         assert_eq!(manifest.api_version(), ApiVersion { major: 1, minor: 0 });
         assert_eq!(manifest.localized_name("zh_CN.UTF-8"), "回声");
         assert_eq!(manifest.localized_name("zh-CN"), "回声");
+        assert_eq!(manifest.localized_name("zh-Hans"), "回声");
+        assert_eq!(manifest.localized_name("zh_SG.UTF-8"), "回声");
+        assert_eq!(manifest.localized_name("fr:ZH_cn@pinyin"), "回声");
+        assert_eq!(manifest.localized_name("en:zh_CN"), "Echo");
         assert_eq!(manifest.localized_name("de_DE"), "Echo");
     }
 

@@ -95,7 +95,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     let conn = zbus::Connection::session()
         .await
-        .context("cannot connect to the session bus")?;
+        .context(omime_proto::tr!("cannot connect to the session bus"))?;
     let daemon = DaemonProxy::builder(&conn)
         // The version is read again whenever omimed starts again.
         .cache_properties(zbus::proxy::CacheProperties::No)

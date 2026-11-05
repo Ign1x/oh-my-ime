@@ -3,6 +3,7 @@
 //! Status bars read the lines from a pipe, so every line is flushed and a reader that
 //! goes away (a broken pipe) or a signal ends the process without an error.
 
+use omime_proto::tr;
 use std::collections::HashMap;
 use std::io::Write;
 use std::pin::Pin;
@@ -19,20 +20,20 @@ use crate::{DaemonProxy, daemon_owns_bus_name, format_status, format_stopped};
 pub async fn run(json: bool) -> anyhow::Result<()> {
     let conn = zbus::Connection::session()
         .await
-        .context("cannot connect to the session bus")?;
+        .context(tr!("cannot connect to the session bus"))?;
     let daemon = DaemonProxy::new(&conn).await?;
     // Subscribe before asking for the status, so a change in between cannot slip through.
     let mut changes = std::pin::pin!(
         daemon
             .receive_status_changed()
             .await
-            .context("cannot listen for status changes")?
+            .context(tr!("cannot listen for status changes"))?
     );
     let bus = zbus::fdo::DBusProxy::new(&conn).await?;
     let mut owners = std::pin::pin!(
         bus.receive_name_owner_changed_with_args(&[(0, DAEMON_BUS_NAME)])
             .await
-            .context("cannot follow omimed's bus name")?
+            .context(tr!("cannot follow omimed's bus name"))?
     );
 
     let mut last: Option<String> = None;
@@ -45,25 +46,26 @@ pub async fn run(json: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut interrupt = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
-    let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    let mut interrupt = signal(SignalKind::interrupt()).context(tr!("cannot listen for SIGINT"))?;
+    let mut terminate =
+        signal(SignalKind::terminate()).context(tr!("cannot listen for SIGTERM"))?;
 
     loop {
         tokio::select! {
             message = next(changes.as_mut()) => {
                 let Some(message) = message else {
-                    bail!("the session bus connection closed");
+                    bail!("{}", tr!("the session bus connection closed"));
                 };
-                let status = message.args().context("cannot read the StatusChanged signal")?;
+                let status = message.args().context(tr!("cannot read the StatusChanged signal"))?;
                 if !print_status(&mut last, json, status.status())? {
                     return Ok(());
                 }
             }
             message = next(owners.as_mut()) => {
                 let Some(message) = message else {
-                    bail!("the session bus connection closed");
+                    bail!("{}", tr!("the session bus connection closed"));
                 };
-                let args = message.args().context("cannot read the NameOwnerChanged signal")?;
+                let args = message.args().context(tr!("cannot read the NameOwnerChanged signal"))?;
                 let printed = if args.new_owner().is_some() {
                     print_current(&conn, &daemon, &mut last, json).await
                 } else {
@@ -91,7 +93,7 @@ async fn print_current(
         Err(e) => {
             // A daemon that went away again announces that with its own signal.
             if daemon_owns_bus_name(conn).await? {
-                return Err(e).context("cannot read the status");
+                return Err(e).context(tr!("cannot read the status"));
             }
             print_stopped(last, json)
         }
@@ -129,7 +131,7 @@ fn emit_to(out: &mut impl Write, last: &mut Option<String>, line: &str) -> anyho
             Ok(true)
         }
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(false),
-        Err(e) => Err(e).context("cannot write the status"),
+        Err(e) => Err(e).context(tr!("cannot write the status")),
     }
 }
 

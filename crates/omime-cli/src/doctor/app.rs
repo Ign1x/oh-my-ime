@@ -1,6 +1,7 @@
 //! Read-only diagnostics for a selected process. Never read command arguments,
 //! window titles, document contents, or print unrelated environment variables.
 
+use omime_proto::tr;
 use std::collections::BTreeSet;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
@@ -34,18 +35,24 @@ impl Application {
         let uid = std::fs::metadata("/proc/self")?.uid();
         ensure!(
             std::fs::metadata(&path)
-                .with_context(|| format!(
-                    "application {pid} is no longer running or cannot be inspected"
+                .with_context(|| tr!(
+                    "application {pid} is no longer running or cannot be inspected",
+                    pid = pid
                 ))?
                 .uid()
                 == uid,
-            "application {pid} belongs to another user"
+            "{}",
+            tr!("application {pid} belongs to another user", pid = pid)
         );
         let name = std::fs::read_to_string(path.join("comm"))?
             .trim()
             .to_owned();
-        let environment = std::fs::read(path.join("environ"))
-            .with_context(|| format!("cannot read application {pid}'s launch environment"))?;
+        let environment = std::fs::read(path.join("environ")).with_context(|| {
+            tr!(
+                "cannot read application {pid}'s launch environment",
+                pid = pid
+            )
+        })?;
         let maps = std::fs::read_to_string(path.join("maps"));
         Ok(Self {
             pid,
@@ -57,9 +64,10 @@ impl Application {
     }
 
     pub fn findings(&self) -> Vec<Finding> {
-        let mut findings = vec![Finding::ok(format!(
-            "application {} ({}): launch environment",
-            self.pid, self.name
+        let mut findings = vec![Finding::ok(tr!(
+            "application {arg0} ({arg1}): launch environment",
+            arg0 = self.pid,
+            arg1 = self.name
         ))];
         for key in VARIABLES {
             let value = self
@@ -67,15 +75,22 @@ impl Application {
                 .iter()
                 .find(|(k, _)| k == key)
                 .map(|(_, v)| v);
-            let value = value.map_or_else(|| "(unset)".to_owned(), |s| format!("{s:?}"));
+            let value = value.map_or_else(
+                || omime_proto::i18n::text("(unset)").to_owned(),
+                |s| format!("{s:?}"),
+            );
             findings.push(Finding::ok(format!("{key}={value}")));
         }
         findings.extend(environment_findings(&self.variables));
         for plugin in &self.plugins {
-            let message = format!("loaded input backend: {plugin}");
+            let message = tr!(
+                "loaded input backend: {plugin}",
+                plugin = omime_proto::i18n::text(plugin)
+            );
             findings.push(if *plugin == "Qt Compose" {
-                Finding::warning(format!(
-                    "{message}; Compose does not connect to the platform's Chinese input methods"
+                Finding::warning(tr!(
+                    "{message}; Compose does not connect to the platform's Chinese input methods",
+                    message = message
                 ))
             } else {
                 Finding::ok(message)
@@ -83,12 +98,12 @@ impl Application {
         }
         if self.plugins.is_empty() {
             findings.push(Finding::warning(if self.maps_readable {
-                "no known input plugin is visible in this process's loaded libraries; static plugins and toolkit defaults may still work"
+                omime_proto::i18n::text("no known input plugin is visible in this process's loaded libraries; static plugins and toolkit defaults may still work")
             } else {
-                "loaded libraries cannot be inspected; input plugin detection is unavailable"
+                omime_proto::i18n::text("loaded libraries cannot be inspected; input plugin detection is unavailable")
             }));
         }
-        findings.push(Finding::ok("This check reads launch settings and loaded libraries. It does not verify key delivery."));
+        findings.push(Finding::ok(tr!("This check reads launch settings and loaded libraries. It does not verify key delivery.")));
         findings
     }
 }
@@ -121,8 +136,14 @@ fn loaded_plugins(maps: &str) -> BTreeSet<&'static str> {
             ("/im-fcitx5.so", "GTK Fcitx"),
             ("/im-ibus.so", "GTK IBus"),
             ("/im-xim.so", "GTK XIM"),
-            ("/platforms/libqwayland", "Qt Wayland (display backend)"),
-            ("/platforms/libqxcb.so", "Qt X11 (display backend)"),
+            (
+                "/platforms/libqwayland",
+                omime_proto::i18n::message("Qt Wayland (display backend)"),
+            ),
+            (
+                "/platforms/libqxcb.so",
+                omime_proto::i18n::message("Qt X11 (display backend)"),
+            ),
         ] {
             if line.contains(needle) {
                 plugins.insert(label);

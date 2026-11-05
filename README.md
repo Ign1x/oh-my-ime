@@ -261,6 +261,10 @@ known gaps.
 
 Contributions are very welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
+Settings, tray menus, notifications, the switcher and command-line tools follow the
+desktop language, with English and Simplified Chinese available. See the
+[localization guide](docs/localization.md) to choose a language or contribute translations.
+
 ## License
 
 oh-my-ime is licensed under either of

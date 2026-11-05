@@ -401,10 +401,7 @@ pub(crate) fn is_layout(id: &str) -> bool {
 
 /// Whether names should be in Chinese.
 fn chinese_locale() -> bool {
-    std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .or_else(|_| std::env::var("LANG"))
-        .is_ok_and(|locale| locale.starts_with("zh"))
+    omime_proto::i18n::current().language() == "zh"
 }
 
 /// Adds the input method `id` to Fcitx 5's current group, at the end, unless it is in

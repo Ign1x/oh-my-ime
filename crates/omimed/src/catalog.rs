@@ -100,20 +100,38 @@ fn files(dir: &Path, extension: &str) -> Vec<PathBuf> {
 
 /// The user's locale and its language, as Fcitx 5 names translations: `zh_CN`, `zh`.
 fn locales() -> Vec<String> {
-    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
-        .unwrap_or_default();
-    let locale = locale.split(['.', '@']).next().unwrap_or_default();
-    if locale.is_empty() || locale == "C" || locale == "POSIX" {
-        return Vec::new();
+    locale_names(&omime_proto::i18n::preferences())
+}
+
+fn locale_names(preferences: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for locale in preferences {
+        for tag in omime_proto::i18n::candidates(locale) {
+            // Fcitx's Name is the English fallback; do not skip an explicit
+            // English preference to find a later language in LANGUAGE.
+            if matches!(tag.as_str(), "en" | "c" | "posix") {
+                return result;
+            }
+            let name = tag
+                .split('-')
+                .enumerate()
+                .map(|(index, part)| {
+                    if index == 0 {
+                        part.to_owned()
+                    } else if part.len() == 4 && part.is_ascii() {
+                        format!("{}{}", part[..1].to_ascii_uppercase(), &part[1..])
+                    } else {
+                        part.to_ascii_uppercase()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("_");
+            if !result.contains(&name) {
+                result.push(name);
+            }
+        }
     }
-    let mut locales = vec![locale.to_owned()];
-    if let Some((language, _)) = locale.split_once('_') {
-        locales.push(language.to_owned());
-    }
-    locales
+    result
 }
 
 fn fcitx_installed(dir: &Path, locales: &[String]) -> Vec<InnerMethod> {
@@ -298,6 +316,20 @@ async fn run_listing(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locale_preferences_keep_scripts_and_stop_at_english() {
+        assert_eq!(
+            locale_names(&["en".into(), "zh_CN".into()]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            locale_names(&["zh-Hans-CN".into()]),
+            ["zh_Hans_CN", "zh_CN", "zh_Hans", "zh"]
+        );
+        let locales = locale_names(&["fr".into(), "zh_CN".into(), "en".into()]);
+        assert_eq!(locales, ["fr", "zh_CN", "zh"]);
+    }
 
     #[test]
     fn fcitx5_input_methods_are_read_in_the_users_language() {

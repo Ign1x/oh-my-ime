@@ -1,6 +1,7 @@
 //! Optional activation in the current session. Frameworks are addressed through
 //! their own D-Bus owner, never by killing every process with a matching name.
 
+use omime_proto::tr;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::process::CommandExt as _;
@@ -60,8 +61,12 @@ impl Framework {
             }
             ensure!(
                 Instant::now() < deadline,
-                "{} did not exit ({reply:?}); stop its session service and retry --start",
-                self.name()
+                "{}",
+                tr!(
+                    "{arg0} did not exit ({reply_1}); stop its session service and retry --start",
+                    arg0 = self.name(),
+                    reply_1 = format!("{:?}", reply)
+                )
             );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -77,11 +82,14 @@ pub(super) struct Prepared {
 pub(super) async fn prepare(take_over: bool) -> anyhow::Result<Prepared> {
     ensure!(
         std::env::var_os("WAYLAND_DISPLAY").is_some_and(|s| !s.is_empty()),
-        "--start needs a Wayland session (WAYLAND_DISPLAY is not set); run setup without --start for the next login"
+        "{}",
+        tr!(
+            "--start needs a Wayland session (WAYLAND_DISPLAY is not set); run setup without --start for the next login"
+        )
     );
     let connection = zbus::Connection::session()
         .await
-        .context("--start cannot reach the session bus")?;
+        .context(tr!("--start cannot reach the session bus"))?;
     let mut frameworks = Vec::new();
     // A running omimed already owns its compatibility frontends. Its hosted
     // Fcitx5/IBus must not be mistaken for a competing session framework.
@@ -108,15 +116,24 @@ pub(super) async fn prepare(take_over: bool) -> anyhow::Result<Prepared> {
     }
     ensure!(
         take_over || frameworks.is_empty(),
-        "{} is already running in this session; use --take-over to request its exit before starting omimed",
-        frameworks
-            .iter()
-            .map(Framework::name)
-            .collect::<Vec<_>>()
-            .join(" and ")
+        "{}",
+        tr!(
+            "{arg0} is already running in this session; use --take-over to request its exit before starting omimed",
+            arg0 = frameworks
+                .iter()
+                .map(Framework::name)
+                .collect::<Vec<_>>()
+                .join(" and ")
+        )
     );
     for framework in &frameworks {
-        println!("Take over from {} in this session.", framework.name());
+        println!(
+            "{}",
+            tr!(
+                "Take over from {arg0} in this session.",
+                arg0 = framework.name()
+            )
+        );
     }
     Ok(Prepared {
         connection,
@@ -193,8 +210,11 @@ pub(super) async fn start(
         if let Ok(meta) = std::fs::symlink_metadata(&log_path) {
             ensure!(
                 meta.is_file() && !meta.file_type().is_symlink(),
-                "{} must be a regular log file",
-                log_path.display()
+                "{}",
+                tr!(
+                    "{arg0} must be a regular log file",
+                    arg0 = log_path.display()
+                )
             );
         }
         let log = OpenOptions::new()
@@ -213,7 +233,7 @@ pub(super) async fn start(
                 .stderr(Stdio::from(log))
                 .process_group(0)
                 .spawn()
-                .with_context(|| format!("cannot start {}", daemon_path.display()))?,
+                .with_context(|| tr!("cannot start {arg0}", arg0 = daemon_path.display()))?,
         );
     }
     let deadline = Instant::now() + START_TIMEOUT;
@@ -221,12 +241,22 @@ pub(super) async fn start(
         if let Some(child) = &mut child
             && let Some(status) = child.try_wait()?
         {
-            bail!("omimed exited with {status}; see {}", log_path.display());
+            bail!(
+                "{}",
+                tr!(
+                    "omimed exited with {status}; see {arg0}",
+                    status = status,
+                    arg0 = log_path.display()
+                )
+            );
         }
         ensure!(
             Instant::now() < deadline,
-            "omimed did not start; see {}",
-            log_path.display()
+            "{}",
+            tr!(
+                "omimed did not start; see {arg0}",
+                arg0 = log_path.display()
+            )
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -242,16 +272,24 @@ pub(super) async fn start(
         let diagnosis = daemon.diagnose().await?;
         check_display(&diagnosis)?;
         if let Some(error) = crate::string(&diagnosis, "input-method-error") {
-            bail!("the input method could not be selected: {error}");
+            bail!(
+                "{}",
+                tr!(
+                    "the input method could not be selected: {error}",
+                    error = error
+                )
+            );
         }
         let configured: bool = diagnosis
             .get("input-method-configured")
-            .context("omimed is too old for setup --start; restart it with the installed version")?
+            .context(tr!(
+                "omimed is too old for setup --start; restart it with the installed version"
+            ))?
             .try_clone()?
             .try_into()?;
         let seats: Vec<(String, bool)> = diagnosis
             .get("seats")
-            .context("omimed did not report its seats")?
+            .context(tr!("omimed did not report its seats"))?
             .try_clone()?
             .try_into()?;
         let status = daemon.status().await?;
@@ -275,8 +313,12 @@ pub(super) async fn start(
                 .any(|(engine, _, _, state)| engine == id && state == "failed")
         {
             bail!(
-                "engine {id} failed to start; run omime doctor and inspect {}",
-                log_path.display()
+                "{}",
+                tr!(
+                    "engine {id} failed to start; run omime doctor and inspect {arg0}",
+                    id = id,
+                    arg0 = log_path.display()
+                )
             );
         }
         if !seats.is_empty()
@@ -286,14 +328,23 @@ pub(super) async fn start(
             && configured
         {
             crate::launch_env::apply(&connection).await
-                .context("input is running, but application launch settings could not be updated; retry setup --start or log out and back in")?;
-            println!("Input is ready: {}.", crate::format_status(&status, false));
+                .context(tr!("input is running, but application launch settings could not be updated; retry setup --start or log out and back in"))?;
+            println!(
+                "{}",
+                tr!(
+                    "Input is ready: {arg0}.",
+                    arg0 = crate::format_status(&status, false)
+                )
+            );
             return Ok(());
         }
         ensure!(
             Instant::now() < deadline,
-            "omimed has not acquired its input seat or selected input method; stop any remaining session input method and run omime doctor (log: {})",
-            log_path.display()
+            "{}",
+            tr!(
+                "omimed has not acquired its input seat or selected input method; stop any remaining session input method and run omime doctor (log: {arg0})",
+                arg0 = log_path.display()
+            )
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -318,7 +369,11 @@ fn check_display(
         };
         ensure!(
             display_path(Path::new(&expected)) == display_path(Path::new(&actual)),
-            "omimed belongs to another Wayland display ({actual}); use the matching session bus"
+            "{}",
+            tr!(
+                "omimed belongs to another Wayland display ({actual}); use the matching session bus",
+                actual = actual
+            )
         );
     }
     Ok(())

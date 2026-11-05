@@ -278,11 +278,7 @@ pub fn timeouts(current: u64) -> (Vec<u64>, usize) {
 
 /// The user's locale, as the environment says it: `zh_CN.UTF-8`.
 pub fn locale() -> String {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
-        .unwrap_or_default()
+    omime_proto::i18n::locale()
 }
 
 #[cfg(test)]

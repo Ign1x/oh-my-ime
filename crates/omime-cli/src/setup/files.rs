@@ -1,5 +1,6 @@
 //! Managed configuration edits and an on-disk journal for setup/undo.
 
+use omime_proto::tr;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
@@ -51,12 +52,15 @@ impl Record {
             return Ok(None);
         };
         let record: Self = toml::from_str(&text)
-            .with_context(|| format!("cannot read setup journal {}", path.display()))?;
+            .with_context(|| tr!("cannot read setup journal {arg0}", arg0 = path.display()))?;
         ensure!(
             record.version == 1,
-            "unsupported setup journal version {}; keep {} for recovery",
-            record.version,
-            path.display()
+            "{}",
+            tr!(
+                "unsupported setup journal version {arg0}; keep {arg1} for recovery",
+                arg0 = record.version,
+                arg1 = path.display()
+            )
         );
         Ok(Some(record))
     }
@@ -73,16 +77,23 @@ pub fn read(path: &Path) -> anyhow::Result<Option<String>> {
         Ok(meta) => {
             ensure!(
                 !meta.file_type().is_symlink(),
-                "{} is a symlink managed outside setup; use a writable --config path or manage the include in your dotfile configuration",
-                path.display()
+                "{}",
+                tr!(
+                    "{arg0} is a symlink managed outside setup; use a writable --config path or manage the include in your dotfile configuration",
+                    arg0 = path.display()
+                )
             );
-            ensure!(meta.is_file(), "{} is not a regular file", path.display());
+            ensure!(
+                meta.is_file(),
+                "{}",
+                tr!("{arg0} is not a regular file", arg0 = path.display())
+            );
             Ok(Some(fs::read_to_string(path).with_context(|| {
-                format!("cannot read {}", path.display())
+                tr!("cannot read {arg0}", arg0 = path.display())
             })?))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("cannot inspect {}", path.display())),
+        Err(e) => Err(e).with_context(|| tr!("cannot inspect {arg0}", arg0 = path.display())),
     }
 }
 
@@ -100,8 +111,11 @@ pub fn unmanage(file: &ManagedFile, current: Option<&str>) -> anyhow::Result<Opt
     }
     let conflict = || {
         anyhow::anyhow!(
-            "{} changed in a section managed by setup; keep the journal and reconcile that section before --undo",
-            file.path.display()
+            "{}",
+            tr!(
+                "{path} changed in a section managed by setup; keep the journal and reconcile that section before --undo",
+                path = file.path.display()
+            )
         )
     };
     let current = current.ok_or_else(conflict)?;
@@ -161,8 +175,11 @@ impl Change {
     fn apply(&self) -> anyhow::Result<()> {
         ensure!(
             read(&self.path)? == self.before,
-            "{} changed while setup was preparing; retry after reviewing it",
-            self.path.display()
+            "{}",
+            tr!(
+                "{arg0} changed while setup was preparing; retry after reviewing it",
+                arg0 = self.path.display()
+            )
         );
         replace(&self.path, self.after.as_deref(), self.mode)
     }
@@ -170,8 +187,11 @@ impl Change {
     fn rollback(&self) -> anyhow::Result<()> {
         ensure!(
             read(&self.path)? == self.after,
-            "{} changed during rollback; recover it using the setup journal",
-            self.path.display()
+            "{}",
+            tr!(
+                "{arg0} changed during rollback; recover it using the setup journal",
+                arg0 = self.path.display()
+            )
         );
         replace(&self.path, self.before.as_deref(), self.mode)
     }
@@ -202,9 +222,13 @@ pub fn apply(
                 return Err(error);
             }
             bail!(
-                "{error:#}; rollback needs attention: {}. Journal: {}",
-                rollback_errors.join("; "),
-                journal.display()
+                "{}",
+                tr!(
+                    "{error_0}; rollback needs attention: {arg0}. Journal: {arg1}",
+                    error_0 = format!("{:#}", error),
+                    arg0 = rollback_errors.join("; "),
+                    arg1 = journal.display()
+                )
             );
         }
     }
@@ -221,7 +245,7 @@ pub fn undo(journal: &Path, changes: &[Change]) -> anyhow::Result<()> {
             return Err(error);
         }
     }
-    fs::remove_file(journal).with_context(|| format!("cannot remove {}", journal.display()))
+    fs::remove_file(journal).with_context(|| tr!("cannot remove {arg0}", arg0 = journal.display()))
 }
 
 fn replace(path: &Path, text: Option<&str>, mode: u32) -> anyhow::Result<()> {
@@ -230,15 +254,18 @@ fn replace(path: &Path, text: Option<&str>, mode: u32) -> anyhow::Result<()> {
         None => match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e).with_context(|| format!("cannot remove {}", path.display())),
+            Err(e) => Err(e).with_context(|| tr!("cannot remove {arg0}", arg0 = path.display())),
         },
     }
 }
 
 fn atomic_write(path: &Path, text: &str, mode: u32) -> anyhow::Result<()> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let parent = path.parent().context("configuration path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+    let parent = path
+        .parent()
+        .context(tr!("configuration path has no parent"))?;
+    fs::create_dir_all(parent)
+        .with_context(|| tr!("cannot create {arg0}", arg0 = parent.display()))?;
     let temp = parent.join(format!(
         ".omime-setup-{}-{}.tmp",
         std::process::id(),
@@ -262,5 +289,5 @@ fn atomic_write(path: &Path, text: &str, mode: u32) -> anyhow::Result<()> {
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
-    result.with_context(|| format!("cannot write {}", path.display()))
+    result.with_context(|| tr!("cannot write {arg0}", arg0 = path.display()))
 }

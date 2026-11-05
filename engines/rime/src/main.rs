@@ -262,15 +262,6 @@ struct Effects {
     preedit: Option<Preedit>,
 }
 
-/// Whether the user reads Chinese, after the locale.
-fn chinese() -> bool {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
-        .is_some_and(|locale| locale.starts_with("zh"))
-}
-
 /// A schema's badge: 双 for the double pinyin schemas, 拼 for the others of pinyin,
 /// else the first character of its name.
 fn badge(id: &str, name: &str) -> String {
@@ -351,19 +342,11 @@ impl State {
         let Some(host) = self.host.clone() else {
             return;
         };
-        let zh = chinese();
         if !self.deployed {
             host.set_status(Status {
                 label: Some("…".to_owned()),
                 icon: None,
-                tooltip: Some(
-                    if zh {
-                        "Rime 正在部署…"
-                    } else {
-                        "Rime is deploying…"
-                    }
-                    .to_owned(),
-                ),
+                tooltip: Some(omime_proto::i18n::text("Rime is deploying…").to_owned()),
             });
             return;
         }
@@ -376,32 +359,33 @@ impl State {
                 .filter(|n| !n.is_empty()),
         });
         let simplified = status.is_some_and(|s| s.simplified) || self.focused_option("zh_hans");
-        let toggle = |id: &str, en: &str, cn: &str, checked: bool| Property {
+        let toggle = |id: &str, en: &str, checked: bool| Property {
             id: id.to_owned(),
             kind: PropertyKind::Toggle,
-            label: if zh { cn } else { en }.to_owned(),
+            label: omime_proto::i18n::text(en).to_owned(),
             checked,
             enabled: true,
             ..Property::default()
         };
         let menu = vec![
-            toggle("ascii_mode", "English letters", "英文", self.ascii),
+            toggle(
+                "ascii_mode",
+                omime_proto::i18n::message("English letters"),
+                self.ascii,
+            ),
             toggle(
                 "full_shape",
-                "Full width",
-                "全角",
+                omime_proto::i18n::message("Full width"),
                 status.is_some_and(|s| s.full_shape),
             ),
             toggle(
                 "simplification",
-                "Simplified characters",
-                "简体",
+                omime_proto::i18n::message("Simplified characters"),
                 simplified,
             ),
             toggle(
                 "ascii_punct",
-                "English punctuation",
-                "英文标点",
+                omime_proto::i18n::message("English punctuation"),
                 status.is_some_and(|s| s.ascii_punct),
             ),
             Property {
@@ -412,7 +396,7 @@ impl State {
             Property {
                 id: "deploy".to_owned(),
                 kind: PropertyKind::Action,
-                label: if zh { "重新部署" } else { "Deploy again" }.to_owned(),
+                label: omime_proto::i18n::text("Deploy again").to_owned(),
                 icon: Some("view-refresh".to_owned()),
                 enabled: true,
                 ..Property::default()

@@ -32,6 +32,7 @@
 //! enabled = true
 //! ```
 
+use crate::tr;
 use serde::{Deserialize, Serialize};
 
 /// File name of the configuration below `$XDG_CONFIG_HOME/oh-my-ime`.
@@ -170,7 +171,7 @@ pub const KEYS: [&str; 9] = [
 /// parse are errors.
 pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
     if !KEYS.contains(&key) {
-        return Err(format!("there is no option `{key}`"));
+        return Err(tr!("there is no option `{key}`", key = key));
     }
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
     let item = match value {
@@ -198,12 +199,14 @@ pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
         HotkeySpec::parse(hotkey)?;
     }
     if config.engine.key_timeout_ms == 0 {
-        return Err("`engine.key_timeout_ms` must be at least 1".into());
+        return Err(tr!("`engine.key_timeout_ms` must be at least 1"));
     }
     if let Some(id) = &config.initial_input_method
         && !valid_input_method(id)
     {
-        return Err("`initial_input_method` must be an engine id, engine/method, or direct".into());
+        return Err(tr!(
+            "`initial_input_method` must be an engine id, engine/method, or direct"
+        ));
     }
     Ok(edited)
 }
@@ -235,7 +238,7 @@ impl HotkeySpec {
         let parts: Vec<&str> = text.split('+').map(str::trim).collect();
         let (key, mods) = parts.split_last().ok_or("empty hotkey")?;
         if key.is_empty() {
-            return Err(format!("`{text}` has no key"));
+            return Err(tr!("`{text}` has no key", text = text));
         }
         let mut modifiers = 0;
         for name in mods {
@@ -244,7 +247,13 @@ impl HotkeySpec {
                 "control" | "ctrl" => m::CONTROL,
                 "alt" | "mod1" => m::ALT,
                 "super" | "logo" | "mod4" => m::SUPER,
-                other => return Err(format!("unknown modifier `{other}` in `{text}`")),
+                other => {
+                    return Err(tr!(
+                        "unknown modifier `{other}` in `{text}`",
+                        other = other,
+                        text = text
+                    ));
+                }
             };
         }
         Ok(Some(Self {

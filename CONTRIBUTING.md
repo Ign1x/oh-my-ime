@@ -22,6 +22,7 @@ and `dbus`.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+python3 scripts/check-translations.py
 cargo deny check        # licenses, advisories, sources
 ```
 
@@ -41,6 +42,8 @@ CI runs the same checks.
 - **Honesty:** documentation must describe what actually works. Use the ✅ / 🧩 / 🚧 / 📅
   markers from the README.
 - **Docs:** user-facing changes update both `README.md` and `README.zh-CN.md`.
+- **Translations:** mark user-facing messages and update the shared PO catalog;
+  see [docs/localization.md](docs/localization.md).
 
 ## Architecture
 

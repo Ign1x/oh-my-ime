@@ -12,9 +12,11 @@ use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
 use omime_proto::names::{DAEMON_BUS_NAME, DAEMON_OBJECT_PATH};
+use omime_proto::tr;
 use zbus::OwnedVariant;
 
-const USAGE: &str = "\
+const USAGE: &str = omime_proto::i18n::message(
+    "\
 Usage: omime <COMMAND>
 
 Commands:
@@ -53,7 +55,8 @@ Commands:
 
 The other commands talk to a running `omimed` over the session bus; `install`,
 `uninstall`, `setup` and `doctor` also work without it, `status --watch` keeps watching
-for it, and the settings wait for it.";
+for it, and the settings wait for it.",
+);
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Daemon1",
@@ -146,8 +149,8 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
         ["doctor", "--app", pid] => {
             let pid = pid
                 .parse::<u32>()
-                .context("--app needs a positive process id")?;
-            anyhow::ensure!(pid > 0, "--app needs a positive process id");
+                .context(tr!("--app needs a positive process id"))?;
+            anyhow::ensure!(pid > 0, "{}", tr!("--app needs a positive process id"));
             Command::Doctor { app: Some(pid) }
         }
         ["settings"] => Command::OwnSettings,
@@ -177,7 +180,14 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             ["config", key, value] => {
                 DaemonCommand::Config(Some(((*key).to_owned(), (*value).to_owned())))
             }
-            _ => bail!("unknown command line `{}`\n\n{USAGE}", args.join(" ")),
+            _ => bail!(
+                "{}",
+                tr!(
+                    "unknown command line `{arg0}`\n\n{USAGE}",
+                    arg0 = args.join(" "),
+                    USAGE = omime_proto::i18n::text(USAGE)
+                )
+            ),
         }),
     }))
 }
@@ -240,7 +250,7 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
         )
     } else {
         match (method, label) {
-            (None, _) => "direct input".into(),
+            (None, _) => tr!("direct input"),
             (Some(method), Some(label)) => format!("{method} ({label})"),
             (Some(method), None) => method,
         }
@@ -249,13 +259,25 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
 
 /// The line for "omimed is not running", in the same formats as [`format_status`].
 fn format_stopped(json: bool) -> String {
+    let message = omime_proto::i18n::text("omimed is not running");
     if json {
-        // `class` is `stopped`, so status bars can tell it from direct input.
-        "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
-         \"text\":\"⌨\",\"class\":\"stopped\"}"
-            .into()
+        // Only display text is localized; keys and state values are stable.
+        format!(
+            "{{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":{},\"text\":\"⌨\",\"class\":\"stopped\"}}",
+            json_string(message)
+        )
     } else {
-        "omimed is not running".into()
+        message.to_owned()
+    }
+}
+
+fn engine_state(state: &str) -> &str {
+    match state {
+        "ready" => omime_proto::i18n::text("ready"),
+        "starting" => omime_proto::i18n::text("starting"),
+        "stopped" => omime_proto::i18n::text("stopped"),
+        "failed" => omime_proto::i18n::text("failed"),
+        _ => state,
     }
 }
 
@@ -290,30 +312,42 @@ fn open_own_settings() -> anyhow::Error {
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from(PROGRAM));
     let error = std::process::Command::new(&program).exec();
-    anyhow::Error::new(error).context(format!("cannot run {}", program.display()))
+    anyhow::Error::new(error).context(tr!("cannot run {arg0}", arg0 = program.display()))
 }
 
 /// Installs the engine directory `dir` for the user and lets a running omimed notice.
 async fn install_engine(dir: &Path, force: bool) -> anyhow::Result<()> {
     let engines_dir =
-        omime_proto::paths::user_engine_dir().context("cannot find the data directory")?;
+        omime_proto::paths::user_engine_dir().context(tr!("cannot find the data directory"))?;
     let engine = install::install(dir, &engines_dir, force)?;
     if let Some(warning) = install::command_warning(&engine) {
-        eprintln!("warning: {warning}");
+        eprintln!("{}", tr!("warning: {warning}", warning = warning));
     }
     for key in &engine.unknown_keys {
-        eprintln!("warning: omimed does not know `{key}` in the manifest and ignores it");
+        eprintln!(
+            "{}",
+            tr!(
+                "warning: omimed does not know `{key}` in the manifest and ignores it",
+                key = key
+            )
+        );
     }
     edit_config_engines(engine.id(), true)?;
     let running = reload_if_running().await?;
     println!(
-        "Installed {} ({}) into {}",
-        engine.id(),
-        engine.manifest.engine.name,
-        engine.dir.display()
+        "{}",
+        tr!(
+            "Installed {arg0} ({arg1}) into {arg2}",
+            arg0 = engine.id(),
+            arg1 = engine.manifest.engine.name,
+            arg2 = engine.dir.display()
+        )
     );
     if !running {
-        println!("omimed is not running; it will find the engine when it starts.");
+        println!(
+            "{}",
+            tr!("omimed is not running; it will find the engine when it starts.")
+        );
     }
     Ok(())
 }
@@ -321,11 +355,11 @@ async fn install_engine(dir: &Path, force: bool) -> anyhow::Result<()> {
 /// Removes the user-installed engine `engine` and lets a running omimed notice.
 async fn uninstall_engine(engine: &str) -> anyhow::Result<()> {
     let engines_dir =
-        omime_proto::paths::user_engine_dir().context("cannot find the data directory")?;
+        omime_proto::paths::user_engine_dir().context(tr!("cannot find the data directory"))?;
     install::uninstall(&engines_dir, engine, &omime_proto::paths::engine_dirs())?;
     edit_config_engines(engine, false)?;
     reload_if_running().await?;
-    println!("Uninstalled {engine}");
+    println!("{}", tr!("Uninstalled {engine}", engine = engine));
     Ok(())
 }
 
@@ -342,8 +376,11 @@ async fn reload_if_running() -> anyhow::Result<bool> {
     // The engines are looked up again even when config.toml is broken.
     if let Err(e) = daemon.reload().await {
         eprintln!(
-            "warning: omimed kept its configuration: {}",
-            dbus_message(&e)
+            "{}",
+            tr!(
+                "warning: omimed kept its configuration: {arg0}",
+                arg0 = dbus_message(&e)
+            )
         );
     }
     Ok(true)
@@ -376,20 +413,22 @@ async fn daemon_owns_bus_name(conn: &zbus::Connection) -> anyhow::Result<bool> {
 /// Without a list every installed engine is enabled, so there is nothing to change.
 fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
     let dir =
-        omime_proto::paths::config_dir().context("cannot find the configuration directory")?;
+        omime_proto::paths::config_dir().context(tr!("cannot find the configuration directory"))?;
     let path = dir.join(omime_proto::config::CONFIG_FILE);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        Err(e) => return Err(e).with_context(|| tr!("cannot read {arg0}", arg0 = path.display())),
     };
     let updated = edit_engines(&text, engine, enable)
-        .with_context(|| format!("cannot update {}", path.display()))?;
+        .with_context(|| tr!("cannot update {arg0}", arg0 = path.display()))?;
     if updated != text {
         // Through a temporary file: omimed may be reading it.
         let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, updated).with_context(|| format!("cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
+        std::fs::write(&tmp, updated)
+            .with_context(|| tr!("cannot write {arg0}", arg0 = tmp.display()))?;
+        std::fs::rename(&tmp, &path)
+            .with_context(|| tr!("cannot write {arg0}", arg0 = path.display()))?;
     }
     Ok(())
 }
@@ -397,10 +436,17 @@ fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
 async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
     let conn = zbus::Connection::session()
         .await
-        .context("cannot connect to the session bus")?;
+        .context(tr!("cannot connect to the session bus"))?;
     let daemon = DaemonProxy::new(&conn).await?;
     if !daemon_owns_bus_name(&conn).await? {
-        bail!("omimed is not running (nobody owns {DAEMON_BUS_NAME} at {DAEMON_OBJECT_PATH})");
+        bail!(
+            "{}",
+            tr!(
+                "omimed is not running (nobody owns {DAEMON_BUS_NAME} at {DAEMON_OBJECT_PATH})",
+                DAEMON_BUS_NAME = DAEMON_BUS_NAME,
+                DAEMON_OBJECT_PATH = DAEMON_OBJECT_PATH
+            )
+        );
     }
 
     match command {
@@ -440,7 +486,11 @@ async fn run_daemon(command: DaemonCommand) -> anyhow::Result<()> {
         DaemonCommand::Engines => {
             for (id, name, enabled, state) in daemon.list_engines().await? {
                 let mark = if enabled { '*' } else { ' ' };
-                println!("{mark} {id:<16} {name:<24} {state}");
+                println!(
+                    "{mark} {id:<16} {} {}",
+                    pad(&name, 24),
+                    engine_state(&state)
+                );
             }
         }
         DaemonCommand::Status { json } => {
@@ -506,7 +556,13 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, entry: &str, enable: bool) -> any
         .split_once('/')
         .map_or((entry, None), |(e, i)| (e, Some(i)));
     if !installed.iter().any(|(id, ..)| id == engine) {
-        bail!("no engine `{engine}` is installed (see `omime engines`)");
+        bail!(
+            "{}",
+            tr!(
+                "no engine `{engine}` is installed (see `omime engines`)",
+                engine = engine
+            )
+        );
     }
     // The input methods inside the engine now, which stay when one of them goes.
     let prefix = format!("{engine}/");
@@ -519,8 +575,12 @@ async fn set_enabled(daemon: &DaemonProxy<'_>, entry: &str, enable: bool) -> any
         .collect();
     if enable && inner.is_some() && !inside.iter().any(|id| id == entry) {
         eprintln!(
-            "note: {engine} does not list `{}` yet; it gets it when you switch to it",
-            inner.unwrap_or_default()
+            "{}",
+            tr!(
+                "note: {engine} does not list `{arg0}` yet; it gets it when you switch to it",
+                engine = engine,
+                arg0 = inner.unwrap_or_default()
+            )
         );
     }
     // omimed writes config.toml, so that it is the only one that does.
@@ -605,12 +665,12 @@ fn parse_value(key: &str, text: &str) -> anyhow::Result<zbus::Variant<'static>> 
         "apps.remember" | "tray.enabled" | "panel.enabled" | "notifications.enabled" => {
             Value::from(
                 text.parse::<bool>()
-                    .with_context(|| format!("`{key}` is true or false"))?,
+                    .with_context(|| tr!("`{key}` is true or false", key = key))?,
             )
         }
         "engine.key_timeout_ms" => Value::from(
             text.parse::<u64>()
-                .with_context(|| format!("`{key}` is a number of milliseconds"))?,
+                .with_context(|| tr!("`{key}` is a number of milliseconds", key = key))?,
         ),
         "engines" => Value::from(
             text.split(',')
@@ -665,7 +725,7 @@ fn edit_engines(config: &str, entry: &str, enable: bool) -> anyhow::Result<Strin
     };
     let list: Vec<String> = item
         .as_array()
-        .context("`engines` must be a list of engine ids")?
+        .context(tr!("`engines` must be a list of engine ids"))?
         .iter()
         .filter_map(|v| v.as_str().map(str::to_owned))
         .collect();
@@ -679,7 +739,7 @@ fn main() -> ExitCode {
     let command = match parse(&args) {
         Ok(Some(command)) => command,
         Ok(None) => {
-            println!("{USAGE}");
+            println!("{}", omime_proto::i18n::text(USAGE));
             return ExitCode::SUCCESS;
         }
         Err(e) => {

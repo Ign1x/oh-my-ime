@@ -7,6 +7,7 @@
 pub mod config;
 pub mod content;
 pub mod engine;
+pub mod i18n;
 pub mod manifest;
 pub mod names;
 pub mod paths;

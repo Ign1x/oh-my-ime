@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use omime_proto::config::{self, Config};
+use omime_proto::tr;
 use omime_proto::{manifest, paths};
 
 use files::{Change, Edit, Kind, ManagedFile, Record};
@@ -39,20 +40,27 @@ impl Options {
         let mut args = args.iter().copied();
         let mut seen = std::collections::BTreeSet::new();
         while let Some(arg) = args.next() {
-            ensure!(seen.insert(arg), "duplicate setup option {arg}");
+            ensure!(
+                seen.insert(arg),
+                "{}",
+                tr!("duplicate setup option {arg}", arg = arg)
+            );
             match arg {
                 "--engine" => {
-                    let id = args.next().context("--engine needs an input method id")?;
+                    let id = args
+                        .next()
+                        .context(tr!("--engine needs an input method id"))?;
                     ensure!(
                         config::valid_input_method(id),
-                        "invalid input method id `{id}`"
+                        "{}",
+                        tr!("invalid input method id `{id}`", id = id)
                     );
                     options.engine = Some(id.into());
                 }
                 "--config" => {
                     options.config = Some(
                         args.next()
-                            .context("--config needs a Hyprland configuration path")?
+                            .context(tr!("--config needs a Hyprland configuration path"))?
                             .into(),
                     )
                 }
@@ -60,7 +68,7 @@ impl Options {
                 "--undo" => options.undo = true,
                 "--start" => options.start = true,
                 "--take-over" => options.take_over = true,
-                _ => bail!("unknown setup option `{arg}`"),
+                _ => bail!("{}", tr!("unknown setup option `{arg}`", arg = arg)),
             }
         }
         ensure!(
@@ -69,7 +77,8 @@ impl Options {
                     && options.config.is_none()
                     && !options.start
                     && !options.take_over),
-            "setup --undo accepts only --dry-run"
+            "{}",
+            tr!("setup --undo accepts only --dry-run")
         );
         Ok(options)
     }
@@ -85,10 +94,11 @@ struct Locations {
 impl Locations {
     fn from_environment() -> anyhow::Result<Self> {
         let config_dir = std::path::absolute(
-            paths::config_dir().context("cannot find XDG_CONFIG_HOME or HOME")?,
+            paths::config_dir().context(tr!("cannot find XDG_CONFIG_HOME or HOME"))?,
         )?;
-        let state_dir =
-            std::path::absolute(paths::state_dir().context("cannot find XDG_STATE_HOME or HOME")?)?;
+        let state_dir = std::path::absolute(
+            paths::state_dir().context(tr!("cannot find XDG_STATE_HOME or HOME"))?,
+        )?;
         Ok(Self {
             journal: state_dir.join("setup.toml"),
             config_dir,
@@ -123,7 +133,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(path)?;
         rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-            .context("another omime setup is running")?;
+            .context(tr!("another omime setup is running"))?;
         Some(file)
     };
     if options.undo {
@@ -138,16 +148,25 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
     };
     print_changes(&plan.changes, options.dry_run);
     if let Some(engine) = &plan.record.engine {
-        println!("First-login input method: {engine}.");
+        println!(
+            "{}",
+            tr!("First-login input method: {engine}.", engine = engine)
+        );
     }
     if plan.record.take_over {
         println!(
-            "Recognized Fcitx5/IBus autostart commands in the selected Hyprland file will be suspended."
+            "{}",
+            tr!(
+                "Recognized Fcitx5/IBus autostart commands in the selected Hyprland file will be suspended."
+            )
         );
     }
     if options.dry_run {
         if options.start {
-            println!("Start omimed and select the requested input method after configuring.");
+            println!(
+                "{}",
+                tr!("Start omimed and select the requested input method after configuring.")
+            );
         }
         return Ok(());
     }
@@ -159,16 +178,25 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
             &plan.changes,
         )?;
     }
-    println!("Hyprland setup is ready. Use omime setup --undo to restore the managed settings.");
+    println!(
+        "{}",
+        tr!("Hyprland setup is ready. Use omime setup --undo to restore the managed settings.")
+    );
     if let Some(runtime) = runtime {
         session::start(runtime, &plan.daemon, &locations.state_dir, options.engine.as_deref()).await
-            .context("settings were saved, but input could not be started; correct the reported problem and retry omime setup --start")?;
+            .context(tr!("settings were saved, but input could not be started; correct the reported problem and retry omime setup --start"))?;
     }
     println!(
-        "Session configuration is ready for Hyprland, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
+        "{}",
+        tr!(
+            "Session configuration is ready for Hyprland, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
+        )
     );
     println!(
-        "Qt applications need their Fcitx5 input module (fcitx5-qt); see docs/hyprland.md for application requirements."
+        "{}",
+        tr!(
+            "Qt applications need their Fcitx5 input module (fcitx5-qt); see docs/hyprland.md for application requirements."
+        )
     );
     Ok(())
 }
@@ -187,7 +215,10 @@ fn prepare_with(
     let previous = Record::load(&locations.journal)?;
     ensure!(
         previous.as_ref().is_none_or(|r| r.complete),
-        "an earlier setup was interrupted; run omime setup --undo to recover it before applying again"
+        "{}",
+        tr!(
+            "an earlier setup was interrupted; run omime setup --undo to recover it before applying again"
+        )
     );
     let requested = options
         .config
@@ -197,8 +228,11 @@ fn prepare_with(
     if let (Some(old), Some(path)) = (&previous, &requested) {
         ensure!(
             old.config_path == *path,
-            "setup already manages {}; undo it before choosing another config",
-            old.config_path.display()
+            "{}",
+            tr!(
+                "setup already manages {arg0}; undo it before choosing another config",
+                arg0 = old.config_path.display()
+            )
         );
     }
     let config_path = requested
@@ -220,7 +254,10 @@ fn prepare_with(
     let lua = match config_path.extension().and_then(|e| e.to_str()) {
         Some("lua") => true,
         Some("conf") => false,
-        _ => bail!("--config must name a .lua or .conf Hyprland configuration"),
+        _ => bail!(
+            "{}",
+            tr!("--config must name a .lua or .conf Hyprland configuration")
+        ),
     };
     let snippet = locations
         .config_dir
@@ -232,7 +269,8 @@ fn prepare_with(
     }
     ensure!(
         config_path != snippet && config_path != user_config,
-        "--config must name Hyprland's main configuration, not an oh-my-ime file"
+        "{}",
+        tr!("--config must name Hyprland's main configuration, not an oh-my-ime file")
     );
     let engine = options
         .engine
@@ -241,7 +279,7 @@ fn prepare_with(
     if let Some(target) = engine.as_deref().filter(|e| *e != "direct") {
         let id = target.split('/').next().unwrap_or(target);
         let installed = installed.iter().find(|e| e.id() == id)
-            .with_context(|| format!("input method engine `{id}` is not installed or its required program is unavailable (see omime doctor)"))?;
+            .with_context(|| tr!("input method engine `{id}` is not installed or its required program is unavailable (see omime doctor)", id = id))?;
         if let Some(problem) = crate::install::command_warning(installed) {
             bail!("{problem}");
         }
@@ -284,8 +322,11 @@ fn prepare_with(
     let (current, original) = base(&snippet)?;
     ensure!(
         original.is_none(),
-        "{} already exists outside setup; keep it and choose another configuration location",
-        snippet.display()
+        "{}",
+        tr!(
+            "{arg0} already exists outside setup; keep it and choose another configuration location",
+            arg0 = snippet.display()
+        )
     );
     let content = snippet_text(&daemon, lua)?;
     add_file(
@@ -303,13 +344,16 @@ fn prepare_with(
     let config_root = locations
         .config_dir
         .parent()
-        .context("no configuration directory")?;
+        .context(tr!("no configuration directory"))?;
     let systemd_env = config_root.join("environment.d/90-oh-my-ime.conf");
     let (current, original) = base(&systemd_env)?;
     ensure!(
         original.is_none(),
-        "{} already exists outside setup",
-        systemd_env.display()
+        "{}",
+        tr!(
+            "{arg0} already exists outside setup",
+            arg0 = systemd_env.display()
+        )
     );
     let mut content = String::from("# Managed by omime setup.\n");
     for (key, value) in ENVIRONMENT {
@@ -330,8 +374,11 @@ fn prepare_with(
     let mut content = original.clone().unwrap_or_default();
     ensure!(
         !content.contains("omime setup begin"),
-        "{} has a setup block without its journal",
-        uwsm_env.display()
+        "{}",
+        tr!(
+            "{arg0} has a setup block without its journal",
+            arg0 = uwsm_env.display()
+        )
     );
     let mut block = if content.is_empty() || content.ends_with('\n') {
         String::new()
@@ -435,7 +482,7 @@ fn add_file(
 
 fn undo(locations: &Locations, dry_run: bool) -> anyhow::Result<()> {
     let Some(record) = Record::load(&locations.journal)? else {
-        println!("No setup to undo.");
+        println!("{}", tr!("No setup to undo."));
         return Ok(());
     };
     let mut changes = Vec::new();
@@ -460,7 +507,10 @@ fn undo(locations: &Locations, dry_run: bool) -> anyhow::Result<()> {
     if !dry_run {
         files::undo(&locations.journal, &changes)?;
         println!(
-            "Managed setup removed. Log out and back in to restore the previous session startup and input environment."
+            "{}",
+            tr!(
+                "Managed setup removed. Log out and back in to restore the previous session startup and input environment."
+            )
         );
     }
     Ok(())
@@ -468,21 +518,18 @@ fn undo(locations: &Locations, dry_run: bool) -> anyhow::Result<()> {
 
 fn print_changes(changes: &[Change], dry_run: bool) {
     if changes.is_empty() {
-        println!("Configuration is already up to date.");
+        println!("{}", tr!("Configuration is already up to date."));
     }
     for change in changes {
-        let action = if change.after.is_none() {
-            "Remove"
-        } else if change.before.is_none() {
-            "Create"
-        } else {
-            "Update"
+        let message = match (dry_run, change.after.is_none(), change.before.is_none()) {
+            (true, true, _) => omime_proto::i18n::message("Would Remove {path}"),
+            (true, false, true) => omime_proto::i18n::message("Would Create {path}"),
+            (true, false, false) => omime_proto::i18n::message("Would Update {path}"),
+            (false, true, _) => omime_proto::i18n::message("Remove {path}"),
+            (false, false, true) => omime_proto::i18n::message("Create {path}"),
+            (false, false, false) => omime_proto::i18n::message("Update {path}"),
         };
-        println!(
-            "{}{action} {}",
-            if dry_run { "Would " } else { "" },
-            change.path.display()
-        );
+        println!("{}", tr!(message, path = change.path.display()));
     }
 }
 
@@ -492,20 +539,24 @@ fn find_daemon() -> anyhow::Result<PathBuf> {
     }
     let path = std::env::current_exe()?
         .parent()
-        .context("cannot locate omime")?
+        .context(tr!("cannot locate omime"))?
         .join("omimed");
     ensure!(
         path.is_file(),
-        "omimed is not installed; install the platform before setup"
+        "{}",
+        tr!("omimed is not installed; install the platform before setup")
     );
     Ok(path)
 }
 
 fn path_text(path: &Path) -> anyhow::Result<&str> {
-    let text = path.to_str().context("configuration paths must be UTF-8")?;
+    let text = path
+        .to_str()
+        .context(tr!("configuration paths must be UTF-8"))?;
     ensure!(
         !text.chars().any(char::is_control),
-        "configuration paths must not contain control characters"
+        "{}",
+        tr!("configuration paths must not contain control characters")
     );
     Ok(text)
 }
@@ -552,7 +603,10 @@ fn configure_hyprland(
 ) -> anyhow::Result<(String, Vec<Edit>)> {
     ensure!(
         !original.contains("omime setup begin"),
-        "Hyprland contains an omime setup block without its journal; restore the journal before proceeding"
+        "{}",
+        tr!(
+            "Hyprland contains an omime setup block without its journal; restore the journal before proceeding"
+        )
     );
     let comment = if lua { "--" } else { "#" };
     let mut text = String::new();
@@ -561,7 +615,11 @@ fn configure_hyprland(
         if let Some(program) = startup_program(line, lua)? {
             ensure!(
                 program == "omimed" || take_over,
-                "Hyprland already starts {program}; use --take-over to suspend that startup, or remove it yourself before setup"
+                "{}",
+                tr!(
+                    "Hyprland already starts {program}; use --take-over to suspend that startup, or remove it yourself before setup",
+                    program = program
+                )
             );
             let after = format!(
                 "{comment} omime setup disabled startup {}\n{comment} {}\n",
@@ -583,7 +641,10 @@ fn configure_hyprland(
     } else {
         ensure!(
             !source.contains(['$', '#', '*', '?', '[', ']']),
-            "this path cannot be represented as a literal Hyprland .conf include; use a .lua configuration"
+            "{}",
+            tr!(
+                "this path cannot be represented as a literal Hyprland .conf include; use a .lua configuration"
+            )
         );
         format!("source = {source}")
     };
@@ -654,7 +715,11 @@ fn startup_program(line: &str, lua: bool) -> anyhow::Result<Option<&str>> {
     }
     ensure!(
         !command.contains([';', '|', '&', '<', '>', '`', '$', '\\']),
-        "a compound {name} startup also performs other actions; split that startup in Hyprland before using setup"
+        "{}",
+        tr!(
+            "a compound {name} startup also performs other actions; split that startup in Hyprland before using setup",
+            name = name
+        )
     );
     Ok(Some(name))
 }

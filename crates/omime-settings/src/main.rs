@@ -31,10 +31,12 @@ use window::{SettingsWindow, View};
 /// The application id: the name of the desktop entry, which compositors match.
 const APP_ID: &str = "io.github.ign1x.OhMyIme.Settings";
 
-const USAGE: &str = "Usage: omime-settings [PAGE]
+const USAGE: &str = omime_proto::i18n::message(
+    "Usage: omime-settings [PAGE]
 
 Shows oh-my-ime's settings. PAGE opens a page other than the input methods: hotkeys,
-applications, general or about.";
+applications, general or about.",
+);
 
 thread_local! {
     /// The window's controller, for events from the D-Bus thread.
@@ -52,7 +54,7 @@ fn main() -> ExitCode {
     let page = match std::env::args().nth(1).as_deref() {
         None => 0,
         Some("-h" | "--help") => {
-            println!("{USAGE}");
+            println!("{}", omime_proto::i18n::text(USAGE));
             return ExitCode::SUCCESS;
         }
         Some("-V" | "--version") => {
@@ -62,7 +64,11 @@ fn main() -> ExitCode {
         Some(name) => match ui::PAGES.iter().position(|p| *p == name) {
             Some(page) => page,
             None => {
-                eprintln!("omime-settings: there is no page `{name}`\n\n{USAGE}");
+                eprintln!(
+                    "omime-settings: {}\n\n{}",
+                    omime_proto::tr!("there is no page `{name}`", name = name),
+                    omime_proto::i18n::text(USAGE)
+                );
                 return ExitCode::from(2);
             }
         },
@@ -78,7 +84,7 @@ fn main() -> ExitCode {
 
 fn run(page: usize) -> anyhow::Result<()> {
     let window = SettingsWindow::new()?;
-    tr::install(&window, &model::locale());
+    tr::install(&window, &omime_proto::i18n::preferences().join(":"));
     // Once the window has chosen the platform, before it shows.
     slint::set_xdg_app_id(APP_ID)?;
     window

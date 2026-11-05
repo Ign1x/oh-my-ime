@@ -25,6 +25,7 @@ use anyhow::Context as _;
 use omime_proto::config::{Config, HotkeySpec};
 use omime_proto::engine::{Action, ContextId, ContextInfo, Dict, KeyEvent, Status, WireAction};
 use omime_proto::manifest::InstalledEngine;
+use omime_proto::tr;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use xkbcommon::xkb;
@@ -422,10 +423,7 @@ impl Core {
 
     /// Reports that the engine `id` stopped and stays stopped.
     fn engine_failed(&self, id: &str, why: EngineFailure) {
-        let locale = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LC_MESSAGES"))
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
+        let locale = omime_proto::i18n::preferences().join(":");
         let name = self.engines.get(id).map_or_else(
             || id.to_owned(),
             |slot| slot.installed.manifest.localized_name(&locale).to_owned(),
@@ -448,7 +446,10 @@ impl Core {
 
     /// Activates the property `id` of the current engine.
     pub fn activate_property(&self, id: &str) -> anyhow::Result<()> {
-        let engine = self.current.as_deref().context("no engine is in use")?;
+        let engine = self
+            .current
+            .as_deref()
+            .context(tr!("no engine is in use"))?;
         self.engines.activate_property(engine, id)
     }
 
@@ -678,10 +679,7 @@ impl Core {
     /// that is a hosted framework replaced by the input methods inside it once they are
     /// known, and an entry `engine/inner` standing for that input method alone.
     pub fn input_methods(&self) -> Vec<InputMethod> {
-        let locale = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LC_MESSAGES"))
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
+        let locale = omime_proto::i18n::preferences().join(":");
         let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
         let mut methods: Vec<InputMethod> = Vec::new();
         for entry in &self.enabled {
@@ -737,10 +735,7 @@ impl Core {
     /// (input methods of frameworks that are not set up or enabled, engines that are
     /// not enabled).
     pub fn all_input_methods(&self) -> Vec<(InputMethod, bool)> {
-        let locale = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LC_MESSAGES"))
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
+        let locale = omime_proto::i18n::preferences().join(":");
         let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
         let mut all: Vec<(InputMethod, bool)> = self
             .input_methods()
@@ -832,10 +827,7 @@ impl Core {
 
     /// All installed engines, enabled ones first in switching order.
     pub fn engines(&self) -> Vec<EngineSummary> {
-        let locale = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LC_MESSAGES"))
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
+        let locale = omime_proto::i18n::preferences().join(":");
         let summary = |id: &str, enabled: bool| {
             self.engines.get(id).map(|slot| EngineSummary {
                 id: id.to_owned(),
@@ -1805,7 +1797,7 @@ impl Core {
         };
         if let Some(id) = &target {
             let Some(slot) = self.engines.get(id) else {
-                anyhow::bail!("no engine `{id}` is installed");
+                anyhow::bail!("{}", tr!("no engine `{id}` is installed", id = id));
             };
             if let Some(inner) = &inner {
                 // One the framework has not listed yet, but the configuration names, is
@@ -1816,7 +1808,12 @@ impl Core {
                     .any(|e| split_target(e) == (id, Some(inner)));
                 anyhow::ensure!(
                     slot.methods.is_empty() || named || slot.methods.iter().any(|m| &m.id == inner),
-                    "`{id}` has no input method `{inner}`"
+                    "{}",
+                    tr!(
+                        "`{id}` has no input method `{inner}`",
+                        id = id,
+                        inner = inner
+                    )
                 );
             }
             // An explicit switch also retries an engine that gave up after crashing.
@@ -1889,7 +1886,7 @@ impl Core {
     /// Switches to the next input method (wrapping around to the first).
     pub fn next(&mut self, reason: SwitchReason, out: &mut dyn Frontends) -> anyhow::Result<()> {
         let methods = self.input_methods();
-        anyhow::ensure!(!methods.is_empty(), "no engines are enabled");
+        anyhow::ensure!(!methods.is_empty(), "{}", tr!("no engines are enabled"));
         let current = self.current_method();
         let position = current
             .as_ref()
@@ -1913,7 +1910,7 @@ impl Core {
             .or_else(|| self.enabled.first().cloned());
         match target {
             Some(engine) => self.switch_to(Some(engine), reason, out),
-            None => anyhow::bail!("no engines are enabled"),
+            None => anyhow::bail!("{}", tr!("no engines are enabled")),
         }
     }
 
@@ -1937,7 +1934,8 @@ impl Core {
             let engine = split_target(target).0;
             anyhow::ensure!(
                 self.engines.get(engine).is_some(),
-                "no engine `{engine}` is installed"
+                "{}",
+                tr!("no engine `{engine}` is installed", engine = engine)
             );
         }
         if self.remember_apps && self.focused_app.as_deref() == Some(app.as_str()) {
@@ -1952,7 +1950,8 @@ impl Core {
     pub fn forget_app(&mut self, app: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.app_engines.remove(app).is_some(),
-            "nothing is remembered for `{app}`"
+            "{}",
+            tr!("nothing is remembered for `{app}`", app = app)
         );
         self.state_changed();
         Ok(())

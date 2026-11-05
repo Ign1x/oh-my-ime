@@ -17,10 +17,15 @@ nix develop .#e2e      # 只装端到端测试需要的东西（CI 使用）
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+python3 scripts/check-translations.py
 cargo deny check
 ```
 
 ## 端到端测试
+
+共享翻译目录的维护方法见[本地化指南](localization.md)。`localization.rs` 验证中文
+托盘、诊断、稳定的控制标识，以及在英文会话中撤销中文配置。测试进程默认使用
+`C.UTF-8`，语言测试单独指定环境，不依赖开发者的桌面语言。
 
 `setup.rs` 从空配置验证预览、应用与撤销、首次登录选择、真实 Fcitx5/IBus 接管和首个按键开始的中文输入，并通过 Hyprland 的 `--verify-config` 校验两种生成格式。
 

@@ -3,6 +3,7 @@
 //!
 //! Owning the bus name also makes sure only one daemon runs per session.
 
+use omime_proto::tr;
 use std::cell::RefCell;
 
 use omime_proto::engine::Dict;
@@ -70,9 +71,9 @@ impl ControlObject {
         let (tx, rx) = oneshot::channel();
         self.requests
             .send(make(tx))
-            .map_err(|_| zbus::fdo::Error::Failed("the daemon is shutting down".into()))?;
+            .map_err(|_| zbus::fdo::Error::Failed(tr!("the daemon is shutting down")))?;
         rx.await
-            .map_err(|_| zbus::fdo::Error::Failed("the daemon is shutting down".into()))
+            .map_err(|_| zbus::fdo::Error::Failed(tr!("the daemon is shutting down")))
     }
 }
 
@@ -463,7 +464,13 @@ fn config_dict(config: &omime_proto::config::Config) -> Dict {
 /// A value of `Configure`, checked against the type of its option.
 fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::Value, String> {
     use omime_proto::config::Value;
-    let wrong = || format!("`{key}` does not take {}", value.value_signature());
+    let wrong = || {
+        tr!(
+            "`{key}` does not take {arg0}",
+            key = key,
+            arg0 = value.value_signature()
+        )
+    };
     let take = || value.try_clone().map_err(|_| wrong());
     Ok(match key {
         "engines" => Value::List(Vec::<String>::try_from(take()?).map_err(|_| wrong())?),
@@ -480,7 +487,7 @@ fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::V
             Variant::I64(n) => *n,
             _ => return Err(wrong()),
         }),
-        _ => return Err(format!("there is no option `{key}`")),
+        _ => return Err(tr!("there is no option `{key}`", key = key)),
     })
 }
 

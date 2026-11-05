@@ -3,6 +3,7 @@
 //! The functions only touch the directories they are given, so the commands can be
 //! exercised without a real home directory and without a running daemon.
 
+use omime_proto::tr;
 use std::env;
 use std::fs;
 use std::io;
@@ -22,47 +23,60 @@ use omime_proto::manifest::{
 pub fn install(source: &Path, engines_dir: &Path, force: bool) -> anyhow::Result<InstalledEngine> {
     let source = source
         .canonicalize()
-        .with_context(|| format!("cannot find {}", source.display()))?;
+        .with_context(|| tr!("cannot find {arg0}", arg0 = source.display()))?;
     let (manifest, unknown_keys) = read_manifest(&source)?;
     let id = manifest.engine.id.clone();
 
     fs::create_dir_all(engines_dir)
-        .with_context(|| format!("cannot create {}", engines_dir.display()))?;
+        .with_context(|| tr!("cannot create {arg0}", arg0 = engines_dir.display()))?;
     let engines_dir = engines_dir
         .canonicalize()
-        .with_context(|| format!("cannot resolve {}", engines_dir.display()))?;
+        .with_context(|| tr!("cannot resolve {arg0}", arg0 = engines_dir.display()))?;
     let target = engines_dir.join(&id);
     let target_resolved = target.canonicalize().unwrap_or_else(|_| target.clone());
     if source == target_resolved || source.starts_with(&target_resolved) {
         bail!(
-            "cannot install {} into itself ({})",
-            source.display(),
-            target.display()
+            "{}",
+            tr!(
+                "cannot install {arg0} into itself ({arg1})",
+                arg0 = source.display(),
+                arg1 = target.display()
+            )
         );
     }
     if fs::symlink_metadata(&target).is_ok() && !force {
         bail!(
-            "engine `{id}` is already installed in {} (use --force to replace it)",
-            target.display()
+            "{}",
+            tr!(
+                "engine `{id}` is already installed in {arg0} (use --force to replace it)",
+                id = id,
+                arg0 = target.display()
+            )
         );
     }
 
     // A dot name: engine ids never start with one, so nothing looks inside it.
     let temp = engines_dir.join(format!(".{id}.installing"));
     // An interrupted run may have left the temporary directory behind.
-    remove_path(&temp).with_context(|| format!("cannot remove {}", temp.display()))?;
+    remove_path(&temp).with_context(|| tr!("cannot remove {arg0}", arg0 = temp.display()))?;
     if let Err(e) = copy_tree(&source, &temp) {
         let _ = remove_path(&temp);
-        return Err(e)
-            .with_context(|| format!("cannot copy {} to {}", source.display(), temp.display()));
+        return Err(e).with_context(|| {
+            tr!(
+                "cannot copy {arg0} to {arg1}",
+                arg0 = source.display(),
+                arg1 = temp.display()
+            )
+        });
     }
     if force && let Err(e) = remove_path(&target) {
         let _ = remove_path(&temp);
-        return Err(e).with_context(|| format!("cannot replace {}", target.display()));
+        return Err(e).with_context(|| tr!("cannot replace {arg0}", arg0 = target.display()));
     }
     if let Err(e) = fs::rename(&temp, &target) {
         let _ = remove_path(&temp);
-        return Err(e).with_context(|| format!("cannot move the copy to {}", target.display()));
+        return Err(e)
+            .with_context(|| tr!("cannot move the copy to {arg0}", arg0 = target.display()));
     }
 
     Ok(InstalledEngine {
@@ -82,14 +96,18 @@ pub fn uninstall(engines_dir: &Path, id: &str, search: &[PathBuf]) -> anyhow::Re
     if !is_valid_engine_id(id) || !target.join(MANIFEST_FILE).exists() {
         if let Some(engine) = discover(search).engines.iter().find(|e| e.id() == id) {
             bail!(
-                "engine `{id}` is installed in {}, outside your user directory; \
-                 remove it with whatever installed it",
-                engine.dir.display()
+                "{}",
+                tr!(
+                    "engine `{id}` is installed in {arg0}, outside your user directory; remove it with whatever installed it",
+                    id = id,
+                    arg0 = engine.dir.display()
+                )
             );
         }
-        bail!("no engine `{id}` is installed");
+        bail!("{}", tr!("no engine `{id}` is installed", id = id));
     }
-    fs::remove_dir_all(&target).with_context(|| format!("cannot remove {}", target.display()))
+    fs::remove_dir_all(&target)
+        .with_context(|| tr!("cannot remove {arg0}", arg0 = target.display()))
 }
 
 /// Returns a warning when omimed will not be able to start `engine`: its program is not
@@ -97,18 +115,23 @@ pub fn uninstall(engines_dir: &Path, id: &str, search: &[PathBuf]) -> anyhow::Re
 pub fn command_warning(engine: &InstalledEngine) -> Option<String> {
     let program = engine.command().into_iter().next()?;
     if !program.contains('/') {
-        return find_in_path(&program)
-            .is_none()
-            .then(|| format!("`{program}` is not in PATH, so omimed cannot start this engine"));
+        return find_in_path(&program).is_none().then(|| {
+            tr!(
+                "`{program}` is not in PATH, so omimed cannot start this engine",
+                program = program
+            )
+        });
     }
     let path = Path::new(&program);
     match fs::metadata(path) {
         Ok(metadata) if is_executable(&metadata) => None,
-        Ok(_) => Some(format!(
-            "{program} is not executable, so omimed cannot start this engine"
+        Ok(_) => Some(tr!(
+            "{program} is not executable, so omimed cannot start this engine",
+            program = program
         )),
-        Err(_) => Some(format!(
-            "{program} does not exist, so omimed cannot start this engine"
+        Err(_) => Some(tr!(
+            "{program} does not exist, so omimed cannot start this engine",
+            program = program
         )),
     }
 }
@@ -116,9 +139,9 @@ pub fn command_warning(engine: &InstalledEngine) -> Option<String> {
 /// Reads and validates `<dir>/engine.toml`; also returns the keys omimed does not know.
 fn read_manifest(dir: &Path) -> anyhow::Result<(Manifest, Vec<String>)> {
     let path = dir.join(MANIFEST_FILE);
-    let text =
-        fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-    Manifest::parse(&text).with_context(|| format!("invalid {}", path.display()))
+    let text = fs::read_to_string(&path)
+        .with_context(|| tr!("cannot read {arg0}", arg0 = path.display()))?;
+    Manifest::parse(&text).with_context(|| tr!("invalid {arg0}", arg0 = path.display()))
 }
 
 /// Copies `source` to the new directory `target`: files with their permission bits,
@@ -139,9 +162,9 @@ fn copy_tree(source: &Path, target: &Path) -> io::Result<()> {
             // `fs::copy` also copies the permission bits.
             fs::copy(&from, &to)?;
         } else {
-            return Err(io::Error::other(format!(
-                "{} is not a regular file, a directory or a symlink",
-                from.display()
+            return Err(io::Error::other(tr!(
+                "{arg0} is not a regular file, a directory or a symlink",
+                arg0 = from.display()
             )));
         }
     }
