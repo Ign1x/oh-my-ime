@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-11-05
+## [0.4.0] - 2026-11-06
 
 ### Added
 
@@ -214,6 +214,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Native SDK engines install their D-Bus receiver before registering, so restoring
+  an input method immediately after restart cannot lose the first selection call.
 - Wayland text commits and forwarded keys retain their order across application
   state updates, with bounded waiting when an application supplies no feedback.
 - Native input contexts have bounded extra time for first activation, so loading

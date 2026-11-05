@@ -101,7 +101,7 @@ jobs:
             cargo test -p omime-e2e --locked \
               --test typing --test commit_order --test localization \
               --test settings --test notifications --test tray --test rime \
-              --test fcitx5 -- --ignored
+              --test fcitx5 --test management -- --ignored
           '
       - uses: actions/upload-artifact@v4
         with:

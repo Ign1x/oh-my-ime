@@ -322,7 +322,8 @@ fn engines_with_input_methods_of_their_own_list_and_switch_them() -> anyhow::Res
     env.wait_for_status_starting("dummy/alpha")?;
 
     env.omime(&["switch", "dummy/beta"])?;
-    env.wait_for_log("engine: selected beta")?;
+    env.wait_for_log("engine: selected beta")
+        .context("the initial native input-method switch")?;
     env.wait_for_status_starting("dummy/beta")?;
     // The next one wraps around to the first.
     env.omime(&["next"])?;
@@ -333,7 +334,8 @@ fn engines_with_input_methods_of_their_own_list_and_switch_them() -> anyhow::Res
     env.omime(&["switch", "dummy/beta"])?;
     env.wait_for_status_starting("dummy/beta")?;
     env.restart_daemon()?;
-    env.wait_for_log("engine: selected beta")?;
+    env.wait_for_log("engine: selected beta")
+        .context("restoring the native input method after restart")?;
     env.wait_for_status_starting("dummy/beta")?;
     Ok(())
 }

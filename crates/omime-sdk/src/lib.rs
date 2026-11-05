@@ -36,7 +36,7 @@
 //!   hide or close your toolkit window to "hide" it; the platform maps and unmaps it.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use omime_proto::ApiVersion;
 use omime_proto::engine::{Action, Dict, WireAction};
@@ -227,7 +227,9 @@ trait EngineHost {
 /// Cheap to clone and usable from any thread. Calls never block; failures are logged.
 #[derive(Clone)]
 pub struct Host {
-    proxy: EngineHostProxy<'static>,
+    // The interface must exist before the connection starts reading. Its host
+    // proxy is filled immediately after build(), before Register is sent.
+    proxy: Arc<OnceLock<EngineHostProxy<'static>>>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -243,7 +245,10 @@ impl Host {
         F: FnOnce(EngineHostProxy<'static>) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = zbus::Result<()>> + Send,
     {
-        let proxy = self.proxy.clone();
+        let Some(proxy) = self.proxy.get().cloned() else {
+            warn!("{what} called before the engine connection is ready");
+            return;
+        };
         self.runtime.spawn(async move {
             if let Err(e) = f(proxy).await {
                 warn!("{what} failed: {e}");
@@ -451,14 +456,8 @@ async fn serve_on(
     engine: Box<dyn Engine>,
     ready: Option<std::sync::mpsc::Sender<Host>>,
 ) -> Result<(), Error> {
-    let conn = builder.p2p().build().await?;
-    let proxy = EngineHostProxy::builder(&conn)
-        .destination(DAEMON_BUS_NAME)
-        .path(DAEMON_OBJECT_PATH)
-        .build()
-        .await?;
     let host = Host {
-        proxy: proxy.clone(),
+        proxy: Arc::new(OnceLock::new()),
         runtime: tokio::runtime::Handle::current(),
     };
     let shutdown = Arc::new(tokio::sync::Notify::new());
@@ -470,8 +469,20 @@ async fn serve_on(
         host: host.clone(),
         shutdown: shutdown.clone(),
     };
-    // Export the engine before registering: the daemon may call it right away.
-    conn.object_server().at(ENGINE_OBJECT_PATH, object).await?;
+    // serve_at waits for the object server's message receiver before starting the
+    // socket reader. Exporting it after build() races with an immediate no-reply
+    // SelectInputMethod from Register: that first call could otherwise be lost.
+    let conn = builder
+        .p2p()
+        .serve_at(ENGINE_OBJECT_PATH, object)
+        .build()
+        .await?;
+    let proxy = EngineHostProxy::builder(&conn)
+        .destination(DAEMON_BUS_NAME)
+        .path(DAEMON_OBJECT_PATH)
+        .build()
+        .await?;
+    host.proxy.get_or_init(|| proxy.clone());
     proxy
         .register(id, API_VERSION.major, API_VERSION.minor, &Dict::new())
         .await?;
@@ -572,11 +583,29 @@ mod tests {
     /// The daemon's side of `EngineHost1`, as far as the tests need it.
     struct FakeDaemon {
         registered: Arc<tokio::sync::Notify>,
+        selected: Option<Arc<tokio::sync::Notify>>,
     }
 
     #[zbus::interface(name = "io.github.ign1x.OhMyIme.EngineHost1")]
     impl FakeDaemon {
-        fn register(&self, _id: &str, _major: u16, _minor: u16, _capabilities: Dict) -> Dict {
+        async fn register(
+            &self,
+            _id: &str,
+            _major: u16,
+            _minor: u16,
+            _capabilities: Dict,
+            #[zbus(connection)] conn: &zbus::Connection,
+        ) -> Dict {
+            if let Some(selected) = &self.selected {
+                // Restore a method before replying to Register, as a daemon can.
+                Engine1Proxy::new(conn)
+                    .await
+                    .unwrap()
+                    .select_input_method("beta")
+                    .await
+                    .unwrap();
+                selected.notified().await;
+            }
             self.registered.notify_one();
             Dict::new()
         }
@@ -588,6 +617,9 @@ mod tests {
         default_path = "/io/github/ign1x/OhMyIme/Engine"
     )]
     trait Engine1 {
+        #[zbus(no_reply)]
+        fn select_input_method(&self, id: &str) -> zbus::Result<()>;
+
         fn activate(&self, context: u64, info: &Dict) -> zbus::Result<Vec<WireAction>>;
 
         fn process_key(
@@ -601,6 +633,13 @@ mod tests {
     /// Serves `engine` like `run` does, over a socket pair, and returns the daemon's
     /// proxy for it once it registered.
     async fn connect(engine: impl Engine) -> Engine1Proxy<'static> {
+        connect_with_selection(engine, None).await
+    }
+
+    async fn connect_with_selection(
+        engine: impl Engine,
+        selected: Option<Arc<tokio::sync::Notify>>,
+    ) -> Engine1Proxy<'static> {
         let (daemon_end, engine_end) = std::os::unix::net::UnixStream::pair().unwrap();
         // Tokio needs non-blocking sockets.
         daemon_end.set_nonblocking(true).unwrap();
@@ -619,6 +658,7 @@ mod tests {
                 DAEMON_OBJECT_PATH,
                 FakeDaemon {
                     registered: registered.clone(),
+                    selected,
                 },
             )
             .build()
@@ -636,6 +676,28 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_secs(10), test)
                 .await
                 .expect("the test timed out");
+        });
+    }
+
+    #[test]
+    fn selection_sent_before_registration_reply_reaches_the_engine() {
+        struct Selection(Arc<tokio::sync::Notify>);
+        impl Engine for Selection {
+            fn process_key(&mut self, _ctx: &mut Context<'_>, _key: &KeyEvent) -> bool {
+                false
+            }
+
+            fn select_input_method(&mut self, _host: &Host, id: &str) {
+                assert_eq!(id, "beta");
+                self.0.notify_one();
+            }
+        }
+        run_test(async {
+            for _ in 0..32 {
+                let selected = Arc::new(tokio::sync::Notify::new());
+                let _engine =
+                    connect_with_selection(Selection(selected.clone()), Some(selected)).await;
+            }
         });
     }
 
