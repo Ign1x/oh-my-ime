@@ -6,8 +6,8 @@ Release 工作流在原生 x86_64 和 ARM64 runner 上编译，随后将压缩�
 Nix 包，运行输入、界面与 Rime 测试。推送版本 tag 后自动发布验证过的产物；
 手动运行工作流只生成 Actions 附件，不公开 Release。
 
-这是新增流程，已有 v0.1.0–v0.3.0 tag 尚无这些附件。首次二进制 Release 发布后，
-下面的下载地址才可使用。
+从 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0) 起提供这些附件，
+下面的下载地址现已可用。更早的 v0.1.0–v0.3.0 tag 没有二进制附件。
 
 ## NixOS 与 Home Manager
 

@@ -161,15 +161,15 @@ and `zwp_virtual_keyboard_v1`.
 
 ## Getting started
 
-With Nix, on NixOS or any other distribution:
+Install the prebuilt platform and Rime with Nix, on NixOS or any other distribution:
 
 ```sh
-nix profile install github:Ign1x/oh-my-ime
+nix profile install 'https://github.com/Ign1x/oh-my-ime/releases/latest/download/oh-my-ime-nix.tar.gz#full'
 ```
 
-To avoid compiling on NixOS, the new [binary release workflow](docs/releases.md)
-provides a release flake with prebuilt packages and the same modules. Its download
-URLs become available with the first binary Release; existing tags have no binary assets.
+Binary packages are available from [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0).
+The [binary release guide](docs/releases.md) covers NixOS/Home Manager configuration
+and updates. `github:Ign1x/oh-my-ime` remains the source-build input.
 
 Or build from source and install into `~/.local` (needs a Rust toolchain plus the
 wayland, libxkbcommon, dbus and fontconfig development files):
@@ -181,7 +181,7 @@ scripts/install.sh
 ```
 
 NixOS and Home Manager users can import the flake's modules instead
-([docs/nix.md](docs/nix.md)); `nix profile install github:Ign1x/oh-my-ime#rime` adds
+([docs/nix.md](docs/nix.md)); the release's `full` package includes
 the [Rime engine](engines/rime).
 
 `omime settings rime` opens Rime's settings: choose schemas, candidates per page,
@@ -235,10 +235,10 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅ →
    `v0.3.0`
 5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
-   (not released yet)
+   → `v0.4.0`
 6. **Platform interface and engines** — settings, switcher, tray menus, notifications,
    floating panels, Python example and native Rime with configurable candidates ✅
-   (on `main`, not released yet)
+   → `v0.4.0`
 7. **Daily-use readiness** — NixOS/Home Manager packaging, session setup and application
    diagnostics; broader application testing, documentation and sustained daily use are
    in progress.

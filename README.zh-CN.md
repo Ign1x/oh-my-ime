@@ -163,15 +163,15 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 
 ## 快速开始
 
-使用 Nix（NixOS 或其他发行版均可）：
+使用 Nix 安装预编译的平台和 Rime（NixOS 或其他发行版均可）：
 
 ```sh
-nix profile install github:Ign1x/oh-my-ime
+nix profile install 'https://github.com/Ign1x/oh-my-ime/releases/latest/download/oh-my-ime-nix.tar.gz#full'
 ```
 
-如需在 NixOS 上跳过编译，新增的[二进制发布流程](docs/zh-CN/releases.md)会提供
-包含预编译包和相同模块接口的 Release flake。首次二进制 Release 发布后即可使用；
-已有 tag 尚未附带二进制包。
+从 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0) 起提供二进制包。
+NixOS/Home Manager 配置和更新方式见[二进制发布指南](docs/zh-CN/releases.md)；
+`github:Ign1x/oh-my-ime` 仍用于源码构建。
 
 也可以从源码编译并安装到 `~/.local`（需要 Rust 工具链，以及 wayland、libxkbcommon、dbus、fontconfig 的开发文件）：
 
@@ -181,7 +181,7 @@ cd oh-my-ime
 scripts/install.sh
 ```
 
-NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 [NixOS 与 Home Manager 模块](docs/zh-CN/nix.md)。`nix profile install github:Ign1x/oh-my-ime#rime` 会加上 [Rime 引擎](engines/rime)。
+NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 [NixOS 与 Home Manager 模块](docs/zh-CN/nix.md)。Release 的 `full` 包已经包含 [Rime 引擎](engines/rime)。
 
 `omime settings rime` 打开 Rime 设置，可选择方案、每页候选数、单按 Shift 的行为、
 候选窗横竖排、深浅色和字号。关闭窗口后 Rime 会重启，读取保存的修改。
@@ -225,8 +225,8 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
    - M4：管理功能与健壮性 ✅ → `v0.1.0`
 3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 按键路由测试；Nix 包；中文文档 ✅ → `v0.2.0`
 4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
-5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅（尚未发布）
-6. **平台界面与引擎**：设置、切换浮层、托盘菜单、通知、浮动面板、Python 示例和可配置候选窗的原生 Rime ✅（已在 `main`，尚未发布）
+5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅ → `v0.4.0`
+6. **平台界面与引擎**：设置、切换浮层、托盘菜单、通知、浮动面板、Python 示例和可配置候选窗的原生 Rime ✅ → `v0.4.0`
 7. **日常使用完善**：已有 NixOS/Home Manager 打包、统一会话配置和应用诊断；继续推进真实应用矩阵、文档和连续日用验证。
 8. **后续方向**：KWin/input-method-v1 与更多合成器。逐引擎 IBus 宿主推迟；Fcitx5 插件宿主和 C ABI SDK 不在当前计划内。
 

@@ -7,8 +7,9 @@ then installs those archives with Nix and runs input, UI and Rime tests. A pushe
 version tag publishes the verified assets. A manual workflow run produces the same
 assets as Actions artifacts without publishing a Release.
 
-This workflow is new: the existing v0.1.0–v0.3.0 tags do not have these assets.
-Use the URLs below after the first binary release is published.
+Binary assets are available starting with
+[v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0).
+Earlier v0.1.0–v0.3.0 tags do not have these assets.
 
 ## NixOS and Home Manager
 
