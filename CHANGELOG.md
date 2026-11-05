@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
 ### Added
 
 - Tag-triggered binary Release workflow for native x86_64 and ARM64 Linux builds.
@@ -212,6 +214,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Wayland text commits and forwarded keys retain their order across application
+  state updates, with bounded waiting when an application supplies no feedback.
+- Native input contexts have bounded extra time for first activation, so loading
+  a Rime schema does not immediately trigger the ordinary key timeout.
 - CI's Nix development shells provide librime at runtime, including for cached
   binaries built outside Nix. Rime settings tests retain the library-path wrapper
   when testing a local engine with an installed daemon.
@@ -373,7 +379,8 @@ compositors with `input-method-v2`, with engines that draw their own UI.
 - `scripts/install.sh`, Hyprland snippets (Lua and legacy), a systemd user unit, a sample
   configuration and the Hyprland guide (`docs/hyprland.md`).
 
-[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Ign1x/oh-my-ime/releases/tag/v0.1.0
