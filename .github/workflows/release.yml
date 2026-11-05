@@ -23,6 +23,13 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  audit:
+    name: Audit release dependencies
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
   build:
     name: Build and validate ${{ matrix.system }}
     strategy:
@@ -104,7 +111,7 @@ jobs:
 
   assemble:
     name: Assemble release flake and checksums
-    needs: build
+    needs: [build, audit]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
