@@ -4,3 +4,5 @@
 *.swp
 .direnv/
 /tmp/
+/dist/
+__pycache__/

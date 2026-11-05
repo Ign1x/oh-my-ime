@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Tag-triggered binary Release workflow for native x86_64 and ARM64 Linux builds.
+  Platform and Rime archives are tested after installation with Nix; releases include
+  SHA-256 checksums and a minimal flake whose NixOS/Home Manager modules download
+  prebuilt packages. Manual workflow runs validate assets without publishing.
 - Shared localization for settings, tray menus, notifications, the switcher, CLI
   help, diagnostics, setup and engine management, plus Rime settings and Sparkle's
   operation hint. Simplified Chinese joins the English source text in an embedded

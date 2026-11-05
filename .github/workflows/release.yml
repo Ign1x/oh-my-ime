@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  # A dry run on a branch builds and validates assets without publishing them.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # The release job builds both native release binaries and Nix-based test tools.
+  # Keep their debug artifacts small enough for hosted runners.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  build:
+    name: Build and validate ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            tag=$REF_NAME
+          else
+            tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          fi
+          python3 scripts/release.py check-tag "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Install build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libwayland-dev libxkbcommon-dev libdbus-1-dev \
+            libfontconfig-dev librime-dev xkb-data
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.system }}
+      - name: Check and compile
+        run: |
+          cargo fmt --all --check
+          python3 scripts/check-translations.py
+          python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+          cargo test --workspace --locked
+          cargo build --release --locked \
+            -p omimed -p omime-cli -p omime-panel -p omime-settings \
+            -p omime-echo -p omime-sparkle -p omime-rime
+      - name: Package binaries
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SYSTEM: ${{ matrix.system }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 scripts/release.py package --tag "$RELEASE_TAG" \
+            --system "$RELEASE_SYSTEM" --repository "$RELEASE_REPOSITORY" \
+            --bin-dir target/release --out dist
+      - uses: cachix/install-nix-action@v31
+      - name: Install the exact release archives with Nix
+        run: |
+          nix build --impure --file nix/check-release.nix \
+            --argstr artifacts "$PWD/dist" --out-link result-release --print-build-logs
+      - name: Test installed binaries in a private Wayland session
+        run: |
+          # shellcheck disable=SC2016 # Expanded inside the Nix development shell.
+          nix develop .#e2e --command bash -euo pipefail -c '
+            cargo build -p omime-e2e --locked
+            export OMIME_E2E_INSTALL_DIR
+            OMIME_E2E_INSTALL_DIR=$(readlink -f result-release)/bin
+            cargo test -p omime-e2e --locked \
+              --test typing --test commit_order --test localization \
+              --test settings --test notifications --test tray --test rime \
+              --test fcitx5 -- --ignored
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble release flake and checksums
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Assemble verified assets
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          tag=$(python3 -c 'import json; print(json.load(open("dist/x86_64-linux.json"))["tag"])')
+          python3 scripts/release.py assemble --tag "$tag" \
+            --repository "$RELEASE_REPOSITORY" --out dist
+          (cd dist && sha256sum --check SHA256SUMS)
+          mkdir release-flake
+          tar -xzf dist/oh-my-ime-nix.tar.gz -C release-flake --strip-components=1
+      - uses: cachix/install-nix-action@v31
+      - name: Evaluate the generated flake on both architectures
+        run: nix flake check "path:$PWD/release-flake" --all-systems --no-build --no-update-lock-file
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/*.tar.gz
+            dist/release.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: Publish tagged release
+    needs: assemble
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          (cd dist && sha256sum --check SHA256SUMS)
+          # Refuse to replace an existing release's assets: clients pin their hashes.
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; assets will not be replaced." >&2
+            exit 1
+          fi
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft \
+            --title "$RELEASE_TAG" --generate-notes "${flags[@]}" \
+            dist/*.tar.gz dist/release.json dist/SHA256SUMS
+          gh release edit "$RELEASE_TAG" --draft=false

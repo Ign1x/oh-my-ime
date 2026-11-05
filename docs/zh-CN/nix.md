@@ -2,6 +2,10 @@
 
 [English](../nix.md) | 简体中文
 
+源码 flake 会编译 Rust。如需直接下载预编译程序，使用[二进制发布指南](releases.md)
+中的 `oh-my-ime-nix.tar.gz` 输入；它保留相同模块接口，并按固定校验值下载平台和
+Rime 包。已有源码包的 `package` 覆写也需一起切换。
+
 flake 提供两个模块，将安装、用户服务、输入法环境和托管引擎统一声明：
 
 - `nixosModules.default` 用于 NixOS 系统配置，并安装 Qt 输入模块。

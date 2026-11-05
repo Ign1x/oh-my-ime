@@ -167,6 +167,10 @@ With Nix, on NixOS or any other distribution:
 nix profile install github:Ign1x/oh-my-ime
 ```
 
+To avoid compiling on NixOS, the new [binary release workflow](docs/releases.md)
+provides a release flake with prebuilt packages and the same modules. Its download
+URLs become available with the first binary Release; existing tags have no binary assets.
+
 Or build from source and install into `~/.local` (needs a Rust toolchain plus the
 wayland, libxkbcommon, dbus and fontconfig development files):
 

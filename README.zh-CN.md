@@ -169,6 +169,10 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 nix profile install github:Ign1x/oh-my-ime
 ```
 
+如需在 NixOS 上跳过编译，新增的[二进制发布流程](docs/zh-CN/releases.md)会提供
+包含预编译包和相同模块接口的 Release flake。首次二进制 Release 发布后即可使用；
+已有 tag 尚未附带二进制包。
+
 也可以从源码编译并安装到 `~/.local`（需要 Rust 工具链，以及 wayland、libxkbcommon、dbus、fontconfig 的开发文件）：
 
 ```sh

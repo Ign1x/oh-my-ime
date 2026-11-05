@@ -1,0 +1,25 @@
+oh-my-ime release binaries
+
+The platform archive contains omimed, omime, the settings and switcher, Echo and
+Sparkle, and manifests for hosted Fcitx 5 and IBus. Rime is a separate archive.
+
+For NixOS and Home Manager, use the oh-my-ime-nix.tar.gz asset from the same
+Release. It provides the usual modules and prebuilt packages, with SHA-256 hashes
+and Nix runtime paths. See https://github.com/Ign1x/oh-my-ime/blob/main/docs/releases.md
+
+Other Linux distributions:
+- Use the archive matching your architecture. Binaries are built on Ubuntu 24.04
+  and require glibc 2.39 or newer, Wayland, libxkbcommon and fontconfig libraries.
+- GUI programs also need font, OpenGL/Vulkan and window-system runtime libraries.
+- Hosted input methods need dbus-daemon and their framework packages.
+- The Rime archive requires librime >= 1.11 (librime.so.1) and Rime data.
+- Verify SHA256SUMS from the Release, then extract the platform archive into
+  ~/.local with: tar -xzf ARCHIVE.tar.gz -C ~/.local --strip-components=1
+  Extract the matching Rime archive there too if wanted. Add ~/.local/bin to PATH.
+- Restart an existing omimed service after upgrading. For initial setup see
+  omime setup --help and the setup guide.
+
+These archives do not bundle libc, GPU drivers, librime, or a desktop compositor.
+Their runtime dependencies must be supplied by the distribution. The Nix package
+supplies them declaratively. The two archives share a license directory; platform
+and Rime should always be updated to the same version.

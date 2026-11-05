@@ -23,10 +23,14 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 python3 scripts/check-translations.py
+python3 -m unittest discover -s scripts/tests -p 'test_release.py'
 cargo deny check        # licenses, advisories, sources
 ```
 
 CI runs the same checks.
+
+Binary release maintenance and the dry-run workflow are documented in
+[docs/releases.md](docs/releases.md).
 
 ## Guidelines
 

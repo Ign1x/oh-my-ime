@@ -11,6 +11,11 @@ The flake exports two modules that turn the package into declarative configurati
   `home.sessionVariables`, and `~/.config/oh-my-ime/config.toml` generated from
   Nix, on NixOS or any other distribution.
 
+The source flake builds from Rust. To consume prebuilt Release packages, use the
+`oh-my-ime-nix.tar.gz` input described in [Binary releases](releases.md). That flake
+exports the same modules and downloads platform/Rime archives with fixed hashes.
+Existing source package overrides must also be switched to the binary packages.
+
 The manual steps they replace are in [the Hyprland guide](hyprland.md); use one of
 the modules or the manual setup, not both. Do not enable the NixOS module and the
 Home Manager module together either: both ship an `omimed.service`.
