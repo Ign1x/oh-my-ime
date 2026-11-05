@@ -5,6 +5,7 @@
 //! [`FrontendEvent`]s and carries out the core's decisions: forwarding or swallowing
 //! keys and applying the actions engines ask for.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,7 @@ use wl_proxy::protocols::wayland::wl_seat::WlSeat;
 
 use super::{EventQueue, GrabEvent, GrabEvents, ImEvent, ImEvents, KeyRef, Outputs, SeatId};
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
-use crate::ime_state::ImState;
+use crate::ime_state::{ImState, SurroundingText};
 use crate::keyboard::{self, KeyTracker, Keyboard, ModifierState, ReleaseAction, RepeatInfo};
 
 const KEYMAP_FORMAT_XKB_V1: u32 = 1;
@@ -30,6 +31,11 @@ const KEY_STATE_REPEATED: u32 = 2;
 
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(30);
+
+// Applications normally report their new surrounding text after a commit. Wait
+// for that update before sending another text change with the previous serial.
+// A client that stops reporting must not stall typing indefinitely.
+const TEXT_FEEDBACK_WAIT: Duration = Duration::from_millis(200);
 
 /// A change of the keyboard a grab reported.
 #[derive(Debug)]
@@ -70,7 +76,10 @@ pub struct SeatSession {
     grab: Option<Rc<ZwpInputMethodKeyboardGrabV2>>,
     grab_generation: u32,
     keyboard: Keyboard,
+    keymap: Option<Rc<str>>,
     keys: KeyTracker,
+    /// Presses actually sent, distinct from decisions waiting in pending_output.
+    sent_keys: std::collections::BTreeSet<u32>,
     /// Keys physically held right now, as reported by the grab. Engines answer later
     /// than the release may arrive; repeats only start for keys still held.
     held: std::collections::BTreeSet<u32>,
@@ -89,6 +98,9 @@ pub struct SeatSession {
     /// The preedit shown in the focused field. Every commit replaces the preedit, so it
     /// is re-sent each time.
     preedit: Preedit,
+    text_feedback: Option<TextFeedback>,
+    feedback_enabled: bool,
+    pending_output: VecDeque<PendingOutput>,
     /// The app id of the focused window, when the compositor reports it.
     app_id: Option<String>,
 }
@@ -128,7 +140,9 @@ impl SeatSession {
             grab: None,
             grab_generation: 0,
             keyboard: Keyboard::new(),
+            keymap: None,
             keys: KeyTracker::default(),
+            sent_keys: std::collections::BTreeSet::new(),
             held: std::collections::BTreeSet::new(),
             repeat: None,
             compositor_repeats: false,
@@ -136,6 +150,9 @@ impl SeatSession {
             vk: None,
             vk_keymap: None,
             preedit: Preedit::default(),
+            text_feedback: None,
+            feedback_enabled: true,
+            pending_output: VecDeque::new(),
             app_id: None,
         };
         session.request_input_method(im_manager);
@@ -184,10 +201,29 @@ impl SeatSession {
     pub fn deadline(&self) -> Option<Instant> {
         let retry = self.retry.map(|(at, _)| at);
         let repeat = self.repeat.map(|r| r.next);
-        retry.into_iter().chain(repeat).min()
+        retry
+            .into_iter()
+            .chain(repeat)
+            .chain(
+                self.text_feedback
+                    .as_ref()
+                    .map(|feedback| feedback.deadline),
+            )
+            .min()
     }
 
     pub fn on_timer(&mut self, now: Instant, im_manager: &Rc<ZwpInputMethodManagerV2>) {
+        if self
+            .text_feedback
+            .as_ref()
+            .is_some_and(|feedback| feedback.deadline <= now)
+        {
+            // Never resend the previous commit: the protocol has no acceptance
+            // acknowledgment. Only release output that has not been sent yet.
+            self.text_feedback = None;
+            self.feedback_enabled = false;
+            self.drain_output();
+        }
         if self.im.is_none() && self.retry.is_some_and(|(at, _)| at <= now) {
             info!(seat = self.name, "trying to become the input method again");
             self.request_input_method(im_manager);
@@ -286,7 +322,16 @@ impl SeatSession {
     }
 
     fn on_done(&mut self, context_ids: &ContextIds) {
+        let before = self.ime.current().surrounding.clone();
         let applied = self.ime.done();
+        if before != self.ime.current().surrounding {
+            self.feedback_enabled = true;
+        }
+        if self.text_feedback.as_ref().is_some_and(|feedback| {
+            self.ime.current().surrounding.as_ref() != Some(&feedback.before)
+        }) {
+            self.text_feedback = None;
+        }
         if self.retry.take().is_some() {
             info!(seat = self.name, "became the input method");
         }
@@ -334,11 +379,18 @@ impl SeatSession {
         // Hyprland only sends text-input-v3 `done` after our commit, and every commit
         // replaces the preedit. So always commit, re-sending the preedit we keep.
         self.commit(applied.serial);
+        self.drain_output();
     }
 
     /// Forgets the focused text field and tells the core.
     fn end_context(&mut self) {
         self.repeat = None;
+        self.text_feedback = None;
+        self.feedback_enabled = true;
+        self.pending_output.clear();
+        // Reactivation can keep the grab. Any delivered press still needs its
+        // release when the old context's buffered output is discarded.
+        self.release_sent_keys();
         if let Some(ctx) = self.ctx.take() {
             debug!(seat = self.name, ctx, "text field left");
             self.preedit = Preedit::default();
@@ -385,15 +437,7 @@ impl SeatSession {
         let Some(grab) = self.grab.take() else { return };
         self.repeat = None;
         self.held.clear();
-        let time = now_ms();
-        let forwarded = self.keys.take_forwarded();
-        if let Some(vk) = &self.vk
-            && self.vk_keymap.is_some()
-        {
-            for key in forwarded {
-                vk.send_key(time, key, KEY_STATE_RELEASED);
-            }
-        }
+        self.release_sent_keys();
         grab.unset_handler();
         grab.send_release();
         // The virtual keyboard holds the modifiers it last passed on, say Ctrl when the
@@ -410,6 +454,18 @@ impl SeatSession {
         }
         self.vk_keymap = None;
         debug!(seat = self.name, "keyboard released");
+    }
+
+    fn release_sent_keys(&mut self) {
+        self.keys.take_forwarded();
+        let forwarded = std::mem::take(&mut self.sent_keys);
+        if let Some(vk) = &self.vk
+            && self.vk_keymap.is_some()
+        {
+            for key in forwarded {
+                vk.send_key(now_ms(), key, KEY_STATE_RELEASED);
+            }
+        }
     }
 
     /// Handles an event of the keyboard grab. Returns what changed about the keyboard.
@@ -432,10 +488,8 @@ impl SeatSession {
                 match loaded {
                     Ok(true) => {
                         debug!(seat = self.name, "new keymap");
-                        return self
-                            .keyboard
-                            .keymap_text()
-                            .map(|text| KeyboardChange::Keymap(Rc::from(text)));
+                        self.keymap = self.keyboard.keymap_text().map(Rc::from);
+                        return self.keymap.clone().map(KeyboardChange::Keymap);
                     }
                     Ok(false) => {}
                     Err(e) => error!(seat = self.name, "cannot use the keymap: {e}"),
@@ -669,6 +723,15 @@ impl SeatSession {
 
     /// Removes the preedit from the focused field `ctx`.
     pub fn clear_preedit(&mut self, ctx: ContextId) {
+        if Some(ctx) == self.ctx {
+            // An engine switch must not resurrect its buffered preedit, while
+            // text it already committed still belongs to this field.
+            for output in &mut self.pending_output {
+                if let PendingOutput::Batch(batch) = output {
+                    batch.preedit = None;
+                }
+            }
+        }
         if Some(ctx) == self.ctx && !self.preedit.text.is_empty() {
             self.preedit = Preedit::default();
             self.commit(self.ime.serial());
@@ -680,7 +743,59 @@ impl SeatSession {
         if batch.is_empty() {
             return;
         }
+        self.pending_output.push_back(PendingOutput::Batch(batch));
+        self.drain_output();
+    }
+
+    fn drain_output(&mut self) {
+        loop {
+            // Do not delay the release of a press already sent while waiting for
+            // the application's response to that press.
+            if self.text_feedback.is_some()
+                && !matches!(self.pending_output.front(), Some(PendingOutput::Key {
+                    key, state: KEY_STATE_RELEASED, ..
+                }) if self.sent_keys.contains(key))
+            {
+                break;
+            }
+            let Some(output) = self.pending_output.pop_front() else {
+                break;
+            };
+            match output {
+                PendingOutput::Batch(batch) => self.send_batch(batch),
+                PendingOutput::Key {
+                    time,
+                    key,
+                    state,
+                    modifiers,
+                    keymap,
+                    changes_text,
+                } => {
+                    self.send_key_now(time, key, state, modifiers, keymap.as_deref(), changes_text)
+                }
+            }
+        }
+    }
+
+    fn send_batch(&mut self, batch: Batch) {
         let Some(im) = self.im.clone() else { return };
+        let changes_text = !batch.commit.is_empty()
+            || batch
+                .delete
+                .is_some_and(|(before, after)| before != 0 || after != 0)
+            || (batch
+                .preedit
+                .as_ref()
+                .is_some_and(|preedit| !preedit.text.is_empty())
+                && self
+                    .ime
+                    .current()
+                    .surrounding
+                    .as_ref()
+                    .is_some_and(|text| text.cursor != text.anchor));
+        if changes_text {
+            self.wait_for_text_feedback();
+        }
         if let Some((before, after)) = batch.delete {
             im.send_delete_surrounding_text(before, after);
         }
@@ -694,9 +809,46 @@ impl SeatSession {
     }
 
     fn send_key(&mut self, time: u32, key: u32, state: u32, modifiers: ModifierState) {
-        if self.sync_vk_keymap()
-            && let Some(vk) = &self.vk
+        let changes_text = state != KEY_STATE_RELEASED
+            && self.keyboard.decode(key).is_some_and(|key| {
+                !key.utf8.is_empty()
+                    || matches!(
+                        key.keysym,
+                        0xff08 | 0xff09 | 0xff0d | 0xff8d | 0xffff | 0xff50..=0xff58
+                    )
+            });
+        let keymap = self.keymap.clone();
+        self.pending_output.push_back(PendingOutput::Key {
+            time,
+            key,
+            state,
+            modifiers,
+            keymap,
+            changes_text,
+        });
+        self.drain_output();
+    }
+
+    fn send_key_now(
+        &mut self,
+        time: u32,
+        key: u32,
+        state: u32,
+        modifiers: ModifierState,
+        keymap: Option<&str>,
+        changes_text: bool,
+    ) {
+        if self.sync_vk_keymap_text(keymap)
+            && let Some(vk) = self.vk.clone()
         {
+            if state == KEY_STATE_RELEASED {
+                self.sent_keys.remove(&key);
+            } else {
+                self.sent_keys.insert(key);
+                if changes_text {
+                    self.wait_for_text_feedback();
+                }
+            }
             // Engine replies may arrive after later modifier events. Interpret this
             // key with its original state, then restore what is physically held so
             // the replay cannot leave a modifier stuck in the application.
@@ -726,13 +878,32 @@ impl SeatSession {
         }
     }
 
+    fn wait_for_text_feedback(&mut self) {
+        if self.feedback_enabled {
+            self.text_feedback =
+                self.ime
+                    .current()
+                    .surrounding
+                    .clone()
+                    .map(|before| TextFeedback {
+                        before,
+                        deadline: Instant::now() + TEXT_FEEDBACK_WAIT,
+                    });
+        }
+    }
+
     /// Uploads the grab's keymap to the virtual keyboard if it changed. Returns whether
     /// there is a virtual keyboard with a keymap, which may receive keys and modifiers.
     fn sync_vk_keymap(&mut self) -> bool {
+        let text = self.keymap.clone();
+        self.sync_vk_keymap_text(text.as_deref())
+    }
+
+    fn sync_vk_keymap_text(&mut self, text: Option<&str>) -> bool {
         let Some(vk) = self.vk.clone() else {
             return false;
         };
-        let Some(text) = self.keyboard.keymap_text() else {
+        let Some(text) = text else {
             return self.vk_keymap.is_some();
         };
         if self.vk_keymap.as_deref() == Some(text) {
@@ -770,6 +941,23 @@ struct Batch {
     commit: String,
     delete: Option<(u32, u32)>,
     preedit: Option<Preedit>,
+}
+
+struct TextFeedback {
+    before: SurroundingText,
+    deadline: Instant,
+}
+
+enum PendingOutput {
+    Batch(Batch),
+    Key {
+        time: u32,
+        key: u32,
+        state: u32,
+        modifiers: ModifierState,
+        keymap: Option<Rc<str>>,
+        changes_text: bool,
+    },
 }
 
 impl Batch {

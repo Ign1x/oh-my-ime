@@ -80,6 +80,16 @@ For each `wl_seat`, `omimed` binds a `zwp_input_method_v2` and keeps an input co
   sends its own repeat events.
 - **Commit discipline.** After every `done`, the daemon sends a commit that carries the current
   preedit, whether or not anything changed.
+- **Text delivery.** For fields that report surrounding text, text changes and
+  forwarded keys share an output queue. After a text change, the next output waits
+  for the application's updated text, cursor or selection, then uses the latest
+  input-method serial. This prevents consecutive commits from racing the state
+  update caused by the previous commit. Releases of delivered keys can still pass
+  through. Waiting stops after 200 ms if no change arrives, and stays disabled until
+  feedback resumes; fields without surrounding text do not wait. Sent text is never
+  replayed, and leaving a field discards its unsent output. Surrounding updates are
+  not protocol acknowledgments, so unrelated state changes and applications that do
+  not report updates can still race a commit.
 - **Focused application.** Input methods are not told which application a text field
   belongs to. Where the compositor offers `zwlr_foreign_toplevel_manager_v1` (Hyprland,
   sway, ...), the daemon follows which window is activated and passes its app id to

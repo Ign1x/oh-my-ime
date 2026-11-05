@@ -120,6 +120,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 | Area | State |
 |---|---|
 | Wayland frontend: `input-method-v2`, keyboard grab, virtual keyboard, key repeat | ✅ |
+| Ordered Wayland text delivery with bounded waits for application state updates | ✅ |
 | Engine host: discovery, launch, supervision, crash restart, protocol v1 | ✅ |
 | Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
 | Switching: hotkeys, `omime` CLI, D-Bus control API, last engine remembered | ✅ |

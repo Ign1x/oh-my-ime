@@ -143,6 +143,33 @@ fn the_shipped_manifest_installs_ibus() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn consecutive_commits_wait_for_the_applications_surrounding_update() -> anyhow::Result<()> {
+    let Some(engine) = ibus() else {
+        eprintln!("IBus is not installed; nothing to test");
+        return Ok(());
+    };
+    let env = TestEnv::start(&[engine], None)?;
+    switch_to_ibus(&env)?;
+    let editor = env.editor(&["--surrounding-delay-ms", "80"])?;
+    env.wait_for_log("hosted input method grabbed the keyboard")?;
+    // IBus's keyboard layout commits each letter as text. The app's response
+    // advances the compositor's input-method serial; a second commit sent with
+    // the old serial can then be discarded. Delay that response without blocking
+    // the client so the ordering is observable, independent of machine speed.
+    env.type_on_seat("seat0", "ok")?;
+    editor.wait_for_text("ok")?;
+    let lines = editor.lines();
+    let feedback = lines.iter().position(|line| line == "surrounding \"o\"");
+    let second = lines.iter().position(|line| line == "commit \"k\"");
+    assert!(
+        matches!((feedback, second), (Some(feedback), Some(second)) if feedback < second),
+        "the second commit preceded the first commit's surrounding update: {lines:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn the_tray_shows_ibus_engines() -> anyhow::Result<()> {
     let Some(engine) = ibus() else {
         eprintln!("IBus is not installed; nothing to test");

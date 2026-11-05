@@ -24,6 +24,7 @@
 
 use std::io::Write as _;
 use std::os::fd::AsFd;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use omime_e2e::{json_string, shm_file};
@@ -77,6 +78,11 @@ struct App {
     /// Whether the window is a text field; without one (`--no-text-field`) it is like
     /// a game or a web page, which takes keys but no input method.
     text_field: bool,
+    surrounding_delay: Duration,
+    surrounding_updates: bool,
+    report_surrounding: bool,
+    state_deadline: Option<Instant>,
+    reactivate_after_key: bool,
 }
 
 fn emit(line: &str) {
@@ -88,7 +94,13 @@ fn emit(line: &str) {
 impl App {
     fn changed(&mut self) {
         emit(&format!("text {}", json_string(&self.text)));
-        self.send_state();
+        if self.surrounding_updates {
+            if self.surrounding_delay.is_zero() {
+                self.send_state();
+            } else {
+                self.state_deadline = Some(Instant::now() + self.surrounding_delay);
+            }
+        }
     }
 
     /// Tells the input method what the field looks like now.
@@ -106,6 +118,9 @@ impl App {
                 .unwrap_or(zwp_text_input_v3::ContentPurpose::Normal),
         );
         ti.commit();
+        if self.report_surrounding {
+            emit(&format!("surrounding {}", json_string(&self.text)));
+        }
     }
 
     fn draw(&self, qh: &QueueHandle<Self>) -> anyhow::Result<()> {
@@ -369,6 +384,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                         emit(&format!("key {}", json_string(&text)));
                         app.text.push_str(&text);
                         app.changed();
+                        if std::mem::take(&mut app.reactivate_after_key)
+                            && let Some(ti) = &app.text_input
+                        {
+                            // The window keeps keyboard focus, but its text
+                            // field starts a fresh input-method context.
+                            ti.enable();
+                            app.send_state();
+                            emit("reactivated");
+                        }
                     }
                     _ => {}
                 }
@@ -452,6 +476,10 @@ fn main() -> anyhow::Result<()> {
     let mut seat_name = None;
     let mut print_modifiers = false;
     let mut text_field = true;
+    let mut surrounding_delay = Duration::ZERO;
+    let mut surrounding_updates = true;
+    let mut report_surrounding = false;
+    let mut reactivate_after_key = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -461,6 +489,17 @@ fn main() -> anyhow::Result<()> {
             "--seat" => seat_name = Some(args.next().context("--seat NAME")?),
             "--print-modifiers" => print_modifiers = true,
             "--no-text-field" => text_field = false,
+            "--surrounding-delay-ms" => {
+                surrounding_delay = Duration::from_millis(
+                    args.next().context("--surrounding-delay-ms N")?.parse()?,
+                );
+                report_surrounding = true;
+            }
+            "--no-surrounding-updates" => {
+                surrounding_updates = false;
+                report_surrounding = true;
+            }
+            "--reactivate-after-key" => reactivate_after_key = true,
             other => bail!("unknown argument `{other}`"),
         }
     }
@@ -488,6 +527,11 @@ fn main() -> anyhow::Result<()> {
         print_modifiers,
         text_field,
         held: std::collections::BTreeSet::new(),
+        surrounding_delay,
+        surrounding_updates,
+        report_surrounding,
+        state_deadline: None,
+        reactivate_after_key,
     };
     queue.roundtrip(&mut app)?;
     // Seat names arrive after the binds.
@@ -517,6 +561,36 @@ fn main() -> anyhow::Result<()> {
     app.surface = Some(surface);
 
     loop {
-        queue.blocking_dispatch(&mut app)?;
+        queue.dispatch_pending(&mut app)?;
+        if app
+            .state_deadline
+            .is_some_and(|deadline| deadline <= Instant::now())
+        {
+            app.state_deadline = None;
+            app.send_state();
+        }
+        conn.flush()?;
+        let timeout = app.state_deadline.map(|deadline| {
+            let duration = deadline.saturating_duration_since(Instant::now());
+            rustix::time::Timespec {
+                tv_sec: duration.as_secs() as i64,
+                tv_nsec: duration.subsec_nanos() as i64,
+            }
+        });
+        if let Some(guard) = queue.prepare_read() {
+            let fd = guard.connection_fd();
+            let mut fds = [rustix::event::PollFd::new(
+                &fd,
+                rustix::event::PollFlags::IN,
+            )];
+            if rustix::event::poll(&mut fds, timeout.as_ref())? > 0 {
+                match guard.read() {
+                    Ok(_) => {}
+                    Err(wayland_client::backend::WaylandError::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
     }
 }
