@@ -48,6 +48,21 @@ msgstr "在这些输入法之间切换，顺序即切换顺序。直接输入始
 msgid "In use"
 msgstr "正在使用"
 
+msgid "In use · {}"
+msgstr "正在使用 · {}"
+
+msgid "Remember the input mode of each application"
+msgstr "记住每个应用的输入模式"
+
+msgid "Restore Chinese or Latin mode within the same input method when supported"
+msgstr "在支持的输入法中，恢复各应用使用的中文或字母模式"
+
+msgid "The input mode could not be restored: {}"
+msgstr "无法恢复输入模式：{}"
+
+msgid "input mode restoration failed: {error}"
+msgstr "恢复输入模式失败：{error}"
+
 msgid "Move {} up"
 msgstr "上移{}"
 
@@ -1046,3 +1061,12 @@ msgstr "用法：omime-settings [页面]\n\n打开 oh-my-ime 设置。省略页�
 
 msgid "there is no page `{name}`"
 msgstr "没有页面 `{name}`"
+
+msgid "{engine} timed out restoring input mode {mode}"
+msgstr "{engine} 恢复输入模式 {mode} 超时"
+
+msgid "{engine} did not confirm input mode {mode}"
+msgstr "{engine} 未确认输入模式 {mode}"
+
+msgid "input method selection did not finish before mode restoration"
+msgstr "输入法选择未完成，无法恢复输入模式"

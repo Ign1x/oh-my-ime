@@ -19,6 +19,8 @@ pub struct State {
     pub last: Option<String>,
     /// The engine last used in each application, by app id (`""` for direct input).
     pub apps: BTreeMap<String, String>,
+    /// Confirmed mode by application and full input-method id.
+    pub app_modes: BTreeMap<String, BTreeMap<String, String>>,
     /// The input method in use inside each hosted framework, by engine.
     pub inner: BTreeMap<String, String>,
     /// The input methods each hosted framework had when omimed last saw it, so that
@@ -77,6 +79,10 @@ mod tests {
                 ("foot".into(), String::new()),
                 ("kitty".into(), "fcitx5/shuangpin".into()),
             ]),
+            app_modes: BTreeMap::from([(
+                "org.example.Chat".into(),
+                BTreeMap::from([("rime/luna_pinyin".into(), "native".into())]),
+            )]),
             inner: BTreeMap::from([("fcitx5".into(), "shuangpin".into())]),
             methods: BTreeMap::from([(
                 "fcitx5".into(),
@@ -92,5 +98,13 @@ mod tests {
         let text = toml::to_string(&state).unwrap();
         assert_eq!(toml::from_str::<State>(&text).unwrap(), state);
         assert_eq!(toml::from_str::<State>("").unwrap(), State::default());
+    }
+
+    #[test]
+    fn pre_mode_state_files_still_restore_application_choices() {
+        let state: State =
+            toml::from_str("current = 'rime'\n[apps]\nchat = 'rime/luna_pinyin'\n").unwrap();
+        assert_eq!(state.apps["chat"], "rime/luna_pinyin");
+        assert!(state.app_modes.is_empty());
     }
 }

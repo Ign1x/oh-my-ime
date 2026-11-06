@@ -61,7 +61,10 @@
     <!--
       The input method in use: "engine" (s, empty for direct input), "input-method"
       (s, its id), and the engine's "label", "icon" and "tooltip" (s) when it
-      published them.
+      published them. "input-mode" (s, when available) is the engine-confirmed mode
+      within that input method, such as "native" or "latin"; it is separate from the
+      input method id and its localized label. Absent for direct input or engines
+      that do not report modes.
     -->
     <method name="Status">
       <arg name="status" type="a{sv}" direction="out"/>
@@ -106,9 +109,12 @@
       The configuration in effect, by the dotted names of config.toml's options:
       "hotkeys.toggle", "hotkeys.next" (s), "engine.key_timeout_ms" (t),
       "initial_input_method" (s, when set; used only before any saved choice),
-      "apps.remember", "tray.enabled", "panel.enabled", "notifications.enabled" (b), and
+      "apps.remember", "apps.remember_mode", "tray.enabled", "panel.enabled",
+      "notifications.enabled" (b), and
       "engines" (as) when
       config.toml lists engines (otherwise every engine enabled by default is).
+      "apps.remember_mode" defaults to false and restores confirmed modes within an
+      input method only while "apps.remember" is true and the engine supports it.
     -->
     <method name="Config">
       <arg name="config" type="a{sv}" direction="out"/>
@@ -186,7 +192,8 @@
       seat's name and whether omimed is its input method), "focused-app" (b: whether
       the compositor reports the focused window), "input-method-configured" (b:
       the engine accepted the selection; activation may still await field focus),
-      "input-method-error" (s: selection failure, empty when none).
+      "input-method-error" (s: selection failure, empty when none),
+      "input-mode-error" (s: failure to restore the saved mode, empty when none).
     -->
     <method name="Diagnose">
       <arg name="diagnosis" type="a{sv}" direction="out"/>

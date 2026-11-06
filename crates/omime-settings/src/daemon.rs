@@ -24,6 +24,7 @@ use crate::model::{Diagnosis, Engine, InputMethod, Options, Snapshot};
 trait Daemon {
     fn engines(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
     fn input_methods(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
+    fn status(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     fn config(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     fn configure(&self, changes: HashMap<&str, zbus::Variant<'_>>) -> zbus::Result<()>;
     fn apps(&self) -> zbus::Result<Vec<(String, String)>>;
@@ -213,10 +214,11 @@ fn variant(value: &Value) -> zbus::Variant<'_> {
 
 /// Reads everything the window shows.
 async fn read(daemon: &DaemonProxy<'_>) -> zbus::Result<Snapshot> {
-    let (version, methods, engines, config, apps, diagnosis) = tokio::try_join!(
+    let (version, methods, engines, status, config, apps, diagnosis) = tokio::try_join!(
         daemon.version(),
         daemon.input_methods(),
         daemon.engines(),
+        daemon.status(),
         daemon.config(),
         daemon.apps(),
         daemon.diagnose(),
@@ -225,6 +227,8 @@ async fn read(daemon: &DaemonProxy<'_>) -> zbus::Result<Snapshot> {
         version,
         input_methods: methods.iter().map(input_method).collect(),
         engines: engines.iter().map(engine).collect(),
+        status: omime_proto::engine::Status::from_dict(&status),
+        current_method: text(&status, "input-method"),
         options: options(&config),
         apps,
         diagnosis: diagnose(&diagnosis),
@@ -283,6 +287,7 @@ fn options(dict: &Dict) -> Options {
         next: hotkey("hotkeys.next", defaults.next),
         key_timeout_ms: timeout.unwrap_or(defaults.key_timeout_ms),
         remember_apps: flag(dict, "apps.remember").unwrap_or(defaults.remember_apps),
+        remember_mode: flag(dict, "apps.remember_mode").unwrap_or(defaults.remember_mode),
         tray: flag(dict, "tray.enabled").unwrap_or(defaults.tray),
         panel: flag(dict, "panel.enabled").unwrap_or(defaults.panel),
         notifications: flag(dict, "notifications.enabled").unwrap_or(defaults.notifications),
@@ -298,6 +303,7 @@ fn diagnose(dict: &Dict) -> Diagnosis {
             .unwrap_or_default(),
         focused_app: flag(dict, "focused-app").unwrap_or_default(),
         error: text(dict, "input-method-error"),
+        mode_error: text(dict, "input-mode-error"),
     }
 }
 
@@ -321,6 +327,10 @@ mod tests {
         assert_eq!(options.next, Options::default().next);
         assert_eq!(options.key_timeout_ms, 500);
         assert!(options.remember_apps);
+        assert!(
+            !options.remember_mode,
+            "older daemons keep the opt-in disabled"
+        );
         assert!(options.tray);
     }
 

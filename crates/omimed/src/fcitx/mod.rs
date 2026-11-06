@@ -525,6 +525,8 @@ impl FcitxFrontend {
         let mut clear_preedit = false;
         for action in actions {
             match action {
+                // Mode confirmations are consumed by Core, never sent to applications.
+                Action::InputMode { .. } => {}
                 Action::Commit(text) => {
                     signals.push(Signal::Commit(text.clone()));
                     clear_preedit = state.preedit_shown;

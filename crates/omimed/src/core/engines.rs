@@ -16,6 +16,7 @@ use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -75,6 +76,8 @@ pub trait Engine {
 
     fn reset(&self, context: u64) -> zbus::Result<Vec<WireAction>>;
 
+    fn set_input_mode(&self, context: u64, mode: &str) -> zbus::Result<Vec<WireAction>>;
+
     #[zbus(no_reply)]
     fn shutdown(&self) -> zbus::Result<()>;
 
@@ -96,6 +99,12 @@ pub enum HostCall {
     },
     SetPopupVisible(bool),
     SetStatus(Status),
+    InputMode {
+        ctx: u64,
+        input_method: String,
+        mode: String,
+        revision: u64,
+    },
     RequestSwitch(String),
     /// The engine's own input methods, and the one in use (protocol 1.1).
     SetInputMethods(Vec<InputMethodInfo>, String),
@@ -106,6 +115,7 @@ pub enum HostCall {
 /// `io.github.ign1x.OhMyIme.EngineHost1`, served to one engine.
 struct HostObject {
     engine: String,
+    connection_id: u64,
     events: mpsc::UnboundedSender<CoreEvent>,
 }
 
@@ -115,6 +125,7 @@ impl HostObject {
         let _ = self.events.send(CoreEvent::Host {
             engine: self.engine.clone(),
             call,
+            connection_id: self.connection_id,
         });
     }
 }
@@ -130,7 +141,7 @@ impl HostObject {
         id: &str,
         api_major: u16,
         api_minor: u16,
-        _capabilities: Dict,
+        capabilities: Dict,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<Dict> {
         if id != self.engine {
@@ -155,6 +166,15 @@ impl HostObject {
             engine: self.engine.clone(),
             conn: conn.clone(),
             api_minor,
+            connection_id: self.connection_id,
+            input_modes: if api_minor >= 2 {
+                capabilities
+                    .get("input-modes")
+                    .and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         });
         let mut session = Dict::new();
         session.insert("api-major".into(), owned(Variant::from(ours.major)));
@@ -208,6 +228,15 @@ impl HostObject {
 
     fn set_status(&self, status: Dict) {
         self.send(HostCall::SetStatus(Status::from_dict(&status)));
+    }
+
+    fn report_input_mode(&self, context: u64, input_method: String, mode: String, revision: u64) {
+        self.send(HostCall::InputMode {
+            ctx: context,
+            input_method,
+            mode,
+            revision,
+        });
     }
 
     fn request_switch(&self, engine: String) {
@@ -277,6 +306,9 @@ pub struct EngineSlot {
     pub state: EngineState,
     pub proxy: Option<EngineProxy<'static>>,
     pub status: Status,
+    pub input_modes: Vec<String>,
+    pub mode_method: Option<String>,
+    pub connection_id: Option<u64>,
     /// What the tray item of a hosted engine shows; its status is made from it.
     pub tray: Option<HostedTray>,
     /// The input methods inside a hosted framework, as it last reported them.
@@ -370,6 +402,9 @@ impl EngineManager {
             state: EngineState::Stopped,
             proxy: None,
             status: Status::default(),
+            input_modes: Vec::new(),
+            mode_method: None,
+            connection_id: None,
             tray: None,
             methods: Vec::new(),
             available: Vec::new(),
@@ -562,6 +597,8 @@ impl EngineManager {
         let (kill_tx, kill_rx) = oneshot::channel();
         slot.kill = Some(kill_tx);
         slot.proxy = None;
+        slot.connection_id = None;
+        slot.input_modes.clear();
         let timeout = if hosted {
             HOSTED_STARTUP_TIMEOUT
         } else {
@@ -682,6 +719,8 @@ impl EngineManager {
         id: &str,
         conn: zbus::Connection,
         api_minor: u16,
+        connection_id: u64,
+        input_modes: Vec<String>,
     ) -> anyhow::Result<()> {
         let proxy = EngineProxy::builder(&conn)
             .destination(DAEMON_BUS_NAME)
@@ -698,6 +737,11 @@ impl EngineManager {
         );
         slot.proxy = Some(proxy);
         slot.api_minor = api_minor;
+        slot.connection_id = Some(connection_id);
+        slot.input_modes = input_modes
+            .into_iter()
+            .filter(|m| omime_proto::manifest::is_valid_engine_id(m))
+            .collect();
         slot.state = EngineState::Ready;
         info!(engine = id, "engine ready");
         // An engine with input methods of its own gets back the one in use.
@@ -793,6 +837,7 @@ impl EngineManager {
         slot.status = tray
             .as_ref()
             .map(|tray| Status {
+                input_mode: None,
                 label: text(&tray.label),
                 icon: text(&tray.icon_name),
                 tooltip: text(&tray.title),
@@ -933,6 +978,10 @@ impl EngineManager {
         }
         slot.proxy = None;
         slot.kill = None;
+        slot.connection_id = None;
+        slot.input_modes.clear();
+        slot.mode_method = None;
+        slot.status.input_mode = None;
         slot.framework = None;
         slot.selection = None;
         slot.needs_focus = false;
@@ -1134,7 +1183,9 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
                     continue;
                 }
             };
+            static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
             let host = HostObject {
+                connection_id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
                 engine: engine.clone(),
                 events: events.clone(),
             };

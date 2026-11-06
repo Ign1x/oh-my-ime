@@ -159,7 +159,7 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 | **Hyprland** | IM v2 + 弹窗 + 虚拟键盘 | 首要目标 |
 | sway ≥ 1.10、labwc、river、niri、COSMIC | IM v2 + 弹窗 | 预计可用；自动化测试使用 sway |
 | KDE Plasma（KWin） | 仅 IM v1 | 需要 IM v1 前端（后续） |
-| GNOME（Mutter） | 无 IM 协议（仅 IBus D-Bus） | 暂无计划 |
+| GNOME（Mutter） | IBus 集成 | 规划系统 IBus 适配，尚未支持 |
 
 ## 快速开始
 
@@ -212,6 +212,10 @@ omime setup --engine sparkle --take-over --start
 
 omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置 `remember = true` 后，则会记住每个应用各自的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
 
+v0.4.0 之后的开发版本还可通过 `apps.remember_mode = true`，按应用和方案恢复 Rime 中英模式，
+需同时开启 `apps.remember`，也可在设置的“应用”页开启。
+已验证的应用版本、场景和桌面边界见[真实应用验收记录](docs/zh-CN/compatibility.md)。
+
 - 编写自己的引擎：[docs/zh-CN/writing-an-engine.md](docs/zh-CN/writing-an-engine.md)
 - 参与开发：[docs/zh-CN/development.md](docs/zh-CN/development.md)
 
@@ -228,7 +232,7 @@ omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置
 5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅ → `v0.4.0`
 6. **平台界面与引擎**：设置、切换浮层、托盘菜单、通知、浮动面板、Python 示例和可配置候选窗的原生 Rime ✅ → `v0.4.0`
 7. **日常使用完善**：已有 NixOS/Home Manager 打包、统一会话配置和应用诊断；继续推进真实应用矩阵、文档和连续日用验证。
-8. **后续方向**：KWin/input-method-v1 与更多合成器。逐引擎 IBus 宿主推迟；Fcitx5 插件宿主和 C ABI SDK 不在当前计划内。
+8. **桌面扩展**：KWin/input-method-v1，以及通过系统 IBus 接入 GNOME，初期允许使用系统候选界面。[隔离探针](docs/zh-CN/compatibility.md)记录了待完成的后端工作；这两个桌面尚未支持。逐引擎 IBus 宿主推迟；Fcitx5 插件宿主和 C ABI SDK 不在当前计划内。
 
 ## 常见问题
 

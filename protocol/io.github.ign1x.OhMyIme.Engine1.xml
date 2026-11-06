@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  oh-my-ime engine protocol, version 1.1.
+  oh-my-ime engine protocol, version 1.2.
+
+  Version 1.2 adds context-bound input modes (SetInputMode, ReportInputMode and
+  action kind 4). Engines advertise stable mode IDs in the Register capability
+  "input-modes" (as); empty/absent means unsupported. Only use these additions
+  when both peers support minor version 2 or later.
 
   Version 1.1 adds input methods of an engine's own (SetInputMethods,
   SetCurrentInputMethod, SelectInputMethod) and its menu (SetProperties,
@@ -24,6 +29,9 @@
                                     empty text clears the preedit
       2 delete-surrounding  (uu)    bytes before and after the cursor
       3 forward-key         (ub)    evdev key code, pressed
+      4 input-mode          (sst)   confirmed engine-local input method ID (empty
+                                    without submethods), stable mode ID, monotonically
+                                    increasing revision per connection; since 1.2
     Unknown kinds must be ignored by the daemon.
 
   Context dictionary keys (Activate, UpdateContext)
@@ -96,6 +104,19 @@
       <arg name="actions" type="a(uv)" direction="out"/>
     </method>
 
+    <!--
+      Since 1.2. Restore an advertised mode of the context's current input method.
+      Runs in the same ordered queue as Activate, Reset and ProcessKey. Confirm
+      the actual resulting mode with action kind 4; an empty reply does not confirm
+      success. An unsupported mode must leave the engine unchanged. The daemon
+      rejects stale replies after focus, input method or engine generation changes.
+    -->
+    <method name="SetInputMode">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="mode" type="s" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
     <!-- The daemon asks the engine to exit. -->
     <method name="Shutdown"/>
 
@@ -156,6 +177,23 @@
     </method>
 
     <!--
+      Since 1.2. A mode changed outside an engine callback, e.g. in its menu.
+      Report the actual mode and engine-local input method (empty without
+      submethods). Stale contexts, methods and engine generations are ignored.
+      During ordered callbacks, return action kind 4 instead so confirmation stays
+      ordered with text effects and key handling. Both forms share one increasing
+      revision sequence, starting at 1, allocated when the actual mode is observed
+      before sending it. Older reports cannot replace newer observations even when
+      asynchronous messages reach the daemon before earlier method replies.
+    -->
+    <method name="ReportInputMode">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="input_method" type="s" direction="in"/>
+      <arg name="mode" type="s" direction="in"/>
+      <arg name="revision" type="t" direction="in"/>
+    </method>
+
+    <!--
       Whether the engine's windows should be shown while it is active. Engines must
       not hide their toolkit windows themselves; the platform shows and hides them.
       Windows are hidden until the engine asks for them with SetPopupVisible(true).
@@ -164,7 +202,11 @@
       <arg name="visible" type="b" direction="in"/>
     </method>
 
-    <!-- Status for panels and the CLI: "label" (s), "icon" (s), "tooltip" (s). -->
+    <!--
+      Status for panels and the CLI: "label" (s), "icon" (s), "tooltip" (s).
+      The daemon exposes "input-mode" (s, since 1.2) in its status dictionary only
+      from accepted context-bound mode confirmations; SetStatus is not a mode report.
+    -->
     <method name="SetStatus">
       <arg name="status" type="a{sv}" direction="in"/>
     </method>

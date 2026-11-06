@@ -178,6 +178,7 @@ export component Keycap inherits Rectangle {
 export component SwitchRow inherits HorizontalLayout {
     in property <string> title;
     in property <string> subtitle;
+    in property <bool> enabled: true;
     in-out property <bool> checked <=> switch.checked;
     callback toggled(bool);
     padding-left: 16px;
@@ -195,6 +196,7 @@ export component SwitchRow inherits HorizontalLayout {
     VerticalLayout {
         alignment: center;
         switch := Switch {
+            enabled: root.enabled;
             accessible-label: root.title;
             toggled => {
                 root.toggled(self.checked);

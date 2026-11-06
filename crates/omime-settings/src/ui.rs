@@ -126,6 +126,12 @@ impl Controller {
             });
         });
         let weak = Rc::downgrade(&this);
+        backend.on_set_remember_mode(move |on| {
+            with(&weak, on, |this, on| {
+                this.configure("apps.remember_mode", Value::Bool(on))
+            });
+        });
+        let weak = Rc::downgrade(&this);
         backend.on_set_app_input_method(move |app, choice| {
             with(&weak, (app, choice), |this, (app, choice)| {
                 let id = index(choice).and_then(|i| this.app_choices.borrow().get(i).cloned());
@@ -242,6 +248,14 @@ impl Controller {
                 language: model::language_group(&m.language).into(),
                 label: model::badge(m).into(),
                 in_use: m.in_use,
+                mode_label: if m.in_use
+                    && snapshot.current_method == m.id
+                    && snapshot.status.input_mode.is_some()
+                {
+                    snapshot.status.label.as_deref().unwrap_or_default().into()
+                } else {
+                    SharedString::default()
+                },
                 engine: m.engine.as_str().into(),
                 settings: snapshot.has_settings(&m.engine),
             })
@@ -253,6 +267,7 @@ impl Controller {
         backend.set_toggle_keys(model_of(strings(hotkey::keys(&options.toggle))));
         backend.set_next_keys(model_of(strings(hotkey::keys(&options.next))));
         backend.set_remember_apps(options.remember_apps);
+        backend.set_remember_mode(options.remember_mode);
         backend.set_tray(options.tray);
         backend.set_switcher(options.panel);
         backend.set_notifications(options.notifications);
@@ -366,6 +381,9 @@ fn checks(diagnosis: &model::Diagnosis) -> Vec<Check> {
     if !diagnosis.error.is_empty() {
         checks.push(check("error", &diagnosis.error, false));
     }
+    if !diagnosis.mode_error.is_empty() {
+        checks.push(check("mode-error", &diagnosis.mode_error, false));
+    }
     checks
 }
 
@@ -423,7 +441,9 @@ mod tests {
                 seats: vec![("seat0".to_owned(), true)],
                 focused_app: true,
                 error: String::new(),
+                mode_error: String::new(),
             },
+            ..Snapshot::default()
         }
     }
 
@@ -650,6 +670,99 @@ mod tests {
         assert_eq!(
             requests.try_recv().ok(),
             Some(option("engine.key_timeout_ms", Value::Integer(500)))
+        );
+    }
+
+    #[test]
+    fn input_mode_memory_requires_app_memory_and_keeps_the_saved_preference() {
+        let (window, controller, mut requests) = open();
+        let view = window.global::<View<'_>>();
+        let backend = window.global::<Backend<'_>>();
+        view.set_page(2);
+        let label = "Remember the input mode of each application";
+        assert_eq!(find(&window, label).accessible_enabled(), Some(false));
+        click(&window, label);
+        assert!(
+            requests.try_recv().is_err(),
+            "the disabled control cannot change config"
+        );
+
+        let mut remembering = snapshot();
+        remembering.options.remember_apps = true;
+        controller.apply(Event::Snapshot(Box::new(remembering.clone())));
+        assert_eq!(find(&window, label).accessible_enabled(), Some(true));
+        click(&window, label);
+        assert_eq!(
+            requests.try_recv().ok(),
+            Some(option("apps.remember_mode", Value::Bool(true)))
+        );
+
+        remembering.options.remember_mode = true;
+        remembering.options.remember_apps = false;
+        controller.apply(Event::Snapshot(Box::new(remembering)));
+        assert!(
+            backend.get_remember_mode(),
+            "turning app memory off keeps the preference"
+        );
+        assert_eq!(find(&window, label).accessible_enabled(), Some(false));
+    }
+
+    #[test]
+    fn the_active_method_shows_only_its_confirmed_mode() {
+        let (window, controller, _requests) = open();
+        let backend = window.global::<Backend<'_>>();
+        let mut confirmed = snapshot();
+        confirmed.current_method = "fcitx5/shuangpin".into();
+        confirmed.status.input_mode = Some("native".into());
+        confirmed.status.label = Some("中".into());
+        controller.apply(Event::Snapshot(Box::new(confirmed.clone())));
+        assert_eq!(
+            backend.get_input_methods().row_data(0).unwrap().mode_label,
+            "中"
+        );
+        assert_eq!(
+            backend.get_input_methods().row_data(1).unwrap().mode_label,
+            ""
+        );
+        confirmed.status.input_mode = Some("latin".into());
+        confirmed.status.label = Some("A".into());
+        controller.apply(Event::Snapshot(Box::new(confirmed.clone())));
+        assert_eq!(
+            backend.get_input_methods().row_data(0).unwrap().mode_label,
+            "A"
+        );
+        // Reads can straddle a switch: do not attach a new method's status to the old row.
+        confirmed.current_method = "fcitx5/pinyin".into();
+        controller.apply(Event::Snapshot(Box::new(confirmed.clone())));
+        assert_eq!(
+            backend.get_input_methods().row_data(0).unwrap().mode_label,
+            ""
+        );
+        confirmed.current_method = "fcitx5/shuangpin".into();
+        confirmed.status.input_mode = None;
+        controller.apply(Event::Snapshot(Box::new(confirmed)));
+        assert_eq!(
+            backend.get_input_methods().row_data(0).unwrap().mode_label,
+            ""
+        );
+    }
+
+    #[test]
+    fn mode_restore_failure_and_recovery_follow_daemon_diagnosis() {
+        let (window, controller, _requests) = open();
+        let backend = window.global::<Backend<'_>>();
+        let mut failed = snapshot();
+        failed.diagnosis.mode_error = "Rime did not confirm native mode".into();
+        controller.apply(Event::Snapshot(Box::new(failed)));
+        let check = backend.get_checks().row_data(3).expect("a mode error");
+        assert_eq!(check.kind, "mode-error");
+        assert_eq!(check.subject, "Rime did not confirm native mode");
+        assert!(!check.ok);
+        controller.apply(Event::Snapshot(Box::new(snapshot())));
+        assert_eq!(
+            backend.get_checks().row_count(),
+            3,
+            "recovery clears the error"
         );
     }
 

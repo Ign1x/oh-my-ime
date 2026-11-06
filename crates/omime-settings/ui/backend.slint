@@ -20,6 +20,8 @@ export struct InputMethodRow {
     // What its badge shows, such as "双" or "S".
     label: string,
     in-use: bool,
+    // The confirmed input mode label, only for the method currently in use.
+    mode-label: string,
     // The engine, and whether it has settings to open.
     engine: string,
     settings: bool,
@@ -44,7 +46,7 @@ export struct AppRow {
 
 // A line of the status on the About page.
 export struct Check {
-    // What was checked: "display", "seat", "seat-taken", "focus", "no-focus" or "error".
+    // What was checked: "display", "seat", "seat-taken", "focus", "no-focus", "error" or "mode-error".
     kind: string,
     // What it is about: the compositor, a seat, an error message.
     subject: string,
@@ -83,6 +85,8 @@ export global Backend {
     // Applications.
     in-out property <bool> remember-apps;
     callback set-remember-apps(bool);
+    in-out property <bool> remember-mode;
+    callback set-remember-mode(bool);
     // Direct input, then the input methods.
     in property <[string]> app-choices;
     in property <[AppRow]> apps;
@@ -179,6 +183,9 @@ export global Texts {
         }
         if (check.kind == "error") {
             return Tr.text1("The input method could not be selected: {}", check.subject);
+        }
+        if (check.kind == "mode-error") {
+            return Tr.text1("The input mode could not be restored: {}", check.subject);
         }
         return check.subject;
     }

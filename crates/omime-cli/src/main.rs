@@ -230,6 +230,7 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
     let engine = string(status, "engine");
     let method = string(status, "input-method").or_else(|| engine.clone());
     let label = string(status, "label");
+    let mode = string(status, "input-mode");
     if json {
         let field = |v: &Option<String>| v.as_deref().map_or("null".into(), json_string);
         let tooltip = string(status, "tooltip");
@@ -240,9 +241,10 @@ fn format_status(status: &HashMap<String, OwnedVariant>, json: bool) -> String {
             .unwrap_or_else(|| "⌨".into());
         let class = engine.clone().unwrap_or_else(|| "direct".into());
         format!(
-            "{{\"engine\":{},\"input_method\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
+            "{{\"engine\":{},\"input_method\":{},\"input_mode\":{},\"label\":{},\"tooltip\":{},\"text\":{},\"class\":{}}}",
             field(&engine),
             field(&method),
+            field(&mode),
             field(&label),
             field(&tooltip),
             json_string(&text),
@@ -263,7 +265,7 @@ fn format_stopped(json: bool) -> String {
     if json {
         // Only display text is localized; keys and state values are stable.
         format!(
-            "{{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":{},\"text\":\"⌨\",\"class\":\"stopped\"}}",
+            "{{\"engine\":null,\"input_method\":null,\"input_mode\":null,\"label\":null,\"tooltip\":{},\"text\":\"⌨\",\"class\":\"stopped\"}}",
             json_string(message)
         )
     } else {
@@ -662,12 +664,14 @@ fn show_value(value: &OwnedVariant) -> String {
 fn parse_value(key: &str, text: &str) -> anyhow::Result<zbus::Variant<'static>> {
     use zbus::Variant as Value;
     Ok(match key {
-        "apps.remember" | "tray.enabled" | "panel.enabled" | "notifications.enabled" => {
-            Value::from(
-                text.parse::<bool>()
-                    .with_context(|| tr!("`{key}` is true or false", key = key))?,
-            )
-        }
+        "apps.remember"
+        | "apps.remember_mode"
+        | "tray.enabled"
+        | "panel.enabled"
+        | "notifications.enabled" => Value::from(
+            text.parse::<bool>()
+                .with_context(|| tr!("`{key}` is true or false", key = key))?,
+        ),
         "engine.key_timeout_ms" => Value::from(
             text.parse::<u64>()
                 .with_context(|| tr!("`{key}` is a number of milliseconds", key = key))?,
@@ -944,18 +948,18 @@ mod tests {
         assert_eq!(format_status(&status, false), "echo");
         assert_eq!(
             format_status(&status, true),
-            "{\"engine\":\"echo\",\"input_method\":\"echo\",\"label\":null,\"tooltip\":null,\
+            "{\"engine\":\"echo\",\"input_method\":\"echo\",\"input_mode\":null,\"label\":null,\"tooltip\":null,\
              \"text\":\"echo\",\"class\":\"echo\"}"
         );
         assert_eq!(
             format_status(&HashMap::new(), true),
-            "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":null,\
+            "{\"engine\":null,\"input_method\":null,\"input_mode\":null,\"label\":null,\"tooltip\":null,\
              \"text\":\"⌨\",\"class\":\"direct\"}"
         );
         assert_eq!(format_stopped(false), "omimed is not running");
         assert_eq!(
             format_stopped(true),
-            "{\"engine\":null,\"input_method\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
+            "{\"engine\":null,\"input_method\":null,\"input_mode\":null,\"label\":null,\"tooltip\":\"omimed is not running\",\
              \"text\":\"⌨\",\"class\":\"stopped\"}"
         );
     }

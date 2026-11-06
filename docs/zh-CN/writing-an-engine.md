@@ -138,7 +138,7 @@ Sparkle 的最近使用表情面板（在它的菜单里打开）完整演示了
 
 ## 多个输入法
 
-引擎可以拥有自己的多个输入法，就像 Rime 引擎有多个方案。在 `registered` 中公布它们以及正在使用的那个：它先于其它任何调用运行，因此公布的内容是最新的。之后用户就能以 `engine/id` 选择它们（`omime switch my-engine/fast`、托盘菜单、`Ctrl+Shift+Space`、config.toml 的 `engines`），omimed 会请求你的引擎切换：
+引擎可以拥有自己的多个输入法，就像 Rime 引擎有多个方案。在 `registered` 中公布它们以及正在使用的那个。守护进程可能在注册回复到达 SDK 之前恢复选择，因此应公布当时的实际状态。之后用户就能以 `engine/id` 选择它们（`omime switch my-engine/fast`、托盘菜单、`Ctrl+Shift+Space`、config.toml 的 `engines`），omimed 会请求你的引擎切换：
 
 ```rust
 impl omime_sdk::Engine for MyEngine {
@@ -160,6 +160,36 @@ impl omime_sdk::Engine for MyEngine {
 ```
 
 引擎自己切换时，也要调用 `set_current_input_method`。omimed 会跨重启保留用户的选择，并在引擎启动时交还给它。
+
+## 记忆输入模式
+
+协议 1.2 提供可选的模式记忆能力：同一输入法在聊天中使用中文，在终端中使用英文字母。采用 `native`、`latin` 等稳定且不翻译的 ID，显示用的 `中`、`A` 等标签单独处理。用户同时开启 `apps.remember` 和 `apps.remember_mode` 后生效；后者默认关闭。
+
+通过 `Engine::input_modes` 声明支持的 ID，实现 `set_input_mode`，按引擎原有的组合文本策略执行变更，然后通过上下文确认实际结果。对用布尔值保存模式的引擎，相关回调如下：
+
+```rust
+impl omime_sdk::Engine for MyEngine {
+    fn input_modes(&self) -> Vec<String> {
+        vec!["native".into(), "latin".into()]
+    }
+
+    fn set_input_mode(&mut self, ctx: &mut omime_sdk::Context<'_>, mode: &str) {
+        self.latin = match mode {
+            "native" => false,
+            "latin" => true,
+            _ => return,
+        };
+        ctx.report_input_mode(&self.schema, if self.latin { "latin" } else { "native" });
+    }
+    // ...
+}
+```
+
+输入法 ID 属于引擎内部：传入完整方案 ID，例如 `double_pinyin_flypy`，不要加上 `rime/` 前缀；没有子输入法的引擎传入 `""`。激活时，以及按键或重置改变模式时，都要报告实际模式。空回复不代表恢复成功；未知模式应保持引擎不变。回调以外发生的变化用 `host.report_input_mode(ctx_id, method_id, mode)` 报告，并与回调使用同一把状态锁。`SetStatus` 标签只用于显示，不能代替模式确认。
+
+SDK 为上下文动作和异步报告分配共用的递增序号。守护进程结合上下文、方案、连接和序号拒绝过期信息，避免较早按键的回复覆盖较新的菜单操作。直接实现 D-Bus 的引擎在 `Register` 能力字典中声明 `"input-modes"`（`as`），返回种类为 4、载荷为 `(method, mode, revision)`（`sst`）的动作，或调用 `ReportInputMode(context, method, mode, revision)`。序号从 1 开始，在观察到实际状态时分配，再发送动作或报告。完整签名见 XML 协议文件。
+
+现有 1.0/1.1 引擎继续正常工作，只是不支持模式恢复。新 SDK 遇到低于 1.2 的守护进程时自动省略模式报告；直接实现协议的客户端也须检查 `Register` 回复中的 `api-minor`。
 
 ## 菜单
 

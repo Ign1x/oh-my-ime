@@ -437,6 +437,10 @@ fn config_dict(config: &omime_proto::config::Config) -> Dict {
             owned(Variant::from(config.apps.remember)),
         ),
         (
+            "apps.remember_mode".to_owned(),
+            owned(Variant::from(config.apps.remember_mode)),
+        ),
+        (
             "tray.enabled".to_owned(),
             owned(Variant::from(config.tray.enabled)),
         ),
@@ -477,9 +481,11 @@ fn config_value(key: &str, value: OwnedVariant) -> Result<omime_proto::config::V
         "hotkeys.toggle" | "hotkeys.next" | "initial_input_method" => {
             Value::String(String::try_from(take()?).map_err(|_| wrong())?)
         }
-        "apps.remember" | "tray.enabled" | "panel.enabled" | "notifications.enabled" => {
-            Value::Bool(bool::try_from(take()?).map_err(|_| wrong())?)
-        }
+        "apps.remember"
+        | "apps.remember_mode"
+        | "tray.enabled"
+        | "panel.enabled"
+        | "notifications.enabled" => Value::Bool(bool::try_from(take()?).map_err(|_| wrong())?),
         "engine.key_timeout_ms" => Value::Integer(match &*value {
             Variant::U32(n) => i64::from(*n),
             Variant::I32(n) => i64::from(*n),
@@ -559,9 +565,14 @@ pub fn diagnosis(
     focused_app: bool,
     input_method_configured: bool,
     input_method_error: Option<&str>,
+    input_mode_error: Option<&str>,
 ) -> Dict {
     let owned = |value: Variant<'_>| OwnedVariant::try_from(value).expect("no file descriptors");
     Dict::from([
+        (
+            "input-mode-error".to_owned(),
+            owned(Variant::from(input_mode_error.unwrap_or_default())),
+        ),
         ("display".to_owned(), owned(Variant::from(display))),
         ("seats".to_owned(), owned(Variant::from(seats))),
         ("focused-app".to_owned(), owned(Variant::from(focused_app))),

@@ -68,6 +68,10 @@ impl TrayInfo {
     }
 
     fn icon_name(&self) -> String {
+        if self.mode_badge().is_some() {
+            // Standard SNI hosts use IconPixmap when there is no theme icon name.
+            return String::new();
+        }
         if let Some(tray) = self.hosted_icon() {
             return tray.icon_name.clone();
         }
@@ -79,12 +83,21 @@ impl TrayInfo {
     }
 
     fn icon_pixmap(&self) -> Vec<Pixmap> {
+        if let Some(badge) = self.mode_badge() {
+            return [16, 24, 32, 48]
+                .into_iter()
+                .map(|size| badge.pixmap(size))
+                .collect();
+        }
         self.hosted_icon()
             .map(|tray| tray.icon_pixmap.clone())
             .unwrap_or_default()
     }
 
     fn icon_theme_path(&self) -> String {
+        if self.mode_badge().is_some() {
+            return String::new();
+        }
         self.hosted_icon()
             .map(|tray| tray.icon_theme_path.clone())
             .unwrap_or_default()
@@ -102,7 +115,11 @@ impl TrayInfo {
     /// omimed's, "Sparkle · emoji": the engine and what it says it is doing.
     fn title(&self) -> String {
         if let Some(method) = self.inner_method() {
-            return format!("{} ({})", method.name, method.engine_name);
+            let title = format!("{} ({})", method.name, method.engine_name);
+            return match self.mode_label() {
+                Some(label) => format!("{title} · {label}"),
+                None => title,
+            };
         }
         let Some(engine) = self.current() else {
             return direct_input_label().to_owned();
@@ -120,7 +137,32 @@ impl TrayInfo {
     }
 
     fn label(&self) -> String {
-        self.status.label.clone().unwrap_or_default()
+        if self.engine.is_none() {
+            return String::new();
+        }
+        self.mode_label()
+            .or(self.status.label.as_deref())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn mode_label(&self) -> Option<&str> {
+        self.engine.as_ref()?;
+        self.status.input_mode.as_ref()?;
+        self.status
+            .label
+            .as_deref()
+            .filter(|label| !label.is_empty())
+    }
+
+    fn mode_badge(&self) -> Option<ModeBadge> {
+        self.engine.as_ref()?;
+        match self.status.input_mode.as_deref()? {
+            "latin" => Some(ModeBadge::Latin),
+            // A native mode may be any language; only use 中 when the engine says so.
+            "native" if self.mode_label() == Some("中") => Some(ModeBadge::Chinese),
+            _ => None,
+        }
     }
 
     /// The menu: the input methods and direct input, to choose from, with their icons,
@@ -174,6 +216,64 @@ impl TrayInfo {
             ));
         }
         entries
+    }
+}
+
+/// Font-independent mode icons, also visible in hosts without XAyatanaLabel support.
+#[derive(Clone, Copy)]
+enum ModeBadge {
+    Chinese,
+    Latin,
+}
+
+impl ModeBadge {
+    fn pixmap(self, size: i32) -> Pixmap {
+        let glyph = match self {
+            Self::Chinese => [
+                0b000010000,
+                0b000010000,
+                0b011111110,
+                0b010010010,
+                0b010010010,
+                0b010010010,
+                0b011111110,
+                0b000010000,
+                0b000010000,
+            ],
+            Self::Latin => [
+                0b000111000,
+                0b001101100,
+                0b011000110,
+                0b011000110,
+                0b011111110,
+                0b011000110,
+                0b011000110,
+                0b011000110,
+                0b011000110,
+            ],
+        };
+        let mut pixels = Vec::new();
+        for y in 0..size {
+            for x in 0..size {
+                let gx = x * 15 / size;
+                let gy = y * 15 / size;
+                let corner = (gx == 0 || gx == 14) && (gy == 0 || gy == 14);
+                let foreground = (3..12).contains(&gx)
+                    && (3..12).contains(&gy)
+                    && glyph[usize::try_from(gy - 3).unwrap_or_default()] & (1 << (11 - gx)) != 0;
+                let argb = if corner {
+                    [0, 0, 0, 0]
+                } else if foreground {
+                    [255, 255, 255, 255]
+                } else if gx == 0 || gx == 14 || gy == 0 || gy == 14 {
+                    [255, 150, 156, 166]
+                } else {
+                    [255, 38, 42, 49]
+                };
+                pixels.extend_from_slice(&argb);
+            }
+        }
+        (size, size, pixels)
     }
 }
 
@@ -407,8 +507,8 @@ impl Item {
     }
 
     #[zbus(property, name = "Title")]
-    fn title(&self) -> String {
-        "oh-my-ime".to_owned()
+    async fn title(&self) -> String {
+        self.info().await.title()
     }
 
     #[zbus(property, name = "Status")]
@@ -853,6 +953,7 @@ pub async fn start(requests: mpsc::UnboundedSender<ControlRequest>) -> zbus::Res
                     }
                     // One update for a burst of changes.
                     while changes.try_recv().is_ok() {}
+                    let _ = Item::new_title(&item).await;
                     let _ = Item::new_icon(&item).await;
                     let _ = Item::new_tool_tip(&item).await;
                     let _ = Item::new_icon_theme_path(&item, "").await;
@@ -973,6 +1074,72 @@ mod tests {
         assert_eq!(info.icon_name(), "fcitx-shuangpin");
         assert_eq!(info.icon_theme_path(), "/fcitx/share/icons");
         assert_eq!(info.title(), "双拼 (Fcitx 5)");
+    }
+
+    #[tokio::test]
+    async fn standard_tray_properties_show_mode_without_label_extension() {
+        let mode = Arc::new(Mutex::new(Some("native")));
+        let state = mode.clone();
+        let (requests, mut rx) = mpsc::unbounded_channel();
+        let server = tokio::spawn(async move {
+            while let Some(ControlRequest::Tray(reply)) = rx.recv().await {
+                let current = *state.lock().unwrap();
+                let mut info = info(Some("rime"), Some("rime/luna_pinyin"));
+                info.engines.push(engine("rime", "Rime", true, None));
+                info.methods
+                    .push(method("rime/luna_pinyin", "Pinyin", "rime", "Rime"));
+                if let Some(mode) = current {
+                    info.status.input_mode = Some(mode.to_owned());
+                    info.status.label = Some(if mode == "native" { "中" } else { "A" }.into());
+                } else {
+                    info.engine = None;
+                    info.method = None;
+                }
+                reply.send(info).unwrap();
+            }
+        });
+        let item = Item { requests };
+        assert_eq!(item.icon_name().await, "", "hosts must choose the pixmap");
+        assert_eq!(item.title().await, "Pinyin (Rime) · 中");
+        assert_eq!(item.tool_tip().await.2, item.title().await);
+        let chinese = item.icon_pixmap().await;
+        assert_eq!(chinese.len(), 4, "provide sizes for scaled tray hosts");
+        for (width, height, pixels) in &chinese {
+            assert_eq!(width, height);
+            assert_eq!(pixels.len(), usize::try_from(width * height * 4).unwrap());
+            let (argb, remainder) = pixels.as_chunks::<4>();
+            assert!(remainder.is_empty());
+            assert!(argb.iter().any(|pixel| pixel == &[255; 4]));
+            assert!(argb.iter().any(|pixel| pixel[0] == 0));
+        }
+        *mode.lock().unwrap() = Some("latin");
+        assert_eq!(item.title().await, "Pinyin (Rime) · A");
+        assert_ne!(
+            item.icon_pixmap().await,
+            chinese,
+            "A and 中 differ visually"
+        );
+        *mode.lock().unwrap() = None;
+        assert_eq!(item.title().await, direct_input_label());
+        assert_eq!(item.icon_name().await, KEYBOARD_ICON);
+        assert!(item.icon_pixmap().await.is_empty());
+        assert!(item.x_ayatana_label().await.is_empty());
+        drop(item);
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn engines_without_standard_modes_keep_their_hosted_pixmaps() {
+        let mut info = info(Some("fcitx5"), Some("fcitx5/pinyin"));
+        let pixmap = (1, 1, vec![255, 1, 2, 3]);
+        info.hosted = Some(HostedTray {
+            icon_pixmap: vec![pixmap.clone()],
+            ..HostedTray::default()
+        });
+        info.status.label = Some("中".into());
+        assert_eq!(info.icon_pixmap(), [pixmap]);
+        assert_eq!(info.icon_name(), "");
+        assert_eq!(info.title(), "拼音 (Fcitx 5)");
     }
 
     #[test]

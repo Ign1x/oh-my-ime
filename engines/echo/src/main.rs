@@ -39,6 +39,7 @@ impl Engine for Echo {
     fn activate(&mut self, ctx: &mut Context<'_>) {
         self.words.remove(&ctx.id());
         ctx.host().set_status(Status {
+            input_mode: None,
             label: Some("ECHO".into()),
             icon: None,
             tooltip: Some("Echo: commits words in UPPERCASE".into()),

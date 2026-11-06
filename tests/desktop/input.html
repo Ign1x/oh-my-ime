@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>oh-my-ime private input acceptance</title>
+<style>body { margin: 32px; font: 20px sans-serif; } label { display: block; margin: 24px 0; } input { display: block; width: 640px; font: 28px sans-serif; }</style>
+<h1>Input acceptance</h1>
+<p>This page contains only synthetic test text. It reports composition and focus events to its local test runner.</p>
+<label>First field<input id="first" autocomplete="off" autofocus></label>
+<label>Second field<input id="second" autocomplete="off"></label>
+<script>
+for (const field of document.querySelectorAll('input')) {
+  for (const type of ['focus', 'blur', 'compositionstart', 'compositionupdate', 'compositionend', 'input']) {
+    field.addEventListener(type, event => fetch('/event', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type, target: field.id, value: field.value, data: event.data ?? null})
+    }));
+  }
+}
+window.addEventListener('load', () => document.getElementById('first').focus());
+setInterval(async () => {
+  const {target} = await (await fetch('/focus')).json();
+  if (target === 'first' || target === 'second') document.getElementById(target).focus();
+}, 100);
+</script>
+</html>

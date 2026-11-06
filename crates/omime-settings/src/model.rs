@@ -35,6 +35,7 @@ pub struct Options {
     pub next: String,
     pub key_timeout_ms: u64,
     pub remember_apps: bool,
+    pub remember_mode: bool,
     pub tray: bool,
     pub panel: bool,
     pub notifications: bool,
@@ -48,6 +49,7 @@ impl Default for Options {
             next: config.hotkeys.next,
             key_timeout_ms: config.engine.key_timeout_ms,
             remember_apps: config.apps.remember,
+            remember_mode: config.apps.remember_mode,
             tray: config.tray.enabled,
             panel: config.panel.enabled,
             notifications: config.notifications.enabled,
@@ -66,6 +68,8 @@ pub struct Diagnosis {
     pub focused_app: bool,
     /// Why the input method in use could not be selected; empty when it was.
     pub error: String,
+    /// Why the saved input mode could not be restored; empty when it was.
+    pub mode_error: String,
 }
 
 /// Everything the window shows, read from omimed at once.
@@ -75,6 +79,9 @@ pub struct Snapshot {
     /// Enabled ones first, in switching order.
     pub input_methods: Vec<InputMethod>,
     pub engines: Vec<Engine>,
+    /// Confirmed engine status for `current_method`, kept separate from static labels.
+    pub status: omime_proto::engine::Status,
+    pub current_method: String,
     pub options: Options,
     /// Each application with `[apps] remember`, and its input method (empty: direct
     /// input).

@@ -49,12 +49,24 @@ export component AppsPage inherits VerticalLayout {
     }
 
     Card {
-        SwitchRow {
-            title: Tr.text("Remember the input method of each application");
-            subtitle: Tr.text("When you come back to an application, its input method comes back too");
-            checked <=> Backend.remember-apps;
-            toggled(on) => {
-                Backend.set-remember-apps(on);
+        VerticalLayout {
+            SwitchRow {
+                title: Tr.text("Remember the input method of each application");
+                subtitle: Tr.text("When you come back to an application, its input method comes back too");
+                checked <=> Backend.remember-apps;
+                toggled(on) => {
+                    Backend.set-remember-apps(on);
+                }
+            }
+            Divider { }
+            SwitchRow {
+                title: Tr.text("Remember the input mode of each application");
+                subtitle: Tr.text("Restore Chinese or Latin mode within the same input method when supported");
+                checked <=> Backend.remember-mode;
+                enabled: Backend.remember-apps;
+                toggled(on) => {
+                    Backend.set-remember-mode(on);
+                }
             }
         }
     }

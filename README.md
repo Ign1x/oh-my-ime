@@ -157,7 +157,7 @@ and `zwp_virtual_keyboard_v1`.
 | **Hyprland** | IM v2 + popups + virtual keyboard | first target |
 | sway ≥ 1.10, labwc, river, niri, COSMIC | IM v2 + popups | expected to work; sway is used for automated tests |
 | KDE Plasma (KWin) | IM v1 only | needs an IM v1 frontend (later) |
-| GNOME (Mutter) | no IM protocol (IBus D-Bus only) | not planned yet |
+| GNOME (Mutter) | IBus integration | system IBus adapter planned; not supported yet |
 
 ## Getting started
 
@@ -219,6 +219,11 @@ omimed remembers the engine you used last, or with `remember = true` under `[app
 `config.toml`, the engine of every application. The full setup, a waybar snippet and
 troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 
+On the development branch after v0.4.0, `apps.remember_mode = true` also restores
+Rime's Chinese/Latin mode per application and schema when `apps.remember` is on.
+Enable it in Settings → Applications. See the [application acceptance records](docs/compatibility.md)
+for tested versions, scenarios and desktop limitations.
+
 - Writing your own engine: [docs/writing-an-engine.md](docs/writing-an-engine.md)
 - Hacking on oh-my-ime: [docs/development.md](docs/development.md)
 
@@ -242,7 +247,9 @@ troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
 7. **Daily-use readiness** — NixOS/Home Manager packaging, session setup and application
    diagnostics; broader application testing, documentation and sustained daily use are
    in progress.
-8. **Later** — KWin/input-method-v1 and further compositor coverage. Per-engine IBus
+8. **Desktop expansion** — KWin/input-method-v1 and GNOME through system IBus, initially
+   with optional system-rendered candidates. [Isolated probes](docs/compatibility.md)
+   establish the remaining backend work; these desktops are not yet supported. Per-engine IBus
    hosting is deferred; a Fcitx5 addon host and a C ABI SDK are outside the current plan.
 
 ## FAQ

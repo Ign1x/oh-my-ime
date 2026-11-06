@@ -37,7 +37,7 @@ component InputMethodItem inherits HorizontalLayout {
             if root.method.in-use: VerticalLayout {
                 alignment: center;
                 Pill {
-                    text: Tr.text("In use");
+                    text: root.method.mode-label == "" ? Tr.text("In use") : Tr.text1("In use · {}", root.method.mode-label);
                 }
             }
         }

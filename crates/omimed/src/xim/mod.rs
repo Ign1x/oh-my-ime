@@ -658,6 +658,8 @@ impl XimFrontend {
         };
         for action in actions {
             match action {
+                // Mode confirmations are consumed by Core, never sent to applications.
+                Action::InputMode { .. } => {}
                 Action::Commit(text) => {
                     // A commit replaces the preedit.
                     self.draw_preedit(key, &Preedit::default());

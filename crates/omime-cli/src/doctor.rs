@@ -532,6 +532,12 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
             error = error
         )));
     }
+    if let Some(error) = crate::string(&reply, "input-mode-error") {
+        findings.push(Finding::problem(tr!(
+            "input mode restoration failed: {error}",
+            error = error
+        )));
+    }
     findings
 }
 

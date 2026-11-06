@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional per-application input-mode memory: enable `apps.remember` and
+  `apps.remember_mode` to keep Rime Chinese in one application and Latin letters in
+  another, including after restarting. The mode is restored before queued keys;
+  older engines retain their existing behavior. Settings exposes the option and
+  restoration errors, which `omime doctor` also reports.
+- Engine protocol 1.2 negotiates mode capabilities and confirms actual modes for
+  each context. Shared observation revisions prevent delayed key replies from
+  undoing newer menu changes; the SDK suppresses these extensions on older daemons.
+- Rime's confirmed mode appears in ordinary tray icons/tooltips and settings;
+  `omime status --json` and `--watch --json` add the stable `input_mode` field.
+- Reproducible, isolated desktop/application probes and a versioned compatibility
+  baseline for Firefox, foot and XIM/xterm. KWin's privileged IM v1 connection is
+  probed separately; KDE/GNOME input backends remain future work. See
+  [application acceptance](docs/compatibility.md).
+
 ## [0.4.0] - 2026-11-06
 
 ### Added

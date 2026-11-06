@@ -619,6 +619,7 @@ impl Daemon {
                     frontend.reports_focused_app(),
                     self.core.input_method_configured(),
                     self.core.input_method_error(),
+                    self.core.input_mode_error(),
                 ));
             }
             ControlRequest::Reload(reply) => {

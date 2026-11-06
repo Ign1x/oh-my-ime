@@ -194,8 +194,9 @@ Sparkle's recent-emoji panel, which its menu turns on, does all of this: see
 ## More than one input method
 
 An engine can have input methods of its own, as a Rime engine has schemas. Announce
-them, and the one in use, in `registered`, which runs before any other call, so that
-what it says is up to date; users then choose them as `engine/id`
+them, and the one in use, in `registered`. The daemon may restore a selection before
+the registration reply reaches the SDK, so announce your current state. Users choose
+these methods as `engine/id`
 (`omime switch my-engine/fast`, the tray menu, `Ctrl+Shift+Space`, `engines` in
 config.toml), and omimed asks your engine to switch:
 
@@ -220,6 +221,58 @@ impl omime_sdk::Engine for MyEngine {
 
 Call `set_current_input_method` too when the engine switches on its own. omimed keeps
 the choice across restarts and gives it back to the engine when it starts.
+
+## Remembering an input mode
+
+Protocol 1.2 optionally lets the platform remember a mode within the same input
+method, for example Chinese in chat and Latin letters in a terminal. Use stable,
+untranslated IDs such as `native` and `latin`; keep display labels such as `中` and
+`A` separate. The user enables this with both `apps.remember` and
+`apps.remember_mode`; the latter defaults to false.
+
+Advertise supported IDs with `Engine::input_modes`. Implement `set_input_mode` and
+confirm the actual result through the context, after applying your engine's normal
+composition policy. For an engine whose mode is a boolean, the relevant callbacks
+look like this:
+
+```rust
+impl omime_sdk::Engine for MyEngine {
+    fn input_modes(&self) -> Vec<String> {
+        vec!["native".into(), "latin".into()]
+    }
+
+    fn set_input_mode(&mut self, ctx: &mut omime_sdk::Context<'_>, mode: &str) {
+        self.latin = match mode {
+            "native" => false,
+            "latin" => true,
+            _ => return,
+        };
+        ctx.report_input_mode(&self.schema, if self.latin { "latin" } else { "native" });
+    }
+    // ...
+}
+```
+
+The method ID is local to your engine: pass the complete schema ID, such as
+`double_pinyin_flypy`, rather than `rime/double_pinyin_flypy`; pass `""` if your engine
+has no submethods. Report on activation and whenever keys or resets change the mode.
+An empty reply does not confirm restoration. Unknown modes leave the engine unchanged.
+For changes outside a callback, use `host.report_input_mode(ctx_id, method_id, mode)`
+under the same state lock used by callbacks. `SetStatus` labels are presentation;
+they do not confirm a mode.
+
+The SDK assigns one increasing revision sequence to context actions and asynchronous
+reports. The daemon uses the context, method, connection and revision to reject stale
+observations, so an older key reply cannot undo a later menu change. Engines speaking
+D-Bus directly advertise `"input-modes"` (`as`) in `Register`, return action kind 4
+with `(method, mode, revision)` (`sst`), or call
+`ReportInputMode(context, method, mode, revision)`. Allocate revisions starting at 1
+when observing the actual state, before sending either form. Consult the XML protocol
+for the signatures.
+
+Existing 1.0/1.1 engines continue to work without mode restoration. The new SDK
+suppresses mode reports when the daemon negotiates a version older than 1.2; direct
+protocol clients must perform the same check on `Register`'s `api-minor` reply.
 
 ## A menu
 

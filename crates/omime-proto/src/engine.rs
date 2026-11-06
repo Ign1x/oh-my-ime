@@ -88,12 +88,21 @@ pub enum Action {
     DeleteSurrounding { before: u32, after: u32 },
     /// Send a key to the application.
     ForwardKey { keycode: u32, pressed: bool },
+    /// Confirms the mode actually in use for this context (protocol 1.2).
+    /// `input_method` is engine-local, or empty for an engine without submethods.
+    InputMode {
+        input_method: String,
+        mode: String,
+        /// Monotonically increasing per-engine confirmation sequence.
+        revision: u64,
+    },
 }
 
 const ACTION_COMMIT: u32 = 0;
 const ACTION_PREEDIT: u32 = 1;
 const ACTION_DELETE_SURROUNDING: u32 = 2;
 const ACTION_FORWARD_KEY: u32 = 3;
+const ACTION_INPUT_MODE: u32 = 4;
 
 /// An action as sent over D-Bus: `(kind, payload)`.
 pub type WireAction = (u32, OwnedVariant);
@@ -134,6 +143,18 @@ impl Action {
                 ACTION_FORWARD_KEY,
                 owned(Variant::from((*keycode, *pressed))),
             ),
+            Self::InputMode {
+                input_method,
+                mode,
+                revision,
+            } => (
+                ACTION_INPUT_MODE,
+                owned(Variant::from((
+                    input_method.as_str(),
+                    mode.as_str(),
+                    *revision,
+                ))),
+            ),
         }
     }
 
@@ -166,6 +187,17 @@ impl Action {
                     <(u32, bool)>::try_from(value.try_clone().map_err(|_| bad("forward-key"))?)
                         .map_err(|_| bad("forward-key"))?;
                 Self::ForwardKey { keycode, pressed }
+            }
+            ACTION_INPUT_MODE => {
+                let (input_method, mode, revision) = <(String, String, u64)>::try_from(
+                    value.try_clone().map_err(|_| bad("input-mode"))?,
+                )
+                .map_err(|_| bad("input-mode"))?;
+                Self::InputMode {
+                    input_method,
+                    mode,
+                    revision,
+                }
             }
             other => return Err(WireError(format!("unknown action kind {other}"))),
         })
@@ -514,6 +546,8 @@ pub struct Status {
     pub icon: Option<String>,
     /// Longer description.
     pub tooltip: Option<String>,
+    /// Stable input mode confirmed for the focused context (protocol 1.2).
+    pub input_mode: Option<String>,
 }
 
 impl Status {
@@ -523,6 +557,7 @@ impl Status {
             ("label", &self.label),
             ("icon", &self.icon),
             ("tooltip", &self.tooltip),
+            ("input-mode", &self.input_mode),
         ] {
             if let Some(value) = value {
                 dict.insert(key.into(), owned(Variant::from(value.as_str())));
@@ -541,6 +576,7 @@ impl Status {
             label: get("label"),
             icon: get("icon"),
             tooltip: get("tooltip"),
+            input_mode: get("input-mode"),
         }
     }
 }
@@ -562,12 +598,18 @@ mod tests {
                 keycode: 28,
                 pressed: true,
             },
+            Action::InputMode {
+                input_method: "double_pinyin_flypy".into(),
+                mode: "latin".into(),
+                revision: 42,
+            },
         ];
         for action in actions {
             assert_eq!(Action::from_wire(&action.to_wire()).unwrap(), action);
         }
         assert!(Action::from_wire(&(99, owned(Variant::from(1u32)))).is_err());
         assert!(Action::from_wire(&(ACTION_COMMIT, owned(Variant::from(1u32)))).is_err());
+        assert!(Action::from_wire(&(ACTION_INPUT_MODE, owned(Variant::from("latin")))).is_err());
     }
 
     #[test]
@@ -638,7 +680,9 @@ mod tests {
             label: Some("中".into()),
             icon: None,
             tooltip: Some("Chinese".into()),
+            input_mode: Some("native".into()),
         };
         assert_eq!(Status::from_dict(&status.to_dict()), status);
+        assert_eq!(Status::from_dict(&Dict::new()).input_mode, None);
     }
 }

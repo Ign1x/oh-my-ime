@@ -337,6 +337,29 @@ impl State {
         self.announce(Some(&status));
     }
 
+    /// Read the actual session, rather than inferring a mode from its UI label.
+    fn input_mode(&self, session: SessionId) -> Option<(String, &'static str)> {
+        let status = self.rime.as_ref()?.status(session)?;
+        Some((
+            status.schema_id,
+            if status.ascii_mode { "latin" } else { "native" },
+        ))
+    }
+
+    fn report_input_mode(&self, ctx: &mut Context<'_>, session: SessionId) {
+        if let Some((method, mode)) = self.input_mode(session) {
+            ctx.report_input_mode(method, mode);
+        }
+    }
+
+    fn report_focused_input_mode(&self, session: SessionId) {
+        if let (Some(host), Some(ctx), Some((method, mode))) =
+            (&self.host, self.focused, self.input_mode(session))
+        {
+            host.report_input_mode(ctx, method, mode);
+        }
+    }
+
     /// Tells the platform the status and the menu.
     fn announce(&mut self, status: Option<&rime::Status>) {
         let Some(host) = self.host.clone() else {
@@ -347,6 +370,7 @@ impl State {
                 label: Some("…".to_owned()),
                 icon: None,
                 tooltip: Some(omime_proto::i18n::text("Rime is deploying…").to_owned()),
+                input_mode: None,
             });
             return;
         }
@@ -357,6 +381,7 @@ impl State {
             tooltip: status
                 .map(|s| names::display(&s.schema_name))
                 .filter(|n| !n.is_empty()),
+            input_mode: None,
         });
         let simplified = status.is_some_and(|s| s.simplified) || self.focused_option("zh_hans");
         let toggle = |id: &str, en: &str, checked: bool| Property {
@@ -469,6 +494,7 @@ impl State {
             && let Some(session) = self.session(ctx)
         {
             self.follow_status(session);
+            self.report_focused_input_mode(session);
         } else {
             self.announce(None);
         }
@@ -554,13 +580,24 @@ impl RimeEngine {
 }
 
 impl Engine for RimeEngine {
+    fn input_modes(&self) -> Vec<String> {
+        vec!["native".to_owned(), "latin".to_owned()]
+    }
+
     fn registered(&mut self, host: &Host) {
         let mut state = lock(&self.state);
         state.host = Some(host.clone());
         if state.deployed {
             state.announce_schemas();
         }
-        state.announce(None);
+        if let Some(session) = state.focused_session() {
+            // Activate can arrive before Register's reply. The SDK cannot report
+            // 1.2 actions until it knows the daemon version, so confirm again now.
+            state.follow_status(session);
+            state.report_focused_input_mode(session);
+        } else {
+            state.announce(None);
+        }
     }
 
     fn select_input_method(&mut self, host: &Host, id: &str) {
@@ -576,6 +613,7 @@ impl Engine for RimeEngine {
         host.set_current_input_method(id);
         if let Some(session) = state.focused_session() {
             state.follow_status(session);
+            state.report_focused_input_mode(session);
         }
         refresh(&mut state, &self.ui);
     }
@@ -616,6 +654,19 @@ impl Engine for RimeEngine {
             _ => return,
         }
         state.follow_status(session);
+        state.report_focused_input_mode(session);
+        // Changing ascii_mode may clear or commit the current composition. Apply
+        // librime's actual effects, as for a key, and update the candidate window.
+        if let Some(ctx) = state.focused {
+            let effects = state.effects(ctx, session);
+            if let Some(text) = effects.commit {
+                host.commit(ctx, text);
+            }
+            if let Some(preedit) = effects.preedit {
+                host.set_preedit(ctx, preedit);
+            }
+        }
+        refresh(&mut state, &self.ui);
     }
 
     fn activate(&mut self, ctx: &mut Context<'_>) {
@@ -624,6 +675,7 @@ impl Engine for RimeEngine {
         state.focused = Some(ctx.id());
         if let Some(session) = state.session(ctx.id()) {
             state.follow_status(session);
+            state.report_input_mode(ctx, session);
         }
         refresh(&mut state, &self.ui);
     }
@@ -653,8 +705,35 @@ impl Engine for RimeEngine {
             && let Some(rime) = &state.rime
         {
             rime.clear(session);
+            state.follow_status(session);
+            state.report_input_mode(ctx, session);
         }
         ctx.clear_preedit();
+        refresh(&mut state, &self.ui);
+    }
+
+    fn set_input_mode(&mut self, ctx: &mut Context<'_>, mode: &str) {
+        let ascii = match mode {
+            "native" => false,
+            "latin" => true,
+            _ => return,
+        };
+        let mut state = lock(&self.state);
+        Self::remember(&mut state, ctx);
+        if !state.deployed {
+            // Keep the requested mode for the session created after deployment.
+            // deployed() confirms it only after librime has actually applied it.
+            state.ascii = ascii;
+            return;
+        }
+        let Some(session) = state.session(ctx.id()) else {
+            return;
+        };
+        let Some(rime) = &state.rime else { return };
+        rime.set_option(session, "ascii_mode", ascii);
+        Self::apply(ctx, state.effects(ctx.id(), session));
+        state.follow_status(session);
+        state.report_input_mode(ctx, session);
         refresh(&mut state, &self.ui);
     }
 
@@ -674,6 +753,7 @@ impl Engine for RimeEngine {
         let effects = state.effects(ctx.id(), session);
         Self::apply(ctx, effects);
         state.follow_status(session);
+        state.report_input_mode(ctx, session);
         refresh(&mut state, &self.ui);
         handled
     }
@@ -701,6 +781,8 @@ fn on_window(
             host.set_preedit(ctx, preedit);
         }
     }
+    state.follow_status(session);
+    state.report_focused_input_mode(session);
     refresh(&mut state, ui);
 }
 

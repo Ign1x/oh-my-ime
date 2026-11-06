@@ -17,6 +17,8 @@
 //! [apps]
 //! # Give each application the engine last used in it.
 //! remember = true
+//! # Also restore the input mode (such as Chinese/Latin) when an engine supports it.
+//! remember_mode = false
 //!
 //! [tray]
 //! # Show the current engine in the tray of status bars.
@@ -92,6 +94,9 @@ impl Default for EngineSettings {
 pub struct AppSettings {
     /// Remember the engine of each application, instead of using one engine for all.
     pub remember: bool,
+    /// Remember each application's confirmed input mode within an input method.
+    /// Only takes effect when `remember` is enabled and the engine supports modes.
+    pub remember_mode: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,13 +158,14 @@ pub enum Value {
 }
 
 /// The options [`edit`] can set, by dotted name.
-pub const KEYS: [&str; 9] = [
+pub const KEYS: [&str; 10] = [
     "engines",
     "initial_input_method",
     "hotkeys.toggle",
     "hotkeys.next",
     "engine.key_timeout_ms",
     "apps.remember",
+    "apps.remember_mode",
     "tray.enabled",
     "panel.enabled",
     "notifications.enabled",
@@ -275,6 +281,7 @@ mod tests {
         assert_eq!(config.hotkeys, Hotkeys::default());
         assert_eq!(config.engine.key_timeout_ms, 200);
         assert!(!config.apps.remember);
+        assert!(!config.apps.remember_mode);
         assert!(unknown.is_empty());
         assert!(
             Config::parse("[apps]\nremember = true")
@@ -294,6 +301,7 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(unknown, ["bogus", "future", "hotkeys.togle"]);
         assert!(Config::parse("[apps]\nremember = \"yes\"").is_err());
+        assert!(Config::parse("[apps]\nremember_mode = \"yes\"").is_err());
     }
 
     #[test]
@@ -310,6 +318,8 @@ mod tests {
             "{edited}"
         );
         assert!(Config::parse(&edited).unwrap().0.apps.remember);
+        let edited = edit(&edited, "apps.remember_mode", Value::Bool(true)).unwrap();
+        assert!(Config::parse(&edited).unwrap().0.apps.remember_mode);
         let edited = edit(&edited, "hotkeys.next", Value::String("Super+n".into())).unwrap();
         assert_eq!(Config::parse(&edited).unwrap().0.hotkeys.next, "Super+n");
         let list = Value::List(vec!["fcitx5/shuangpin".into(), "sparkle".into()]);
@@ -326,6 +336,7 @@ mod tests {
     fn edits_must_leave_a_valid_configuration() {
         assert!(edit("", "apps.remeber", Value::Bool(true)).is_err());
         assert!(edit("", "apps.remember", Value::String("yes".into())).is_err());
+        assert!(edit("", "apps.remember_mode", Value::String("yes".into())).is_err());
         assert!(edit("", "hotkeys.toggle", Value::String("Hyper+a".into())).is_err());
         assert!(edit("", "engine.key_timeout_ms", Value::Integer(0)).is_err());
         assert!(edit("", "engine.key_timeout_ms", Value::Integer(-5)).is_err());

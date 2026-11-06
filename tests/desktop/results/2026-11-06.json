@@ -1,0 +1,496 @@
+{
+  "schema_version": 1,
+  "description": "M1 desktop feasibility and installed release application baseline. The revision identifies the repository baseline of the probe; platform binaries are the published v0.4.0 release (417df3ba6444447cfd8a629d02611f34e70daa71).",
+  "runs": [
+    {
+      "date": "2026-11-06T09:34:58.598018+00:00",
+      "revision": "2fc44f448c204a8d878b2d0a6f79823e1d28d8f1",
+      "worktree_dirty": true,
+      "probe_script_sha256": "b1067b08944bbd4538d314334a6014f0faec03de5f07e52bc158ccc0e2a235f2",
+      "system": "Linux",
+      "architecture": "x86_64",
+      "desktop": "sway",
+      "session": "private headless",
+      "checks": {
+        "compositor": {
+          "status": "passed",
+          "detail": "private compositor answered a registry roundtrip"
+        },
+        "registry": {
+          "status": "passed",
+          "detail": "current daemon's Wayland globals are present"
+        },
+        "daemon": {
+          "status": "passed",
+          "detail": "Rime deployed and luna_pinyin was selected"
+        }
+      },
+      "limitations": [
+        "Headless probes do not validate real GPUs, desktop launchers, fullscreen or mixed DPI.",
+        "A passed protocol/startup probe is not application acceptance."
+      ],
+      "compositor": {
+        "executable": "/nix/store/6fy9pj3xqwjvcvr11pcl9fbpc0934l5a-sway-1.12/bin/sway",
+        "version": "sway version 1.12"
+      },
+      "platform": {
+        "executable": "/nix/store/zkplhz25rzs7jrwm8j7gyndn85cbf21m-oh-my-ime-with-rime-0.4.0/bin/omimed",
+        "version": "omimed 0.4.0",
+        "sha256": "9a2503065c04cdf232685c3b4acf01eb9f7e076c0bc11339c24ff8fe6c2f72cd",
+        "rime_executable": "/nix/store/zkplhz25rzs7jrwm8j7gyndn85cbf21m-oh-my-ime-with-rime-0.4.0/bin/omime-rime",
+        "rime_sha256": "693ea464ebae98c64dae5f76a8a885207928d19878dd6f498bcc11135eae5a78"
+      },
+      "globals": {
+        "ext_data_control_manager_v1": 1,
+        "ext_foreign_toplevel_image_capture_source_manager_v1": 1,
+        "ext_foreign_toplevel_list_v1": 1,
+        "ext_idle_notifier_v1": 2,
+        "ext_image_copy_capture_manager_v1": 1,
+        "ext_output_image_capture_source_manager_v1": 1,
+        "ext_session_lock_manager_v1": 1,
+        "ext_transient_seat_manager_v1": 1,
+        "ext_workspace_manager_v1": 1,
+        "org_kde_kwin_server_decoration_manager": 1,
+        "wl_compositor": 6,
+        "wl_data_device_manager": 3,
+        "wl_fixes": 1,
+        "wl_output": 4,
+        "wl_seat": 9,
+        "wl_shm": 2,
+        "wl_subcompositor": 1,
+        "wp_alpha_modifier_v1": 1,
+        "wp_color_representation_manager_v1": 1,
+        "wp_content_type_manager_v1": 1,
+        "wp_cursor_shape_manager_v1": 2,
+        "wp_fractional_scale_manager_v1": 1,
+        "wp_presentation": 2,
+        "wp_security_context_manager_v1": 1,
+        "wp_single_pixel_buffer_manager_v1": 1,
+        "wp_tearing_control_manager_v1": 1,
+        "wp_viewporter": 1,
+        "xdg_activation_v1": 1,
+        "xdg_toplevel_tag_manager_v1": 1,
+        "xdg_wm_base": 5,
+        "zwlr_data_control_manager_v1": 2,
+        "zwlr_export_dmabuf_manager_v1": 1,
+        "zwlr_foreign_toplevel_manager_v1": 3,
+        "zwlr_gamma_control_manager_v1": 1,
+        "zwlr_layer_shell_v1": 5,
+        "zwlr_output_manager_v1": 4,
+        "zwlr_output_power_manager_v1": 1,
+        "zwlr_screencopy_manager_v1": 3,
+        "zwlr_virtual_pointer_manager_v1": 2,
+        "zwp_idle_inhibit_manager_v1": 1,
+        "zwp_input_method_manager_v2": 1,
+        "zwp_keyboard_shortcuts_inhibit_manager_v1": 1,
+        "zwp_pointer_constraints_v1": 1,
+        "zwp_pointer_gestures_v1": 3,
+        "zwp_primary_selection_device_manager_v1": 1,
+        "zwp_relative_pointer_manager_v1": 1,
+        "zwp_tablet_manager_v2": 1,
+        "zwp_text_input_manager_v3": 1,
+        "zwp_virtual_keyboard_manager_v1": 1,
+        "zxdg_decoration_manager_v1": 1,
+        "zxdg_exporter_v1": 1,
+        "zxdg_exporter_v2": 1,
+        "zxdg_importer_v1": 1,
+        "zxdg_importer_v2": 1,
+        "zxdg_output_manager_v1": 3
+      },
+      "applications": [
+        {
+          "id": "firefox",
+          "application": "Firefox",
+          "availability": "available",
+          "executable": "/etc/profiles/per-user/ign1x/bin/firefox",
+          "version": "Mozilla Firefox 159.0",
+          "installation": "/nix/store/jfnrps6b703c96z854yc1qinl60bd07m-firefox-159.0/bin/firefox",
+          "display": "Wayland",
+          "route": "text-input-v3",
+          "engine": "rime/luna_pinyin",
+          "launch_options": [
+            "--no-remote",
+            "--profile <private directory>",
+            "MOZ_ENABLE_WAYLAND=1",
+            "GTK_IM_MODULE unset"
+          ],
+          "scenarios": {
+            "preedit": {
+              "status": "passed",
+              "detail": "Firefox emitted compositionupdate for the first field"
+            },
+            "candidate_keyboard": {
+              "status": "passed",
+              "detail": "Space selected the first Rime pinyin candidate"
+            },
+            "candidate_pointer": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "commit": {
+              "status": "passed",
+              "detail": "DOM compositionend and input value equal 中国"
+            },
+            "focus_cleanup": {
+              "status": "passed",
+              "detail": "DOM focus moved during composition; second field committed only 好"
+            },
+            "shortcuts": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "popup_position": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "mixed_scale": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "restart": {
+              "status": "not-tested",
+              "detail": "not run"
+            }
+          }
+        },
+        {
+          "id": "foot",
+          "application": "foot",
+          "availability": "available",
+          "executable": "/nix/store/m9yjnfz8jqvrk8i439bfgadi286qrm3v-foot-1.28.0/bin/foot",
+          "version": "foot version: 1.28.0 +pgo +ime +graphemes +toplevel-tag +blur -assertions",
+          "installation": "/nix/store/m9yjnfz8jqvrk8i439bfgadi286qrm3v-foot-1.28.0/bin/foot",
+          "display": "Wayland",
+          "route": "text-input-v3",
+          "engine": "rime/luna_pinyin",
+          "launch_options": [
+            "--config /dev/null --app-id omime-foot-probe",
+            "synthetic terminal reader"
+          ],
+          "scenarios": {
+            "preedit": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "candidate_keyboard": {
+              "status": "passed",
+              "detail": "Space selected the first Rime pinyin candidate"
+            },
+            "candidate_pointer": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "commit": {
+              "status": "passed",
+              "detail": "terminal stdin received exactly 中国 followed by newline"
+            },
+            "focus_cleanup": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "shortcuts": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "popup_position": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "mixed_scale": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "restart": {
+              "status": "not-tested",
+              "detail": "not run"
+            }
+          }
+        },
+        {
+          "id": "xterm",
+          "application": "xterm",
+          "availability": "available",
+          "executable": "/nix/store/1icsv82zkwndwjq0ng0yfnanpfyjz1x2-xterm-411/bin/xterm",
+          "version": "XTerm(411)",
+          "installation": "/nix/store/1icsv82zkwndwjq0ng0yfnanpfyjz1x2-xterm-411/bin/xterm",
+          "display": "XWayland",
+          "route": "XIM",
+          "engine": "rime/luna_pinyin",
+          "launch_options": [
+            "-name omime-xterm-probe, XMODIFIERS=@im=omime",
+            "synthetic terminal reader"
+          ],
+          "scenarios": {
+            "preedit": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "candidate_keyboard": {
+              "status": "passed",
+              "detail": "Space selected the first Rime pinyin candidate"
+            },
+            "candidate_pointer": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "commit": {
+              "status": "passed",
+              "detail": "terminal stdin received exactly 中国 followed by newline"
+            },
+            "focus_cleanup": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "shortcuts": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "popup_position": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "mixed_scale": {
+              "status": "not-tested",
+              "detail": "not run"
+            },
+            "restart": {
+              "status": "not-tested",
+              "detail": "not run"
+            }
+          }
+        }
+      ],
+      "untested_applications": [
+        "gtk3",
+        "gtk4",
+        "qt5",
+        "qt6",
+        "chromium",
+        "vscode",
+        "wechat",
+        "wps"
+      ]
+    },
+    {
+      "date": "2026-11-06T07:37:33.603280+00:00",
+      "revision": "2fc44f448c204a8d878b2d0a6f79823e1d28d8f1",
+      "system": "Linux",
+      "architecture": "x86_64",
+      "desktop": "kwin",
+      "session": "private headless",
+      "checks": {
+        "compositor": {
+          "status": "passed",
+          "detail": "private compositor answered a registry roundtrip"
+        },
+        "registry": {
+          "status": "blocked",
+          "detail": "missing current daemon requirements: zwp_input_method_manager_v2, zwp_virtual_keyboard_manager_v1"
+        },
+        "daemon": {
+          "status": "blocked",
+          "detail": "current daemon cannot start on this desktop",
+          "exit_code": 1
+        }
+      },
+      "limitations": [
+        "Headless probes do not validate real GPUs, desktop launchers, fullscreen or mixed DPI.",
+        "A passed protocol/startup probe is not application acceptance.",
+        "KWin restricts IM v1 to its launched input method; public registry absence does not prove IM v1 is absent."
+      ],
+      "compositor": {
+        "executable": "/nix/store/sigayxd87pmikqrbgf30yr029l901d8n-kwin-6.8.2/bin/kwin_wayland",
+        "version": "kwin 6.8.2"
+      },
+      "platform": {
+        "executable": "/nix/store/zkplhz25rzs7jrwm8j7gyndn85cbf21m-oh-my-ime-with-rime-0.4.0/bin/omimed",
+        "version": "omimed 0.4.0"
+      },
+      "globals": {
+        "ext_background_effect_manager_v1": 1,
+        "ext_data_control_manager_v1": 1,
+        "ext_idle_notifier_v1": 2,
+        "kde_external_brightness_v1": 3,
+        "kde_lockscreen_overlay_v1": 1,
+        "kde_output_device_registry_v2": 26,
+        "kde_output_management_v2": 22,
+        "kde_output_order_v1": 1,
+        "kde_screen_edge_manager_v1": 1,
+        "org_kde_kwin_appmenu_manager": 2,
+        "org_kde_kwin_dpms_manager": 1,
+        "org_kde_kwin_fake_input": 6,
+        "org_kde_kwin_idle": 1,
+        "org_kde_kwin_keystate": 5,
+        "org_kde_kwin_server_decoration_manager": 1,
+        "org_kde_kwin_server_decoration_palette_manager": 1,
+        "org_kde_kwin_shadow_manager": 2,
+        "org_kde_plasma_activation_feedback": 1,
+        "org_kde_plasma_shell": 8,
+        "org_kde_plasma_virtual_desktop_management": 4,
+        "org_kde_plasma_window_management": 21,
+        "wl_compositor": 6,
+        "wl_data_device_manager": 3,
+        "wl_fixes": 1,
+        "wl_output": 4,
+        "wl_seat": 11,
+        "wl_shm": 2,
+        "wl_subcompositor": 1,
+        "wp_alpha_modifier_v1": 1,
+        "wp_color_manager_v1": 3,
+        "wp_color_representation_manager_v1": 1,
+        "wp_content_type_manager_v1": 1,
+        "wp_cursor_shape_manager_v1": 2,
+        "wp_fifo_manager_v1": 1,
+        "wp_fractional_scale_manager_v1": 1,
+        "wp_linux_drm_syncobj_manager_v1": 1,
+        "wp_pointer_warp_v1": 1,
+        "wp_presentation": 2,
+        "wp_security_context_manager_v1": 1,
+        "wp_single_pixel_buffer_manager_v1": 1,
+        "wp_tearing_control_manager_v1": 1,
+        "wp_viewporter": 1,
+        "xdg_activation_v1": 1,
+        "xdg_session_manager_v1": 1,
+        "xdg_toplevel_drag_manager_v1": 1,
+        "xdg_toplevel_icon_manager_v1": 1,
+        "xdg_toplevel_tag_manager_v1": 1,
+        "xdg_wm_base": 6,
+        "xdg_wm_dialog_v1": 1,
+        "zkde_screencast_unstable_v1": 6,
+        "zwlr_layer_shell_v1": 5,
+        "zwp_idle_inhibit_manager_v1": 1,
+        "zwp_keyboard_shortcuts_inhibit_manager_v1": 1,
+        "zwp_linux_dmabuf_v1": 6,
+        "zwp_pointer_constraints_v1": 1,
+        "zwp_pointer_gestures_v1": 3,
+        "zwp_primary_selection_device_manager_v1": 1,
+        "zwp_relative_pointer_manager_v1": 1,
+        "zwp_tablet_manager_v2": 2,
+        "zwp_text_input_manager_v2": 1,
+        "zwp_text_input_manager_v3": 2,
+        "zxdg_decoration_manager_v1": 2,
+        "zxdg_exporter_v2": 1,
+        "zxdg_importer_v2": 1,
+        "zxdg_output_manager_v1": 3
+      },
+      "privileged_inputmethod": {
+        "status": "passed",
+        "globals": {
+          "ext_background_effect_manager_v1": 1,
+          "ext_data_control_manager_v1": 1,
+          "ext_idle_notifier_v1": 2,
+          "kde_external_brightness_v1": 3,
+          "kde_lockscreen_overlay_v1": 1,
+          "kde_output_device_registry_v2": 26,
+          "kde_output_management_v2": 22,
+          "kde_output_order_v1": 1,
+          "kde_screen_edge_manager_v1": 1,
+          "org_kde_kwin_appmenu_manager": 2,
+          "org_kde_kwin_dpms_manager": 1,
+          "org_kde_kwin_fake_input": 6,
+          "org_kde_kwin_idle": 1,
+          "org_kde_kwin_keystate": 5,
+          "org_kde_kwin_server_decoration_manager": 1,
+          "org_kde_kwin_server_decoration_palette_manager": 1,
+          "org_kde_kwin_shadow_manager": 2,
+          "org_kde_plasma_activation_feedback": 1,
+          "org_kde_plasma_shell": 8,
+          "org_kde_plasma_virtual_desktop_management": 4,
+          "org_kde_plasma_window_management": 21,
+          "wl_compositor": 6,
+          "wl_data_device_manager": 3,
+          "wl_fixes": 1,
+          "wl_output": 4,
+          "wl_seat": 11,
+          "wl_shm": 2,
+          "wl_subcompositor": 1,
+          "wp_alpha_modifier_v1": 1,
+          "wp_color_manager_v1": 3,
+          "wp_color_representation_manager_v1": 1,
+          "wp_content_type_manager_v1": 1,
+          "wp_cursor_shape_manager_v1": 2,
+          "wp_fifo_manager_v1": 1,
+          "wp_fractional_scale_manager_v1": 1,
+          "wp_linux_drm_syncobj_manager_v1": 1,
+          "wp_pointer_warp_v1": 1,
+          "wp_presentation": 2,
+          "wp_security_context_manager_v1": 1,
+          "wp_single_pixel_buffer_manager_v1": 1,
+          "wp_tearing_control_manager_v1": 1,
+          "wp_viewporter": 1,
+          "xdg_activation_v1": 1,
+          "xdg_session_manager_v1": 1,
+          "xdg_toplevel_drag_manager_v1": 1,
+          "xdg_toplevel_icon_manager_v1": 1,
+          "xdg_toplevel_tag_manager_v1": 1,
+          "xdg_wm_base": 6,
+          "xdg_wm_dialog_v1": 1,
+          "zkde_screencast_unstable_v1": 6,
+          "zwlr_layer_shell_v1": 5,
+          "zwp_idle_inhibit_manager_v1": 1,
+          "zwp_input_method_v1": 1,
+          "zwp_input_panel_v1": 1,
+          "zwp_keyboard_shortcuts_inhibit_manager_v1": 1,
+          "zwp_linux_dmabuf_v1": 6,
+          "zwp_pointer_constraints_v1": 1,
+          "zwp_pointer_gestures_v1": 3,
+          "zwp_primary_selection_device_manager_v1": 1,
+          "zwp_relative_pointer_manager_v1": 1,
+          "zwp_tablet_manager_v2": 2,
+          "zwp_text_input_manager_v2": 1,
+          "zwp_text_input_manager_v3": 2,
+          "zxdg_decoration_manager_v1": 2,
+          "zxdg_exporter_v2": 1,
+          "zxdg_importer_v2": 1,
+          "zxdg_output_manager_v1": 3
+        }
+      },
+      "applications": [],
+      "untested_applications": [
+        "gtk3",
+        "gtk4",
+        "qt5",
+        "qt6",
+        "firefox",
+        "chromium",
+        "vscode",
+        "foot",
+        "xterm",
+        "wechat",
+        "wps"
+      ]
+    },
+    {
+      "date": "2026-11-06T07:24:19.634563+00:00",
+      "revision": "2fc44f448c204a8d878b2d0a6f79823e1d28d8f1",
+      "system": "Linux",
+      "architecture": "x86_64",
+      "desktop": "gnome",
+      "session": "private headless",
+      "checks": {
+        "compositor": {
+          "status": "blocked",
+          "detail": "gnome-shell is unavailable; no desktop was started"
+        }
+      },
+      "limitations": [
+        "Headless probes do not validate real GPUs, desktop launchers, fullscreen or mixed DPI.",
+        "A passed protocol/startup probe is not application acceptance."
+      ],
+      "applications": [],
+      "untested_applications": [
+        "gtk3",
+        "gtk4",
+        "qt5",
+        "qt6",
+        "firefox",
+        "chromium",
+        "vscode",
+        "foot",
+        "xterm",
+        "wechat",
+        "wps"
+      ]
+    }
+  ]
+}

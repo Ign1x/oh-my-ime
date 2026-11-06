@@ -36,6 +36,7 @@
 //!   hide or close your toolkit window to "hide" it; the platform maps and unmaps it.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use omime_proto::ApiVersion;
@@ -76,9 +77,16 @@ pub enum Error {
 /// Keep composition state keyed by [`Context::id`]; activation, reset and
 /// deactivation apply only to that field. See the Echo engine for an example.
 pub trait Engine: Send + 'static {
+    /// Stable modes this engine can restore, e.g. `native` and `latin`.
+    /// Empty means mode reporting and restoration are unsupported.
+    fn input_modes(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// The platform knows the engine now. Announce what it has here, such as its input
-    /// methods ([`Host::set_input_methods`]): this runs on the engine's thread before
-    /// any other call, so what it announces is up to date.
+    /// methods ([`Host::set_input_methods`]). The daemon may already have restored a
+    /// selection or activated a field before Register's reply reaches the SDK;
+    /// announce the current state, including any changes from those early calls.
     fn registered(&mut self, host: &Host) {
         let _ = host;
     }
@@ -105,6 +113,13 @@ pub trait Engine: Send + 'static {
     /// The application changed the text on its own; drop any composition.
     fn reset(&mut self, ctx: &mut Context<'_>) {
         let _ = ctx;
+    }
+
+    /// Restores an advertised input mode before subsequent keys are handled.
+    /// Confirm the actual mode with [`Context::report_input_mode`], even when it
+    /// was already selected. Unsupported modes must leave the engine unchanged.
+    fn set_input_mode(&mut self, ctx: &mut Context<'_>, mode: &str) {
+        let _ = (ctx, mode);
     }
 
     /// The user chose the input method `id` of this engine (one it announced with
@@ -169,6 +184,22 @@ impl<'a> Context<'a> {
     pub fn forward_key(&mut self, keycode: u32, pressed: bool) {
         self.actions.push(Action::ForwardKey { keycode, pressed });
     }
+
+    /// Reports the actual mode for this field in order with the other actions.
+    /// Use the engine-local method ID, or `""` when the engine has no submethods.
+    /// Ignored when connected to a daemon older than protocol 1.2.
+    /// The SDK orders observations from this and [`Host::report_input_mode`] with
+    /// a shared revision counter so delayed replies cannot undo newer reports.
+    pub fn report_input_mode(&mut self, input_method: impl Into<String>, mode: impl Into<String>) {
+        if self.host.supports_input_modes() {
+            let revision = self.host.next_mode_revision();
+            self.actions.push(Action::InputMode {
+                input_method: input_method.into(),
+                mode: mode.into(),
+                revision,
+            });
+        }
+    }
 }
 
 #[zbus::proxy(
@@ -204,6 +235,15 @@ trait EngineHost {
     fn forward_key(&self, context: u64, keycode: u32, pressed: bool) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
+    fn report_input_mode(
+        &self,
+        context: u64,
+        input_method: &str,
+        mode: &str,
+        revision: u64,
+    ) -> zbus::Result<()>;
+
+    #[zbus(no_reply)]
     fn set_popup_visible(&self, visible: bool) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
@@ -230,6 +270,8 @@ pub struct Host {
     // The interface must exist before the connection starts reading. Its host
     // proxy is filled immediately after build(), before Register is sent.
     proxy: Arc<OnceLock<EngineHostProxy<'static>>>,
+    api_minor: Arc<AtomicU16>,
+    mode_revision: Arc<AtomicU64>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -240,6 +282,14 @@ impl std::fmt::Debug for Host {
 }
 
 impl Host {
+    fn supports_input_modes(&self) -> bool {
+        self.api_minor.load(Ordering::Acquire) >= 2
+    }
+
+    fn next_mode_revision(&self) -> u64 {
+        self.mode_revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     fn call<F, Fut>(&self, what: &'static str, f: F)
     where
         F: FnOnce(EngineHostProxy<'static>) -> Fut + Send + 'static,
@@ -289,6 +339,29 @@ impl Host {
     pub fn forward_key(&self, context: ContextId, keycode: u32, pressed: bool) {
         self.call("forward_key", move |p| async move {
             p.forward_key(context, keycode, pressed).await
+        });
+    }
+
+    /// Reports a mode changed outside a callback, e.g. through the engine's menu.
+    /// The context and engine-local method identify the field the change belongs to;
+    /// reports for fields no longer active are ignored by the platform.
+    /// Call while holding the same state lock used for engine callbacks, immediately
+    /// after observing the change, so the SDK's revision follows the actual changes.
+    pub fn report_input_mode(
+        &self,
+        context: ContextId,
+        input_method: impl Into<String>,
+        mode: impl Into<String>,
+    ) {
+        if !self.supports_input_modes() {
+            return;
+        }
+        let input_method = input_method.into();
+        let mode = mode.into();
+        let revision = self.next_mode_revision();
+        self.call("report_input_mode", move |p| async move {
+            p.report_input_mode(context, &input_method, &mode, revision)
+                .await
         });
     }
 
@@ -417,6 +490,14 @@ impl EngineObject {
         self.with_context(context, |_| {}, |e, ctx| e.reset(ctx)).1
     }
 
+    fn set_input_mode(&self, context: u64, mode: String) -> Vec<WireAction> {
+        // Receiving this method also proves support when the daemon calls it
+        // immediately after registration, before its Register reply is processed.
+        self.host.api_minor.fetch_max(2, Ordering::AcqRel);
+        self.with_context(context, |_| {}, |e, ctx| e.set_input_mode(ctx, &mode))
+            .1
+    }
+
     fn select_input_method(&self, id: String) {
         let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
         guard.engine.select_input_method(&self.host, &id);
@@ -458,8 +539,19 @@ async fn serve_on(
 ) -> Result<(), Error> {
     let host = Host {
         proxy: Arc::new(OnceLock::new()),
+        api_minor: Arc::new(AtomicU16::new(0)),
+        mode_revision: Arc::new(AtomicU64::new(0)),
         runtime: tokio::runtime::Handle::current(),
     };
+    let mut capabilities = Dict::new();
+    let modes = engine.input_modes();
+    if !modes.is_empty() {
+        capabilities.insert(
+            "input-modes".into(),
+            OwnedVariant::try_from(zbus::Variant::from(modes))
+                .expect("input mode IDs contain no file descriptors"),
+        );
+    }
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let object = EngineObject {
         state: Mutex::new(EngineState {
@@ -483,9 +575,16 @@ async fn serve_on(
         .build()
         .await?;
     host.proxy.get_or_init(|| proxy.clone());
-    proxy
-        .register(id, API_VERSION.major, API_VERSION.minor, &Dict::new())
+    let session = proxy
+        .register(id, API_VERSION.major, API_VERSION.minor, &capabilities)
         .await?;
+    let minor = session
+        .get("api-minor")
+        .and_then(|value| value.try_clone().ok())
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(0);
+    host.api_minor
+        .store(minor.min(API_VERSION.minor), Ordering::Release);
     {
         let object = conn
             .object_server()
@@ -580,10 +679,16 @@ mod tests {
         }
     }
 
+    type ModeReports = Arc<Mutex<Vec<(u64, String, String, u64)>>>;
+
     /// The daemon's side of `EngineHost1`, as far as the tests need it.
     struct FakeDaemon {
         registered: Arc<tokio::sync::Notify>,
         selected: Option<Arc<tokio::sync::Notify>>,
+        api_minor: u16,
+        capabilities: Arc<Mutex<Dict>>,
+        modes: ModeReports,
+        reported: Arc<tokio::sync::Notify>,
     }
 
     #[zbus::interface(name = "io.github.ign1x.OhMyIme.EngineHost1")]
@@ -593,9 +698,23 @@ mod tests {
             _id: &str,
             _major: u16,
             _minor: u16,
-            _capabilities: Dict,
+            capabilities: Dict,
             #[zbus(connection)] conn: &zbus::Connection,
         ) -> Dict {
+            if self.api_minor >= 2 && capabilities.contains_key("input-modes") {
+                // A mode-aware daemon may restore immediately, before the SDK
+                // receives the negotiated version in this Register reply.
+                let actions = Engine1Proxy::new(conn)
+                    .await
+                    .unwrap()
+                    .set_input_mode(91, "native")
+                    .await
+                    .unwrap();
+                assert!(actions.iter().any(|wire| {
+                    matches!(Action::from_wire(wire), Ok(Action::InputMode { mode, .. }) if mode == "native")
+                }));
+            }
+            *self.capabilities.lock().unwrap() = capabilities;
             if let Some(selected) = &self.selected {
                 // Restore a method before replying to Register, as a daemon can.
                 Engine1Proxy::new(conn)
@@ -607,7 +726,21 @@ mod tests {
                 selected.notified().await;
             }
             self.registered.notify_one();
-            Dict::new()
+            Dict::from([("api-minor".into(), self.api_minor.into())])
+        }
+
+        fn report_input_mode(
+            &self,
+            context: u64,
+            input_method: String,
+            mode: String,
+            revision: u64,
+        ) {
+            self.modes
+                .lock()
+                .unwrap()
+                .push((context, input_method, mode, revision));
+            self.reported.notify_one();
         }
     }
 
@@ -621,6 +754,8 @@ mod tests {
         fn select_input_method(&self, id: &str) -> zbus::Result<()>;
 
         fn activate(&self, context: u64, info: &Dict) -> zbus::Result<Vec<WireAction>>;
+
+        fn set_input_mode(&self, context: u64, mode: &str) -> zbus::Result<Vec<WireAction>>;
 
         fn process_key(
             &self,
@@ -640,27 +775,37 @@ mod tests {
         engine: impl Engine,
         selected: Option<Arc<tokio::sync::Notify>>,
     ) -> Engine1Proxy<'static> {
+        connect_with_daemon(
+            engine,
+            FakeDaemon {
+                registered: Arc::new(tokio::sync::Notify::new()),
+                selected,
+                api_minor: API_VERSION.minor,
+                capabilities: Arc::default(),
+                modes: Arc::default(),
+                reported: Arc::new(tokio::sync::Notify::new()),
+            },
+        )
+        .await
+    }
+
+    async fn connect_with_daemon(engine: impl Engine, daemon: FakeDaemon) -> Engine1Proxy<'static> {
         let (daemon_end, engine_end) = std::os::unix::net::UnixStream::pair().unwrap();
         // Tokio needs non-blocking sockets.
         daemon_end.set_nonblocking(true).unwrap();
         engine_end.set_nonblocking(true).unwrap();
         let engine: Box<dyn Engine> = Box::new(engine);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let serving = tokio::spawn(async move {
             let builder = zbus::connection::Builder::unix_stream(engine_end);
-            serve_on(builder, "test", engine, None).await
+            serve_on(builder, "test", engine, Some(ready_tx)).await
         });
 
-        let registered = Arc::new(tokio::sync::Notify::new());
+        let registered = daemon.registered.clone();
         let daemon = zbus::connection::Builder::unix_stream(daemon_end)
             .server(zbus::Guid::generate())
             .p2p()
-            .serve_at(
-                DAEMON_OBJECT_PATH,
-                FakeDaemon {
-                    registered: registered.clone(),
-                    selected,
-                },
-            )
+            .serve_at(DAEMON_OBJECT_PATH, daemon)
             .build()
             .await
             .unwrap();
@@ -668,6 +813,10 @@ mod tests {
             () = registered.notified() => {}
             result = serving => panic!("the engine stopped: {result:?}"),
         }
+        tokio::task::spawn_blocking(move || ready_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         Engine1Proxy::new(&daemon).await.unwrap()
     }
 
@@ -756,6 +905,117 @@ mod tests {
                 *seen.lock().unwrap(),
                 [Seen::Key(press), Seen::Key(release)]
             );
+        });
+    }
+
+    #[test]
+    fn modes_are_negotiated_and_reports_keep_their_context_and_order() {
+        struct Modes;
+        impl Engine for Modes {
+            fn input_modes(&self) -> Vec<String> {
+                vec!["native".into(), "latin".into()]
+            }
+
+            fn registered(&mut self, host: &Host) {
+                host.report_input_mode(91, "pinyin", "latin");
+            }
+
+            fn activate(&mut self, ctx: &mut Context<'_>) {
+                ctx.clear_preedit();
+                ctx.report_input_mode("pinyin", "native");
+            }
+
+            fn set_input_mode(&mut self, ctx: &mut Context<'_>, mode: &str) {
+                if matches!(mode, "native" | "latin") {
+                    ctx.commit("pending");
+                    ctx.clear_preedit();
+                    ctx.report_input_mode("pinyin", mode);
+                }
+            }
+
+            fn process_key(&mut self, _ctx: &mut Context<'_>, _key: &KeyEvent) -> bool {
+                false
+            }
+        }
+
+        run_test(async {
+            for minor in [0, 1, 2] {
+                let capabilities = Arc::new(Mutex::new(Dict::new()));
+                let modes = Arc::new(Mutex::new(Vec::new()));
+                let reported = Arc::new(tokio::sync::Notify::new());
+                let engine = connect_with_daemon(
+                    Modes,
+                    FakeDaemon {
+                        registered: Arc::new(tokio::sync::Notify::new()),
+                        selected: None,
+                        api_minor: minor,
+                        capabilities: capabilities.clone(),
+                        modes: modes.clone(),
+                        reported: reported.clone(),
+                    },
+                )
+                .await;
+                let advertised = capabilities
+                    .lock()
+                    .unwrap()
+                    .get("input-modes")
+                    .unwrap()
+                    .try_clone()
+                    .unwrap();
+                assert_eq!(
+                    Vec::<String>::try_from(advertised).unwrap(),
+                    ["native", "latin"]
+                );
+                let actions: Vec<Action> = engine
+                    .activate(91, &Dict::new())
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|wire| Action::from_wire(wire).unwrap())
+                    .collect();
+                let mut expected = vec![Action::Preedit(Preedit::default())];
+                if minor >= 2 {
+                    expected.push(Action::InputMode {
+                        input_method: "pinyin".into(),
+                        mode: "native".into(),
+                        revision: 3,
+                    });
+                    reported.notified().await;
+                    assert_eq!(
+                        *modes.lock().unwrap(),
+                        [(91, "pinyin".into(), "latin".into(), 2)]
+                    );
+                    let actions: Vec<Action> = engine
+                        .set_input_mode(91, "latin")
+                        .await
+                        .unwrap()
+                        .iter()
+                        .map(|wire| Action::from_wire(wire).unwrap())
+                        .collect();
+                    assert_eq!(
+                        actions,
+                        [
+                            Action::Commit("pending".into()),
+                            Action::Preedit(Preedit::default()),
+                            Action::InputMode {
+                                input_method: "pinyin".into(),
+                                mode: "latin".into(),
+                                revision: 4,
+                            }
+                        ]
+                    );
+                    assert!(
+                        engine
+                            .set_input_mode(91, "unknown")
+                            .await
+                            .unwrap()
+                            .is_empty()
+                    );
+                } else {
+                    assert!(modes.lock().unwrap().is_empty());
+                }
+                assert_eq!(actions, expected);
+            }
         });
     }
 }

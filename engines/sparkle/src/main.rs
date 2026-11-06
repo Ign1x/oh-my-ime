@@ -334,6 +334,7 @@ impl Engine for Sparkle {
         );
         refresh(&mut shared, ctx.host(), &self.ui);
         ctx.host().set_status(omime_sdk::Status {
+            input_mode: None,
             label: Some("✨".into()),
             icon: Some("face-smile".into()),
             tooltip: Some("Sparkle: type :shortcode for emoji".into()),

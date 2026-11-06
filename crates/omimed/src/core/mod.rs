@@ -68,6 +68,8 @@ pub enum CoreEvent {
         conn: zbus::Connection,
         /// The minor engine protocol version it speaks.
         api_minor: u16,
+        connection_id: u64,
+        input_modes: Vec<String>,
     },
     Exited {
         engine: String,
@@ -76,6 +78,7 @@ pub enum CoreEvent {
     },
     Host {
         engine: String,
+        connection_id: u64,
         call: HostCall,
     },
     Reply {
@@ -109,9 +112,7 @@ pub enum CoreEvent {
     },
     /// The settings program of an engine that reads its settings only when it starts
     /// closed.
-    SettingsClosed {
-        engine: String,
-    },
+    SettingsClosed { engine: String },
 }
 
 /// What users choose: an engine of omimed's, or an input method inside a hosted
@@ -177,6 +178,7 @@ const HOTKEY_MODIFIERS: u32 = omime_proto::engine::modifiers::SHIFT
 #[derive(Debug)]
 enum Request {
     Activate,
+    RestoreMode,
     Update(Dict),
     Reset,
     Key(KeyRef, KeyEvent),
@@ -187,6 +189,7 @@ impl Request {
     fn method(&self) -> &'static str {
         match self {
             Self::Activate => "Activate",
+            Self::RestoreMode => "SetInputMode",
             Self::Update(_) => "UpdateContext",
             Self::Reset => "Reset",
             Self::Key(..) => "ProcessKey",
@@ -205,6 +208,13 @@ struct InFlight {
     /// Its key has already been returned to the frontend. Until the reply and a
     /// queued reset finish, subsequent keys bypass this engine.
     timed_out: bool,
+    app: Option<String>,
+    mode: Option<String>,
+    /// Last accepted observation before this request was sent. A confirmation
+    /// must be newer, even if a later UI action has already overtaken its reply.
+    mode_revision: u64,
+    input_method: Option<String>,
+    epoch: u64,
 }
 
 #[derive(Debug)]
@@ -224,6 +234,12 @@ struct Context {
     hold_until: Option<Instant>,
     /// Whether an asynchronous hosted input context has acknowledged focus.
     framework_ready: bool,
+    epoch: u64,
+    mode_revision: u64,
+    mode_ready: bool,
+    mode: Option<(String, String)>,
+    /// A restore that may finish asynchronously, for example after deployment.
+    pending_mode: Option<(String, String)>,
 }
 
 impl Context {
@@ -326,6 +342,9 @@ pub struct Core {
     on_trouble: Option<TroubleListener>,
     /// Whether applications keep their own engine (`[apps] remember`).
     remember_apps: bool,
+    remember_mode: bool,
+    app_modes: BTreeMap<String, BTreeMap<String, String>>,
+    mode_error: Option<String>,
     /// The app id of the focused window, when the compositor reports it.
     focused_app: Option<String>,
     /// The engine last chosen in each application (`None` is direct input).
@@ -372,6 +391,9 @@ impl Core {
             on_properties: None,
             on_trouble: None,
             remember_apps: config.apps.remember,
+            remember_mode: config.apps.remember_mode,
+            app_modes: BTreeMap::new(),
+            mode_error: None,
             focused_app: None,
             app_engines: BTreeMap::new(),
         }
@@ -518,6 +540,7 @@ impl Core {
                     .iter()
                     .map(|(app, engine)| (app.clone(), engine.clone().unwrap_or_default()))
                     .collect(),
+                app_modes: self.app_modes.clone(),
                 // What the user chose, also before the framework took it.
                 inner: slots()
                     .filter_map(|(id, slot)| {
@@ -570,6 +593,7 @@ impl Core {
     /// Takes over what was saved when the daemon stopped. The current engine is left to
     /// the daemon, which switches to it once the compositor is ready.
     pub fn restore(&mut self, state: &State) {
+        self.app_modes = state.app_modes.clone();
         self.last_engine = state.last.clone().filter(|e| self.engines.get(e).is_some());
         self.app_engines = state
             .apps
@@ -617,6 +641,7 @@ impl Core {
         self.hotkeys = parse_hotkeys(config);
         self.key_timeout = Duration::from_millis(config.engine.key_timeout_ms.max(1));
         self.remember_apps = config.apps.remember;
+        self.remember_mode = config.apps.remember_mode;
         let removed = self.engines.update_installed(installed);
         // An engine that was disabled or uninstalled cannot stay in use.
         if self.current.as_ref().is_some_and(|c| !self.is_enabled(c))
@@ -630,6 +655,10 @@ impl Core {
             .is_some_and(|l| removed.contains(l))
         {
             self.last_engine = None;
+        }
+        let ids: Vec<_> = self.contexts.keys().copied().collect();
+        for ctx in ids {
+            self.remember_confirmed_mode(ctx);
         }
         info!(enabled = self.enabled.join(", "), "configuration reloaded");
         self.lists_changed();
@@ -655,6 +684,16 @@ impl Core {
             .as_deref()
             .and_then(|id| self.engines.get(id))?;
         let mut status = slot.status.clone();
+        if slot.mode_method != self.current_method() {
+            status.input_mode = None;
+        }
+        if self.current.as_deref() == Some("rime") {
+            match status.input_mode.as_deref() {
+                Some("latin") => status.label = Some("A".into()),
+                Some("native") => status.label = Some("中".into()),
+                _ => {}
+            }
+        }
         if let Some(method) = slot
             .wanted_inner
             .as_deref()
@@ -865,6 +904,7 @@ impl Core {
     }
 
     pub fn on_timer(&mut self, now: Instant, out: &mut dyn Frontends) {
+        let previous_mode_error = self.mode_error.clone();
         for (failed, why) in self.engines.on_timer(now) {
             self.engine_failed(&failed, why);
             self.engine_unavailable(&failed, out);
@@ -912,6 +952,13 @@ impl Core {
                 "the engine did not answer in time"
             );
             flight.timed_out = true;
+            if let Some(mode) = &flight.mode {
+                self.mode_error = Some(tr!(
+                    "{engine} timed out restoring input mode {mode}",
+                    engine = flight.engine,
+                    mode = mode
+                ));
+            }
             // Keep the request in flight: Reset must follow its completion, and
             // must finish before any new composition reaches the engine.
             flight.deadline = now + self.key_timeout * 2;
@@ -930,6 +977,9 @@ impl Core {
                 self.engines.restart(&flight.engine);
             }
             self.pump(ctx, out);
+        }
+        if self.mode_error != previous_mode_error {
+            self.status_changed();
         }
     }
 
@@ -953,9 +1003,15 @@ impl Core {
                     waiting_since: Instant::now(),
                     hold_until: None,
                     framework_ready: true,
+                    epoch: 0,
+                    mode_revision: 0,
+                    mode_ready: false,
+                    mode: None,
+                    pending_mode: None,
                 };
                 if context.engine.is_some() {
                     context.queue.push_back(Request::Activate);
+                    context.queue.push_back(Request::RestoreMode);
                 }
                 self.contexts.insert(ctx, context);
                 self.pump(ctx, out);
@@ -967,14 +1023,24 @@ impl Core {
                 let mut info = info;
                 // The cursor rectangle comes from the bridge, not from the field.
                 info.cursor_rect = context.info.cursor_rect;
+                let app_changed = info.app_id != context.info.app_id;
                 let changes = info.diff(&context.info);
                 context.info = info;
+                if app_changed {
+                    context.epoch += 1;
+                    context.mode_ready = false;
+                    context.mode = None;
+                    context.pending_mode = None;
+                }
                 if context.engine.is_some() {
                     if !changes.is_empty() {
                         context.queue.push_back(Request::Update(changes));
                     }
                     if reset {
                         context.queue.push_back(Request::Reset);
+                    }
+                    if app_changed {
+                        context.queue.push_back(Request::RestoreMode);
                     }
                 }
                 self.pump(ctx, out);
@@ -1079,8 +1145,9 @@ impl Core {
                     .collect();
                 for ctx in waiting {
                     if let Some(context) = self.contexts.get_mut(&ctx)
-                        && !matches!(context.queue.front(), Some(Request::Activate))
+                        && !context.queue.iter().any(|r| matches!(r, Request::Activate))
                     {
+                        context.queue.push_front(Request::RestoreMode);
                         context.queue.push_front(Request::Activate);
                     }
                     self.pump(ctx, out);
@@ -1153,8 +1220,14 @@ impl Core {
                 engine,
                 conn,
                 api_minor,
+                connection_id,
+                input_modes,
             } => {
-                if let Err(e) = self.engines.registered(&engine, conn, api_minor).await {
+                if let Err(e) = self
+                    .engines
+                    .registered(&engine, conn, api_minor, connection_id, input_modes)
+                    .await
+                {
                     warn!(engine, "cannot talk to the engine: {e}");
                     return;
                 }
@@ -1169,8 +1242,9 @@ impl Core {
                 for ctx in waiting {
                     if let Some(context) = self.contexts.get_mut(&ctx)
                         && !context.activated
-                        && !matches!(context.queue.front(), Some(Request::Activate))
+                        && !context.queue.iter().any(|r| matches!(r, Request::Activate))
                     {
+                        context.queue.push_front(Request::RestoreMode);
                         context.queue.push_front(Request::Activate);
                     }
                     self.pump(ctx, out);
@@ -1300,7 +1374,17 @@ impl Core {
                     }
                 }
             }
-            CoreEvent::Host { engine, call } => self.on_host_call(&engine, call, out),
+            CoreEvent::Host {
+                engine,
+                connection_id,
+                call,
+            } => {
+                if self.engines.get(&engine).is_some_and(|s| {
+                    s.connection_id == Some(connection_id) && matches!(s.state, EngineState::Ready)
+                }) {
+                    self.on_host_call(&engine, call, out);
+                }
+            }
             CoreEvent::Reply { ctx, token, reply } => self.on_reply(ctx, token, reply, out),
             // It reads what was changed when it starts again.
             CoreEvent::SettingsClosed { engine } => self.engines.reload(&engine),
@@ -1319,7 +1403,27 @@ impl Core {
             HostCall::SetPopupVisible(visible) => {
                 self.set_engine_visible(engine, visible, out);
             }
-            HostCall::SetStatus(status) => {
+            HostCall::InputMode {
+                ctx,
+                input_method,
+                mode,
+                revision,
+            } => {
+                // Revisions order UI actions against pending key replies. During
+                // restoration a newer UI report may update status, but is not saved
+                // until the ordered restoration completes.
+                if self.contexts.get(&ctx).is_some_and(|c| {
+                    c.activated && c.in_flight.as_ref().is_none_or(|f| !f.timed_out)
+                }) {
+                    self.accept_mode(engine, ctx, input_method, mode, revision);
+                }
+            }
+            HostCall::SetStatus(mut status) => {
+                // Only context-bound confirmations may change the machine-readable mode.
+                status.input_mode = self
+                    .engines
+                    .get(engine)
+                    .and_then(|s| s.status.input_mode.clone());
                 if let Some(slot) = self.engines.get_mut(engine)
                     && slot.status != status
                 {
@@ -1354,6 +1458,7 @@ impl Core {
                 let used = self
                     .engines
                     .native_update(engine, frameworks::FrameworkUpdate::Current(current));
+                self.pump_engine_contexts(engine, out);
                 if listed || used {
                     self.state_changed();
                     self.status_changed();
@@ -1381,7 +1486,20 @@ impl Core {
                     self.state_changed();
                     self.status_changed();
                 }
+                self.pump_engine_contexts(engine, out);
             }
+        }
+    }
+
+    fn pump_engine_contexts(&mut self, engine: &str, out: &mut dyn Frontends) {
+        let ids: Vec<_> = self
+            .contexts
+            .iter()
+            .filter(|(_, c)| c.engine.as_deref() == Some(engine))
+            .map(|(id, _)| *id)
+            .collect();
+        for ctx in ids {
+            self.pump(ctx, out);
         }
     }
 
@@ -1390,6 +1508,7 @@ impl Core {
             debug!(ctx, "discarding a late answer");
             return;
         }
+        let current_method = self.current_method();
         let Some(context) = self.contexts.get_mut(&ctx) else {
             return;
         };
@@ -1413,6 +1532,9 @@ impl Core {
         }
         self.timeouts.remove(&flight.engine);
         let origin = context.origin;
+        let same_app = context.epoch == flight.epoch
+            && context.info.app_id == flight.app
+            && current_method == flight.input_method;
         let (handled, actions) = match reply {
             Reply::Actions(Ok(actions)) => (false, actions),
             Reply::Key(Ok((handled, actions))) => (handled, actions),
@@ -1435,8 +1557,78 @@ impl Core {
                 }
             })
             .collect();
+        let mode_confirmed = flight.mode.as_ref().is_none_or(|wanted| {
+            let reply_confirmation = actions
+                .iter()
+                .filter_map(|action| {
+                    let Action::InputMode {
+                        input_method,
+                        mode,
+                        revision,
+                    } = action
+                    else {
+                        return None;
+                    };
+                    let target = if input_method.is_empty() {
+                        flight.engine.clone()
+                    } else {
+                        format!("{}/{input_method}", flight.engine)
+                    };
+                    (current_method.as_deref() == Some(&target) && *revision > flight.mode_revision)
+                        .then_some((revision, mode))
+                })
+                .max_by_key(|(revision, _)| *revision)
+                .is_some_and(|(_, mode)| mode == wanted);
+            // A deployment/UI thread can report confirmation before the RPC reply.
+            let async_confirmation = self.contexts.get(&ctx).is_some_and(|context| {
+                context.mode_revision > flight.mode_revision
+                    && context.mode.as_ref().is_some_and(|(inner, mode)| {
+                        let target = if inner.is_empty() {
+                            flight.engine.clone()
+                        } else {
+                            format!("{}/{inner}", flight.engine)
+                        };
+                        current_method.as_deref() == Some(&target) && mode == wanted
+                    })
+            });
+            reply_confirmation || async_confirmation
+        });
+        if flight.mode.is_some() && same_app {
+            if let Some(context) = self.contexts.get_mut(&ctx) {
+                context.mode_ready = mode_confirmed;
+                if mode_confirmed {
+                    context.pending_mode = None;
+                }
+            }
+            if !mode_confirmed {
+                self.set_mode_error(Some(tr!(
+                    "{engine} did not confirm input mode {mode}",
+                    engine = flight.engine,
+                    mode = flight.mode.as_deref().unwrap_or_default()
+                )));
+            }
+        }
+        let mut text_actions = Vec::new();
+        for action in actions {
+            match action {
+                Action::InputMode {
+                    input_method,
+                    mode,
+                    revision,
+                } => {
+                    if same_app {
+                        self.accept_mode(&flight.engine, ctx, input_method, mode, revision);
+                    }
+                }
+                other => text_actions.push(other),
+            }
+        }
         // Text must reach the application before a key it did not consume.
-        out.apply_actions(origin, ctx, &actions);
+        out.apply_actions(origin, ctx, &text_actions);
+        if flight.mode.is_some() && same_app && mode_confirmed {
+            self.set_mode_error(None);
+            self.remember_confirmed_mode(ctx);
+        }
         if let Some(key) = flight.key {
             out.finish_key(&key, handled);
         }
@@ -1464,6 +1656,10 @@ impl Core {
             }
             // Keys pass through until the engine is back; it is activated again then.
             context.activated = false;
+            context.mode_ready = false;
+            context.mode_revision = 0;
+            context.mode = None;
+            context.pending_mode = None;
             out.clear_preedit(context.origin, ctx);
             context.queue.retain(|r| matches!(r, Request::Key(..)));
             self.pump(ctx, out);
@@ -1576,6 +1772,18 @@ impl Core {
                 }
                 continue;
             }
+            if matches!(context.queue.front(), Some(Request::RestoreMode))
+                && slot.is_some_and(|s| !s.input_modes.is_empty() && s.wanted_inner.is_some())
+            {
+                if context.hold_key() {
+                    return;
+                }
+                context.queue.pop_front();
+                self.set_mode_error(Some(tr!(
+                    "input method selection did not finish before mode restoration"
+                )));
+                continue;
+            }
             let Some(request) = context.queue.pop_front() else {
                 return;
             };
@@ -1642,6 +1850,9 @@ impl Core {
                     out.hosted_activate(&engine, context.origin, ctx, &context.info);
                 context.waiting_since = Instant::now();
             }
+            Request::RestoreMode => {
+                context.mode_ready = true;
+            }
             Request::Update(_) | Request::Reset => {
                 let mut reset = matches!(request, Request::Reset);
                 if matches!(context.queue.front(), Some(Request::Reset)) {
@@ -1700,7 +1911,138 @@ impl Core {
         true
     }
 
+    /// Accept only a mode tied to the live field, selected method and engine capability.
+    fn accept_mode(
+        &mut self,
+        engine: &str,
+        ctx: ContextId,
+        inner: String,
+        mode: String,
+        revision: u64,
+    ) {
+        let method = if inner.is_empty() {
+            engine.to_owned()
+        } else {
+            format!("{engine}/{inner}")
+        };
+        if self.current_method().as_deref() != Some(&method)
+            || !self
+                .engines
+                .get(engine)
+                .is_some_and(|s| s.input_modes.contains(&mode))
+        {
+            return;
+        }
+        let Some(context) = self.contexts.get_mut(&ctx) else {
+            return;
+        };
+        if context.engine.as_deref() != Some(engine) {
+            return;
+        }
+        // A compositor may report the new app before destroying the old context.
+        if context.info.app_id.is_some()
+            && self.focused_app.is_some()
+            && context.info.app_id != self.focused_app
+        {
+            return;
+        }
+        if revision <= context.mode_revision {
+            return;
+        }
+        context.mode_revision = revision;
+        context.mode = Some((inner.clone(), mode.clone()));
+        let recovered = context.in_flight.is_none()
+            && context.pending_mode.as_ref() == Some(&(method.clone(), mode.clone()));
+        if recovered {
+            context.mode_ready = true;
+            context.pending_mode = None;
+        }
+
+        let status_changed = if let Some(slot) = self.engines.get_mut(engine) {
+            let changed = slot.status.input_mode.as_deref() != Some(&mode)
+                || slot.mode_method.as_deref() != Some(&method);
+            slot.status.input_mode = Some(mode.clone());
+            slot.mode_method = Some(method.clone());
+            changed
+        } else {
+            false
+        };
+        self.remember_confirmed_mode(ctx);
+        if recovered {
+            self.set_mode_error(None);
+        }
+        if status_changed {
+            self.status_changed();
+        }
+    }
+
+    fn remember_confirmed_mode(&mut self, ctx: ContextId) {
+        if !self.remember_apps || !self.remember_mode {
+            return;
+        }
+        let Some(context) = self.contexts.get(&ctx).filter(|c| c.mode_ready) else {
+            return;
+        };
+        let (Some(app), Some(engine), Some((inner, mode))) =
+            (&context.info.app_id, &context.engine, &context.mode)
+        else {
+            return;
+        };
+        let method = if inner.is_empty() {
+            engine.clone()
+        } else {
+            format!("{engine}/{inner}")
+        };
+        if self.current_method().as_deref() != Some(&method) {
+            return;
+        }
+        let modes = self.app_modes.entry(app.clone()).or_default();
+        if modes.get(&method) != Some(mode)
+            || self.app_engines.get(app) != Some(&Some(method.clone()))
+        {
+            modes.insert(method.clone(), mode.clone());
+            self.app_engines.insert(app.clone(), Some(method));
+            self.state_changed();
+        }
+    }
+
+    pub fn input_mode_error(&self) -> Option<&str> {
+        self.mode_error.as_deref()
+    }
+
+    fn set_mode_error(&mut self, error: Option<String>) {
+        if self.mode_error != error {
+            self.mode_error = error;
+            self.status_changed();
+        }
+    }
+
     fn send(&mut self, ctx: ContextId, request: Request) {
+        let wanted_mode = if matches!(request, Request::RestoreMode) {
+            let wanted = self.contexts.get(&ctx).and_then(|c| {
+                let engine = c.engine.as_deref()?;
+                let slot = self.engines.get(engine)?;
+                if !self.remember_apps || !self.remember_mode {
+                    return None;
+                }
+                let app = c.info.app_id.as_ref()?;
+                let method = self.current_method()?;
+                let mode = self.app_modes.get(app)?.get(&method)?;
+                slot.input_modes.contains(mode).then(|| mode.clone())
+            });
+            if wanted.is_none() {
+                if let Some(context) = self.contexts.get_mut(&ctx) {
+                    context.mode_ready = true;
+                }
+                self.remember_confirmed_mode(ctx);
+                return;
+            }
+            self.set_mode_error(None);
+            wanted
+        } else {
+            None
+        };
+        let input_method = self.current_method();
         let Some(context) = self.contexts.get_mut(&ctx) else {
             return;
         };
@@ -1720,12 +2062,27 @@ impl Core {
             self.key_timeout
         };
         let mut key_ref = None;
+        let app = context.info.app_id.clone();
+        let epoch = context.epoch;
+        let mode = wanted_mode.clone();
+        let mode_revision = context.mode_revision;
+        if let (Some(method), Some(mode)) = (&input_method, &wanted_mode) {
+            context.mode_ready = false;
+            context.pending_mode = Some((method.clone(), mode.clone()));
+        }
         match request {
             Request::Activate => {
                 context.activated = true;
                 let info = context.info.to_dict();
                 tokio::task::spawn_local(async move {
                     let reply = Reply::Actions(proxy.activate(ctx, &info).await);
+                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
+                });
+            }
+            Request::RestoreMode => {
+                let mode = wanted_mode.expect("restore without a saved mode returns above");
+                tokio::task::spawn_local(async move {
+                    let reply = Reply::Actions(proxy.set_input_mode(ctx, &mode).await);
                     let _ = events.send(CoreEvent::Reply { ctx, token, reply });
                 });
             }
@@ -1756,6 +2113,11 @@ impl Core {
             deadline: Instant::now() + timeout,
             key: key_ref,
             timed_out: false,
+            app,
+            mode,
+            mode_revision,
+            input_method,
+            epoch,
         });
     }
 
@@ -1822,11 +2184,30 @@ impl Core {
                 return Err(e);
             }
             if let Some(inner) = inner {
+                let changed = self.engines.get(id).is_some_and(|slot| {
+                    slot.wanted_inner.as_deref().or(slot.inner.as_deref()) != Some(&inner)
+                });
                 self.engines.select_inner(id, inner);
                 for context in self.contexts.values_mut() {
                     if context.engine.as_deref() == Some(id) {
                         context.waiting_since = Instant::now();
+                        if changed {
+                            context.epoch += 1;
+                            context.mode_ready = false;
+                            context.mode = None;
+                            context.pending_mode = None;
+                            context.queue.retain(|r| !matches!(r, Request::RestoreMode));
+                            let after_activation = context
+                                .queue
+                                .iter()
+                                .position(|r| matches!(r, Request::Activate))
+                                .map_or(0, |i| i + 1);
+                            context.queue.insert(after_activation, Request::RestoreMode);
+                        }
                     }
+                }
+                if changed && let Some(slot) = self.engines.get_mut(id) {
+                    slot.status.input_mode = None;
                 }
                 self.state_changed();
                 if target.as_deref() == self.current.as_deref() {
@@ -1835,6 +2216,10 @@ impl Core {
             }
         }
         if target == self.current {
+            let ids: Vec<_> = self.contexts.keys().copied().collect();
+            for ctx in ids {
+                self.pump(ctx, out);
+            }
             return Ok(());
         }
         info!(engine = target.as_deref().unwrap_or("direct"), "switching");
@@ -1842,6 +2227,7 @@ impl Core {
             self.last_engine = Some(previous);
         }
         self.current = target.clone();
+        self.mode_error = None;
         out.set_active_engine(target.as_deref().map(Into::into));
 
         let ids: Vec<ContextId> = self.contexts.keys().copied().collect();
@@ -1868,8 +2254,13 @@ impl Core {
             }
             context.queue.retain(|r| matches!(r, Request::Key(..)));
             context.activated = false;
+            context.mode_ready = false;
+            context.mode_revision = 0;
+            context.mode = None;
+            context.pending_mode = None;
             context.engine = target.clone();
             if target.is_some() {
+                context.queue.push_front(Request::RestoreMode);
                 context.queue.push_front(Request::Activate);
             }
             // Activate the new engine now: a hosted input method takes keys only once
@@ -1953,6 +2344,7 @@ impl Core {
             "{}",
             tr!("nothing is remembered for `{app}`", app = app)
         );
+        self.app_modes.remove(app);
         self.state_changed();
         Ok(())
     }
@@ -2082,3 +2474,6 @@ fn parse_hotkeys(config: &Config) -> Vec<Hotkey> {
     }
     hotkeys
 }
+
+#[cfg(test)]
+mod mode_tests;

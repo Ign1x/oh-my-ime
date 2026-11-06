@@ -30,10 +30,26 @@ fn rime() -> Option<TestEngine> {
 /// Waits until Rime has deployed its schemas, the first time a while.
 fn wait_for_rime(env: &TestEnv) -> anyhow::Result<()> {
     wait_until_within(Duration::from_secs(120), "Rime to deploy", || {
-        let list = env.omime(&["list"]).ok()?;
+        let list = env.omime(&["list", "--all"]).ok()?;
         list.contains("rime/double_pinyin_flypy").then_some(())
     })
     .with_context(|| env.daemon_log())
+}
+
+fn wait_for_mode(env: &TestEnv, mode: &str) -> anyhow::Result<()> {
+    wait_until(&format!("Rime to confirm input mode {mode}"), || {
+        env.omime(&["status", "--json"])
+            .ok()?
+            .contains(&format!("\"input_mode\":\"{mode}\""))
+            .then_some(())
+    })
+    .with_context(|| {
+        format!(
+            "status: {:?}\n{}",
+            env.omime(&["status", "--json"]),
+            env.daemon_log()
+        )
+    })
 }
 
 #[test]
@@ -76,6 +92,8 @@ fn rimes_candidates_are_clicked_and_shift_switches_to_letters() -> anyhow::Resul
     env.wait_for_status_starting("rime/luna_pinyin")?;
     let editor = env.editor(&[])?;
 
+    wait_for_mode(&env, "native")?;
+
     // The window opens below the text cursor, which the test editor puts at x = 12,
     // y = 20, height 18; its first candidate is about 40 pixels in.
     env.type_text("zhongguo")?;
@@ -100,10 +118,12 @@ fn rimes_candidates_are_clicked_and_shift_switches_to_letters() -> anyhow::Resul
     // Shift alone switches to English letters, and back.
     env.key(&[], "Shift_L")?;
     env.wait_for_status_starting("rime/luna_pinyin (A)")?;
+    wait_for_mode(&env, "latin")?;
     env.type_text("ok")?;
     editor.wait_for_text("中国ok")?;
     env.key(&[], "Shift_L")?;
     env.wait_for_status_starting("rime/luna_pinyin (中)")?;
+    wait_for_mode(&env, "native")?;
     // So does Rime's menu.
     let menu = env.omime(&["properties"])?;
     assert!(
@@ -112,6 +132,109 @@ fn rimes_candidates_are_clicked_and_shift_switches_to_letters() -> anyhow::Resul
     );
     env.omime(&["activate", "ascii_mode"])?;
     env.wait_for_status_starting("rime/luna_pinyin (A)")?;
+    wait_for_mode(&env, "latin")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_restores_each_apps_mode_before_typing_and_after_restart() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let mut env = TestEnv::start(&[engine], Some("rime"))?;
+    env.configure("[apps]\nremember = true\nremember_mode = true\n")?;
+    wait_for_rime(&env)?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+
+    let chinese = env.editor(&["--app-id", "mode-chat"])?;
+    env.type_text("nihao ")?;
+    chinese.wait_for_text("你好")?;
+    wait_for_mode(&env, "native")?;
+
+    let latin = env.editor(&["--app-id", "mode-terminal"])?;
+    env.key(&[], "Shift_L")?;
+    wait_for_mode(&env, "latin")?;
+    env.type_text("hello")?;
+    latin.wait_for_text("hello")?;
+
+    let mut chinese_text = "你好".to_owned();
+    let mut latin_text = "hello".to_owned();
+    for _ in 0..4 {
+        // Send keys as soon as the focus is routed, without waiting for a mode
+        // confirmation: restoration must run ahead of the first key.
+        env.focus("mode-chat")?;
+        env.type_text("nihao ")?;
+        chinese_text.push_str("你好");
+        chinese.wait_for_text(&chinese_text)?;
+        wait_for_mode(&env, "native")?;
+        env.focus("mode-terminal")?;
+        env.type_text("x")?;
+        latin_text.push('x');
+        latin.wait_for_text(&latin_text)?;
+        wait_for_mode(&env, "latin")?;
+    }
+
+    // The new Rime process defaults to Chinese. Its Activate report must not
+    // replace the terminal's saved Latin mode before the restore request runs.
+    env.restart_daemon()?;
+    wait_for_rime(&env)?;
+    env.wait_for_log("keyboard grabbed")?;
+    wait_for_mode(&env, "latin")?;
+    env.type_text("restart")?;
+    latin_text.push_str("restart");
+    latin.wait_for_text(&latin_text)?;
+    env.focus("mode-chat")?;
+    env.type_text("nihao ")?;
+    chinese_text.push_str("你好");
+    chinese.wait_for_text(&chinese_text)?;
+    wait_for_mode(&env, "native")?;
+
+    // Disabling the option restores shared mode behavior even though per-app
+    // choices remain saved, and does not change the selected Rime schema.
+    env.omime(&["config", "apps.remember_mode", "false"])?;
+    env.focus("mode-terminal")?;
+    env.type_text("nihao ")?;
+    latin_text.push_str("你好");
+    latin.wait_for_text(&latin_text)?;
+    wait_for_mode(&env, "native")?;
+    env.key(&[], "Shift_L")?;
+    wait_for_mode(&env, "latin")?;
+    env.focus("mode-chat")?;
+    env.type_text("plain")?;
+    chinese_text.push_str("plain");
+    chinese.wait_for_text(&chinese_text)?;
+    wait_for_mode(&env, "latin")?;
+    env.wait_for_status_starting("rime/luna_pinyin")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_restores_a_saved_mode_while_deploying_for_the_first_time() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let mut env = TestEnv::prepare(&[engine])?;
+    std::fs::create_dir_all(env.dir().join("config/oh-my-ime"))?;
+    std::fs::create_dir_all(env.dir().join("state/oh-my-ime"))?;
+    std::fs::write(
+        env.dir().join("config/oh-my-ime/config.toml"),
+        "engines = ['rime/luna_pinyin']\n[apps]\nremember = true\nremember_mode = true\n",
+    )?;
+    std::fs::write(
+        env.dir().join("state/oh-my-ime/state.toml"),
+        "current = 'rime'\n[inner]\nrime = 'luna_pinyin'\n[apps]\nmode-terminal = 'rime/luna_pinyin'\n[app_modes.mode-terminal]\n'rime/luna_pinyin' = 'latin'\n",
+    )?;
+    env.launch_daemon()?;
+    // The editor harness waits for the daemon's focus event, so start the daemon
+    // first, then open the field without waiting for Rime's initial deployment.
+    let editor = env.editor(&["--app-id", "mode-terminal"])?;
+    wait_for_rime(&env)?;
+    wait_for_mode(&env, "latin")?;
+    env.type_text("plain")?;
+    editor.wait_for_text("plain")?;
+    let (_, diagnosis) = env.omime_status(&["doctor"])?;
+    assert!(
+        !diagnosis.contains("input mode restoration failed"),
+        "{diagnosis}"
+    );
     Ok(())
 }
 

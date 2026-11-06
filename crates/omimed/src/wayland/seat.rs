@@ -667,6 +667,8 @@ impl SeatSession {
         let mut batch = Batch::default();
         for action in actions {
             match action {
+                // Mode confirmations are consumed by Core, never sent to applications.
+                Action::InputMode { .. } => {}
                 Action::Commit(text) => {
                     batch.commit.push_str(text);
                     batch.preedit = Some(Preedit::default());

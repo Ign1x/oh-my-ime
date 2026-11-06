@@ -26,6 +26,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: python3 scripts/check-translations.py
       - run: python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+      - run: python3 -m unittest discover -s tests/desktop -p 'test_*.py'
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
 
