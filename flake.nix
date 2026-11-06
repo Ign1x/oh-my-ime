@@ -212,15 +212,12 @@
       );
 
       devShells = forAllSystems (pkgs: {
-        # Everything for development, including Hyprland for manual testing.
+        # Add cargo-deny and foot to the shared end-to-end test tools.
         default = shell pkgs (
           with pkgs;
           [
             cargo-deny
             foot
-            grim
-            wlrctl
-            jq
           ]
         );
         # Just enough to build and run the end-to-end tests (used by CI). The Python

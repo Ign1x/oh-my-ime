@@ -5,11 +5,11 @@
 ## 环境
 
 ```sh
-nix develop            # 全部内容，包括用于手动测试的 Hyprland
-nix develop .#e2e      # 只装端到端测试需要的东西（CI 使用）
+nix develop            # 共用测试工具，加上 cargo-deny 和 foot
+nix develop .#e2e      # 共用测试工具，加上 Python/GTK 4（CI 使用）
 ```
 
-这些开发环境提供原生库、可无头运行的 sway（含 XWayland）、wtype、grim、dbus-daemon、Fcitx 5 与 IBus。Rust 来自 rustup 和 `rust-toolchain.toml`。
+两个开发环境都提供端到端测试所需的原生库、Hyprland、可无头运行的 sway（含 XWayland）、wtype、grim、dbus-daemon、Fcitx 5 与 IBus。默认环境额外提供 cargo-deny 和 foot；e2e 环境额外提供带 PyGObject 的 Python 和 GTK 4，用于测试 Python 引擎示例。Rust 来自 rustup 和 `rust-toolchain.toml`。
 
 ## 检查
 

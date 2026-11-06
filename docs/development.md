@@ -5,12 +5,14 @@ English | [简体中文](zh-CN/development.md)
 ## Environment
 
 ```sh
-nix develop            # everything, including Hyprland for manual tests
-nix develop .#e2e      # only what the end-to-end tests need (used by CI)
+nix develop            # shared test tools plus cargo-deny and foot
+nix develop .#e2e      # shared test tools plus Python/GTK 4 (used by CI)
 ```
 
-The shells provide the native libraries, a headless-capable sway with XWayland, wtype,
-grim, dbus-daemon, Fcitx 5 and IBus. Rust comes from rustup and `rust-toolchain.toml`.
+Both shells provide the native libraries, Hyprland, a headless-capable sway with
+XWayland, wtype, grim, dbus-daemon, Fcitx 5 and IBus for the end-to-end tests. The default
+shell adds cargo-deny and foot; the e2e shell adds Python with PyGObject and GTK 4
+for the Python engine example's test. Rust comes from rustup and `rust-toolchain.toml`.
 
 ## Checks
 
