@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Reselecting the active Rime schema preserves its Chinese/Latin mode and ongoing
+  composition. This also prevents a focus change from unexpectedly resetting Rime
+  to Chinese when application input-method memory is enabled without mode memory.
+
 ### Added
 
 - `omime choose` opens a keyboard and pointer input-method chooser. Browse without

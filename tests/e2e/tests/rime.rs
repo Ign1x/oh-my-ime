@@ -432,3 +432,26 @@ fn rimes_settings_cancel_and_require_a_schema() -> anyhow::Result<()> {
     editor.wait_for_text("中国")?;
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn reselecting_the_active_rime_schema_keeps_its_mode_and_composition() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let env = TestEnv::start(&[engine], Some("rime"))?;
+    wait_for_rime(&env)?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+    let editor = env.editor(&[])?;
+    env.key(&[], "Shift_L")?;
+    wait_for_mode(&env, "latin")?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+    env.type_text("plain")?;
+    editor.wait_for_text("plain")?;
+    wait_for_mode(&env, "latin")?;
+    env.key(&[], "Shift_L")?;
+    wait_for_mode(&env, "native")?;
+    env.type_text("zhong")?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+    env.type_text("guo ")?;
+    editor.wait_for_text("plain中国")?;
+    Ok(())
+}

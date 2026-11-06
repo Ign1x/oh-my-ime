@@ -605,7 +605,13 @@ impl Engine for RimeEngine {
         state.schema = Some(id.to_owned());
         if let Some(rime) = &state.rime {
             for field in state.fields.values() {
-                if let Some(session) = field.session {
+                if let Some(session) = field.session
+                    && rime
+                        .status(session)
+                        .is_none_or(|status| status.schema_id != id)
+                {
+                    // Selecting even the current schema resets librime's options
+                    // and composition. Focus restoration can repeat this request.
                     rime.select_schema(session, id);
                 }
             }
