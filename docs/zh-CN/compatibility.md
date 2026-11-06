@@ -29,13 +29,6 @@ foot/xterm 的预编辑外观与焦点行为仍未测试。GTK 3/4 应用、Qt 5
 待测行；Firefox 通过不代表其他 GTK 应用通过。既有 WPS 问题仍记录在
 [应用指南](hyprland.md)中。
 
-## 开发构建回归
-
-当前 M1 开发构建也通过了上述 Firefox、foot 和 xterm 的 8 项输入场景；
-[独立记录](../../tests/desktop/results/2026-11-06-development.json)保留了每个构建的
-二进制 SHA-256。首次运行未在 PATH 中找到 foot/xterm，第二次用已安装程序的明确路径
-完成了它们的验收。此记录不扩大表格中的验收范围。
-
 ## 运行隔离探针
 
 先构建工作区，得到虚拟键盘测试工具。桌面探针只依赖 Python 标准库，不需要 `wayland-info`：

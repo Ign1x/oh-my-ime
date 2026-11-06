@@ -32,14 +32,6 @@ GTK 3/4 applications, Qt 5/6 applications, Chromium, VS Code, WeChat and WPS rem
 does not accept other GTK applications. Existing WPS findings remain documented in
 [the application guide](hyprland.md#application-routes-and-verification).
 
-## Development build regression
-
-The M1 development binaries also passed the eight input scenarios above across
-Firefox, foot and xterm. The [separate record](../tests/desktop/results/2026-11-06-development.json)
-identifies the binaries by SHA-256. The first run could not find foot/xterm on PATH;
-the second used explicit installed paths and passed their checks. This does not
-extend acceptance beyond the scenarios listed above.
-
 ## Run a private probe
 
 Build the workspace for the virtual keyboard test tool. The desktop probe itself uses

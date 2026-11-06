@@ -52,7 +52,7 @@ rustPlatform.buildRustPackage {
       ../crates
       ../engines
       # A workspace member: cargo reads its manifest even though it is not built.
-      ../tests
+      ../tests/e2e
       ../data
     ];
   };

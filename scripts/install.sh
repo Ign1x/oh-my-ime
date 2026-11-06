@@ -32,10 +32,10 @@ if [ -n "${OMIME_INSTALL_BIN_DIR:-}" ]; then
   BUILD_BIN=$OMIME_INSTALL_BIN_DIR
 else
   if pkg-config --exists rime 2>/dev/null; then
-    cargo build --release --locked --workspace --bins
+    cargo build --release --locked --workspace --bins --exclude omime-e2e
   else
     echo "librime is not installed: building without the Rime engine." >&2
-    cargo build --release --locked --workspace --bins --exclude omime-rime
+    cargo build --release --locked --workspace --bins --exclude omime-e2e --exclude omime-rime
   fi
   BUILD_BIN="${CARGO_TARGET_DIR:-target}/release"
 fi
