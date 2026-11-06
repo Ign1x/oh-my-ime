@@ -27,6 +27,9 @@ pub enum ControlRequest {
     /// Every input method, whether it is enabled, and the one in use.
     AllInputMethods(oneshot::Sender<AllInputMethods>),
     Status(oneshot::Sender<Dict>),
+    /// App id and current method before a chooser takes focus.
+    ChoiceContext(oneshot::Sender<(String, String)>),
+    Choose(String, String, oneshot::Sender<Result<(), String>>),
     /// `None` selects direct input.
     Switch(
         Option<String>,
@@ -121,6 +124,24 @@ impl ControlObject {
     /// method in use.
     async fn status(&self) -> zbus::fdo::Result<Dict> {
         self.ask(ControlRequest::Status).await
+    }
+
+    #[zbus(out_args("app", "input_method"))]
+    async fn choice_context(&self) -> zbus::fdo::Result<(String, String)> {
+        self.ask(ControlRequest::ChoiceContext).await
+    }
+
+    /// Applies an explicit chooser selection to the application captured before
+    /// its layer surface took focus. Empty input_method selects direct input.
+    async fn choose_input_method(
+        &self,
+        input_method: String,
+        app: String,
+    ) -> zbus::fdo::Result<()> {
+        failed(
+            self.ask(|reply| ControlRequest::Choose(input_method, app, reply))
+                .await?,
+        )
     }
 
     /// Switches to `engine`, or to an input method inside a hosted framework

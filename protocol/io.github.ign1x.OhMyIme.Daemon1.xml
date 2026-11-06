@@ -99,6 +99,24 @@
       <arg name="input_method" type="s" direction="in"/>
     </method>
 
+    <!-- Snapshot before an explicit chooser takes keyboard focus: application id
+         (empty if unknown), current input method (empty for direct input). -->
+    <method name="ChoiceContext">
+      <arg name="app" type="s" direction="out"/>
+      <arg name="input_method" type="s" direction="out"/>
+    </method>
+
+    <!-- Selects an enabled method for the application captured by ChoiceContext.
+         Fails if another known application now has focus or the method was disabled.
+         Saves the choice for that app when apps.remember is on, even while a modal
+         layer surface makes the focused app unknown. Emits Switched reason "menu".
+         An empty input_method selects direct input. Browsing/cancelling calls neither
+         Switch nor this method. -->
+    <method name="ChooseInputMethod">
+      <arg name="input_method" type="s" direction="in"/>
+      <arg name="app" type="s" direction="in"/>
+    </method>
+
     <!-- Switches to the next enabled input method. -->
     <method name="Next"/>
 

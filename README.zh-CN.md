@@ -207,6 +207,7 @@ omime setup --engine sparkle --take-over --start
 | 下一个输入法 | `Ctrl+Shift+Space` 或 `omime next` |
 | 指定输入法 | `omime list`，然后 `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`；或使用托盘菜单 |
 | 设置 | `omime settings`、托盘菜单里的“设置…”，或启动器里的“oh-my-ime 设置” |
+| 交互式选择器（开发版本） | `omime choose`：方向键浏览，Enter/点击确认，Esc 取消 |
 | 管理引擎 | `omime engines`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
 | 状态栏 | 托盘项（StatusNotifierItem）；`omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
 

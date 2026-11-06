@@ -668,6 +668,43 @@ impl Core {
         self.current.as_deref()
     }
 
+    pub fn choice_context(&self) -> (String, String) {
+        (
+            self.focused_app.clone().unwrap_or_default(),
+            self.current_method().unwrap_or_default(),
+        )
+    }
+
+    pub fn choose_input_method(
+        &mut self,
+        method: String,
+        app: String,
+        out: &mut dyn Frontends,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            method.is_empty() || self.input_methods().iter().any(|m| m.id == method),
+            "{}",
+            tr!("the selected input method is no longer enabled")
+        );
+        // A layer surface can make the focused app unknown. It must never apply a
+        // choice to a different application that gained focus in the meantime.
+        anyhow::ensure!(
+            self.focused_app
+                .as_deref()
+                .is_none_or(|focused| focused == app),
+            "{}",
+            tr!("the focused application changed; open the chooser again")
+        );
+        let target = (!method.is_empty()).then_some(method);
+        self.set_current(target.clone(), out)?;
+        if self.remember_apps && !app.is_empty() {
+            self.app_engines.insert(app, target);
+            self.state_changed();
+        }
+        self.switched(SwitchReason::Menu);
+        Ok(())
+    }
+
     /// What the tray item of the current engine shows, for hosted engines that have one.
     pub fn current_tray(&self) -> Option<&sni_watcher::HostedTray> {
         self.current

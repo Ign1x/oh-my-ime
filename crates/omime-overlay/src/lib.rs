@@ -5,14 +5,16 @@
 //! [`install`] makes the overlay Slint's platform. The application then creates its
 //! Slint component, shows it (`ComponentHandle::show`) and runs `slint::run_event_loop`.
 //! The component appears on the screen when the application calls [`Overlay::show`]
-//! with the size it needs, and goes away with [`Overlay::hide`]. The keyboard stays
-//! where it is, with the application the user types in. With [`Pointer::PassThrough`]
+//! with the size it needs, and goes away with [`Overlay::hide`]. Ordinary overlays keep
+//! the keyboard with the application; [`install_modal`] takes it while shown.
+//! With [`Pointer::PassThrough`]
 //! (the switcher) the pointer reaches what is below the surface; with [`Pointer::Take`]
 //! (a floating panel) the component gets it: hovering, clicks and scrolling.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType, TargetPixel,
@@ -45,8 +47,9 @@ use smithay_client_toolkit::{
 };
 use tracing::{debug, warn};
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
-use wayland_client::{Connection, Proxy as _, QueueHandle};
+use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
+use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle, WEnum};
+use xkbcommon::xkb;
 
 /// Where the overlay is on the output the compositor puts it on.
 ///
@@ -111,6 +114,21 @@ impl Overlay {
 /// placed by `placement`, doing with the pointer what `pointer` says. Call it before
 /// creating any Slint component.
 pub fn install(namespace: &str, placement: Placement, pointer: Pointer) -> Result<Overlay, Error> {
+    install_with_keyboard(namespace, placement, pointer, false)
+}
+
+/// A modal overlay: takes the keyboard only while shown. Losing keyboard focus
+/// requests that the component close. Ordinary overlays remain non-focusable.
+pub fn install_modal(namespace: &str, placement: Placement) -> Result<Overlay, Error> {
+    install_with_keyboard(namespace, placement, Pointer::Take, true)
+}
+
+fn install_with_keyboard(
+    namespace: &str,
+    placement: Placement,
+    pointer: Pointer,
+    modal: bool,
+) -> Result<Overlay, Error> {
     let conn = Connection::connect_to_env()?;
     let (globals, queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
@@ -147,6 +165,8 @@ pub fn install(namespace: &str, placement: Placement, pointer: Pointer) -> Resul
         seats: SeatState::new(&globals, &qh),
         pointers: Vec::new(),
         pointer,
+        modal,
+        keyboards: Vec::new(),
         cursor_shapes,
         outputs: OutputState::new(&globals, &qh),
         compositor,
@@ -230,6 +250,7 @@ impl slint::platform::Platform for OverlayPlatform {
         loop {
             slint::platform::update_timers_and_animations();
             state.follow(self.wanted.get());
+            state.repeat_keys();
             state.draw();
             if let Err(e) = state.conn.flush() {
                 return Err(PlatformError::Other(format!(
@@ -242,7 +263,13 @@ impl slint::platform::Platform for OverlayPlatform {
             // While something moves, the frame callback wakes the loop for the next
             // frame; timers wake it in any case, also when the compositor sends no
             // frame callbacks (its outputs are off).
-            let timeout = slint::platform::duration_until_next_timer_update();
+            let timeout = match (
+                slint::platform::duration_until_next_timer_update(),
+                state.repeat_deadline(),
+            ) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
             event_loop
                 .dispatch(timeout, &mut state)
                 .map_err(|e| PlatformError::Other(format!("the event loop failed: {e}")))?;
@@ -290,6 +317,8 @@ struct State {
     /// takes the pointer.
     pointers: Vec<(wl_pointer::WlPointer, Option<WpCursorShapeDeviceV1>)>,
     pointer: Pointer,
+    modal: bool,
+    keyboards: Vec<Keyboard>,
     cursor_shapes: Option<CursorShapeManager>,
     outputs: OutputState,
     compositor: CompositorState,
@@ -327,6 +356,10 @@ impl State {
                 self.requested = None;
                 self.configured = false;
                 self.frame_pending = false;
+                for keyboard in &mut self.keyboards {
+                    keyboard.repeat = None;
+                    keyboard.focused = false;
+                }
             }
             (Some(size), None) => self.create(size),
             (Some(size), Some(layer)) => {
@@ -374,7 +407,11 @@ impl State {
             placement.left.unwrap_or(0),
         );
         layer.set_size(width, height);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_keyboard_interactivity(if self.modal {
+            KeyboardInteractivity::Exclusive
+        } else {
+            KeyboardInteractivity::None
+        });
         if self.pointer == Pointer::PassThrough {
             // An empty input region: clicks go through.
             match Region::new(&self.compositor) {
@@ -514,6 +551,11 @@ impl LayerShellHandler for State {
         self.requested = None;
         self.configured = false;
         self.frame_pending = false;
+        if self.modal {
+            self.window
+                .window()
+                .dispatch_event(WindowEvent::CloseRequested);
+        }
     }
 
     fn configure(
@@ -567,6 +609,18 @@ impl SeatHandler for State {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard && self.modal {
+            self.keyboards.push(Keyboard {
+                object: seat.get_keyboard(qh, seat.clone()),
+                state: None,
+                focused: false,
+                modifiers: [false; 4],
+                rate: 0,
+                delay: 0,
+                repeat: None,
+            });
+            return;
+        }
         if capability != Capability::Pointer || self.pointer != Pointer::Take {
             return;
         }
@@ -589,6 +643,22 @@ impl SeatHandler for State {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard {
+            self.keyboards.retain(|keyboard| {
+                if keyboard.object.data::<wl_seat::WlSeat>() == Some(&seat) {
+                    if keyboard.focused {
+                        self.window
+                            .window()
+                            .dispatch_event(WindowEvent::CloseRequested);
+                    }
+                    keyboard.object.release();
+                    false
+                } else {
+                    true
+                }
+            });
+            return;
+        }
         if capability != Capability::Pointer {
             return;
         }
@@ -606,7 +676,10 @@ impl SeatHandler for State {
         });
     }
 
-    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+    fn remove_seat(&mut self, conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        self.remove_capability(conn, qh, seat.clone(), Capability::Pointer);
+        self.remove_capability(conn, qh, seat, Capability::Keyboard);
+    }
 }
 
 impl PointerHandler for State {
@@ -666,6 +739,204 @@ impl PointerHandler for State {
                     });
                 }
             }
+        }
+    }
+}
+
+/// Keyboard state belongs to its seat; no keyboard is bound for passive overlays.
+struct Keyboard {
+    object: wl_keyboard::WlKeyboard,
+    state: Option<xkb::State>,
+    focused: bool,
+    modifiers: [bool; 4],
+    rate: u32,
+    delay: u32,
+    repeat: Option<(u32, slint::SharedString, Instant)>,
+}
+
+impl Keyboard {
+    fn sync_modifiers(&mut self, window: &slint::Window) {
+        use slint::platform::Key;
+        for (i, (name, key)) in [
+            ("Shift", Key::Shift),
+            ("Control", Key::Control),
+            ("Mod1", Key::Alt),
+            ("Mod4", Key::Meta),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let active = self.focused
+                && self
+                    .state
+                    .as_ref()
+                    .is_some_and(|s| s.mod_name_is_active(name, xkb::STATE_MODS_EFFECTIVE));
+            if active != self.modifiers[i] {
+                self.modifiers[i] = active;
+                window.dispatch_event(if active {
+                    WindowEvent::KeyPressed { text: key.into() }
+                } else {
+                    WindowEvent::KeyReleased { text: key.into() }
+                });
+            }
+        }
+    }
+}
+
+impl State {
+    fn repeat_deadline(&self) -> Option<Duration> {
+        self.keyboards
+            .iter()
+            .filter_map(|k| {
+                k.repeat
+                    .as_ref()
+                    .map(|(_, _, at)| at.saturating_duration_since(Instant::now()))
+            })
+            .min()
+    }
+
+    fn repeat_keys(&mut self) {
+        for keyboard in &mut self.keyboards {
+            if let Some((_, text, at)) = &mut keyboard.repeat
+                && keyboard.focused
+                && *at <= Instant::now()
+            {
+                self.window
+                    .window()
+                    .dispatch_event(WindowEvent::KeyPressRepeated { text: text.clone() });
+                *at =
+                    Instant::now() + Duration::from_millis(1000 / u64::from(keyboard.rate.max(1)));
+            }
+        }
+    }
+}
+
+fn key_text(state: &xkb::State, key: u32) -> slint::SharedString {
+    use slint::platform::Key;
+    let code = xkb::Keycode::new(key + 8);
+    match state.key_get_one_sym(code).raw() {
+        xkb::keysyms::KEY_Escape => Key::Escape.into(),
+        xkb::keysyms::KEY_Return | xkb::keysyms::KEY_KP_Enter => Key::Return.into(),
+        xkb::keysyms::KEY_Up => Key::UpArrow.into(),
+        xkb::keysyms::KEY_Down => Key::DownArrow.into(),
+        xkb::keysyms::KEY_Left => Key::LeftArrow.into(),
+        xkb::keysyms::KEY_Right => Key::RightArrow.into(),
+        xkb::keysyms::KEY_Home => Key::Home.into(),
+        xkb::keysyms::KEY_End => Key::End.into(),
+        xkb::keysyms::KEY_Page_Up => Key::PageUp.into(),
+        xkb::keysyms::KEY_Page_Down => Key::PageDown.into(),
+        xkb::keysyms::KEY_Tab | xkb::keysyms::KEY_ISO_Left_Tab => Key::Tab.into(),
+        xkb::keysyms::KEY_Shift_L | xkb::keysyms::KEY_Shift_R => Key::Shift.into(),
+        xkb::keysyms::KEY_Control_L | xkb::keysyms::KEY_Control_R => Key::Control.into(),
+        xkb::keysyms::KEY_Alt_L | xkb::keysyms::KEY_Alt_R => Key::Alt.into(),
+        _ => state.key_get_utf8(code).into(),
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, wl_seat::WlSeat> for State {
+    fn event(
+        state: &mut Self,
+        object: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &wl_seat::WlSeat,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let ours = state.layer.as_ref().map(|l| l.wl_surface().clone());
+        let Some(keyboard) = state.keyboards.iter_mut().find(|k| &k.object == object) else {
+            return;
+        };
+        let window = state.window.window();
+        match event {
+            wl_keyboard::Event::Keymap {
+                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+                fd,
+                size,
+            } => {
+                use std::io::Read as _;
+                let mut bytes = Vec::new();
+                let file = std::fs::File::from(fd);
+                keyboard.state = None;
+                keyboard.repeat = None;
+                if size <= 16 * 1024 * 1024
+                    && file.take(u64::from(size)).read_to_end(&mut bytes).is_ok()
+                {
+                    while bytes.last() == Some(&0) {
+                        bytes.pop();
+                    }
+                    if let Ok(text) = String::from_utf8(bytes) {
+                        keyboard.state = xkb::Keymap::new_from_string(
+                            &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+                            text,
+                            xkb::KEYMAP_FORMAT_TEXT_V1,
+                            xkb::KEYMAP_COMPILE_NO_FLAGS,
+                        )
+                        .map(|k| xkb::State::new(&k));
+                    }
+                }
+            }
+            wl_keyboard::Event::Enter { surface, .. } if Some(&surface) == ours.as_ref() => {
+                keyboard.focused = true;
+                window.dispatch_event(WindowEvent::WindowActiveChanged(true));
+                keyboard.sync_modifiers(window);
+                debug!("overlay keyboard focused");
+            }
+            wl_keyboard::Event::Leave { surface, .. } if Some(&surface) == ours.as_ref() => {
+                keyboard.focused = false;
+                keyboard.repeat = None;
+                keyboard.sync_modifiers(window);
+                window.dispatch_event(WindowEvent::WindowActiveChanged(false));
+                window.dispatch_event(WindowEvent::CloseRequested);
+            }
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
+                if let Some(xkb) = &mut keyboard.state {
+                    xkb.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                }
+                keyboard.sync_modifiers(window);
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                keyboard.rate = rate.clamp(0, 100) as u32;
+                keyboard.delay = delay.max(0) as u32;
+                if rate <= 0 {
+                    keyboard.repeat = None;
+                }
+            }
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(pressed),
+                ..
+            } if keyboard.focused => {
+                let Some(xkb) = &keyboard.state else {
+                    return;
+                };
+                let text = key_text(xkb, key);
+                if text.is_empty() {
+                    return;
+                }
+                if pressed == wl_keyboard::KeyState::Pressed {
+                    if keyboard.rate > 0 && xkb.get_keymap().key_repeats(xkb::Keycode::new(key + 8))
+                    {
+                        keyboard.repeat = Some((
+                            key,
+                            text.clone(),
+                            Instant::now() + Duration::from_millis(u64::from(keyboard.delay)),
+                        ));
+                    }
+                    window.dispatch_event(WindowEvent::KeyPressed { text });
+                } else {
+                    if keyboard.repeat.as_ref().is_some_and(|(k, _, _)| *k == key) {
+                        keyboard.repeat = None;
+                    }
+                    window.dispatch_event(WindowEvent::KeyReleased { text });
+                }
+            }
+            _ => {}
         }
     }
 }

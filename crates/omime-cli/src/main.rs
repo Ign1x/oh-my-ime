@@ -29,6 +29,7 @@ Commands:
                    `fcitx5/shuangpin` (`direct` for no input method)
   next             Switch to the next input method
   toggle           Switch between direct input and the last engine
+  choose           Open the interactive input method chooser
   enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)
   disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)
   settings [<ENGINE>]
@@ -106,6 +107,7 @@ enum Command {
     },
     /// Opens oh-my-ime's settings, `omime-settings`, which waits for omimed itself.
     OwnSettings,
+    Choose,
     Setup(setup::Options),
 }
 
@@ -154,6 +156,7 @@ fn parse(args: &[String]) -> anyhow::Result<Option<Command>> {
             Command::Doctor { app: Some(pid) }
         }
         ["settings"] => Command::OwnSettings,
+        ["choose"] => Command::Choose,
         ["setup", rest @ ..] => Command::Setup(setup::Options::parse(rest)?),
         ["status", "--watch"] => Command::Watch { json: false },
         ["status", "--json", "--watch"] | ["status", "--watch", "--json"] => {
@@ -291,6 +294,7 @@ async fn run(command: Command) -> anyhow::Result<ExitCode> {
         Command::Setup(options) => setup::run(options).await?,
         Command::Daemon(command) => run_daemon(command).await?,
         Command::OwnSettings => return Err(open_own_settings()),
+        Command::Choose => return Err(open_chooser()),
         Command::Doctor { app } => {
             let clean = doctor::run(app).await?;
             return Ok(if clean {
@@ -314,6 +318,17 @@ fn open_own_settings() -> anyhow::Error {
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from(PROGRAM));
     let error = std::process::Command::new(&program).exec();
+    anyhow::Error::new(error).context(tr!("cannot run {arg0}", arg0 = program.display()))
+}
+
+fn open_chooser() -> anyhow::Error {
+    use std::os::unix::process::CommandExt as _;
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("omime-panel")))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("omime-panel"));
+    let error = std::process::Command::new(&program).arg("--choose").exec();
     anyhow::Error::new(error).context(tr!("cannot run {arg0}", arg0 = program.display()))
 }
 

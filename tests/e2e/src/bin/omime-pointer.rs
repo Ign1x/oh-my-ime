@@ -1,7 +1,7 @@
 //! `omime-pointer` — move a virtual pointer to a point on an output and click.
 //!
 //! ```text
-//! omime-pointer <OUTPUT> <X> <Y> [left|right|middle]
+//! omime-pointer <OUTPUT> <X> <Y> [left|right|middle|scroll-up|scroll-down]
 //! ```
 //!
 //! Unlike one-shot tools, the virtual pointer lives for the whole sequence, so the
@@ -97,10 +97,17 @@ fn main() -> anyhow::Result<()> {
     let (output_name, x, y, button) = match args.as_slice() {
         [o, x, y] => (o, x.parse::<u32>()?, y.parse::<u32>()?, None),
         [o, x, y, b] => (o, x.parse()?, y.parse()?, Some(b.as_str())),
-        _ => bail!("usage: omime-pointer <OUTPUT> <X> <Y> [left|right|middle]"),
+        _ => {
+            bail!("usage: omime-pointer <OUTPUT> <X> <Y> [left|right|middle|scroll-up|scroll-down]")
+        }
+    };
+    let scroll = match button {
+        Some("scroll-up") => Some(-15.0),
+        Some("scroll-down") => Some(15.0),
+        _ => None,
     };
     let button = match button {
-        None => None,
+        None | Some("scroll-up" | "scroll-down") => None,
         Some("left") => Some(BTN_LEFT),
         Some("right") => Some(BTN_RIGHT),
         Some("middle") => Some(BTN_MIDDLE),
@@ -142,6 +149,16 @@ fn main() -> anyhow::Result<()> {
     pointer.motion_absolute(1, x, y, width, height);
     pointer.frame();
     step(&mut app, &mut queue, 200);
+    if let Some(amount) = scroll {
+        pointer.axis_source(wayland_client::protocol::wl_pointer::AxisSource::Wheel);
+        pointer.axis(
+            2,
+            wayland_client::protocol::wl_pointer::Axis::VerticalScroll,
+            amount,
+        );
+        pointer.frame();
+        step(&mut app, &mut queue, 300);
+    }
     if let Some(button) = button {
         pointer.button(
             2,

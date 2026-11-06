@@ -212,6 +212,7 @@ and systemd session management.
 | Next input method | `Ctrl+Shift+Space` or `omime next` |
 | Pick an input method | `omime list`, then `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`; or the tray menu |
 | Settings | `omime settings`, "Settings…" in the tray menu, or "oh-my-ime Settings" in your launcher |
+| Interactive chooser (development) | `omime choose`: arrows to browse, Enter/click to select, Esc to cancel |
 | Manage engines | `omime engines`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
 | Status bars | the tray item (StatusNotifierItem); `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
 

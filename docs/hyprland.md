@@ -224,6 +224,26 @@ enabled = false
 
 ### Switcher
 
+On the development branch after v0.4.0, `omime choose` opens an explicit chooser:
+use arrows or Tab/Shift+Tab to browse, Enter/Space or a click to select, and Esc to
+cancel. Long lists support scrolling, PageUp/PageDown and Home/End. Browsing does
+not change the input method; confirming remembers the selection for the original
+application when `[apps] remember` is enabled. The chooser closes on focus loss or
+daemon exit. Repeating the command while it is open keeps a single chooser.
+
+Bind it in the compositor to open it even outside a text field, for example in a
+Hyprland `.conf` file:
+
+```ini
+bind = SUPER, Space, exec, omime choose
+```
+
+The chooser uses a keyboard-focusable layer surface named `omime-chooser`, on the
+output selected by the compositor, and works even with `[panel] enabled = false`.
+Opening it leaves the active text field, so its current composition follows the
+engine's normal focus-loss behavior. The existing switching shortcuts still apply
+their selections immediately and use the passive notification below.
+
 When you switch with the hotkeys, or with `omime switch`, `next` and `toggle` (from a key
 binding of your own, say), the input methods show for a moment at the bottom of the
 screen, the one now in use highlighted: the switcher, `omime-panel`, which omimed starts.

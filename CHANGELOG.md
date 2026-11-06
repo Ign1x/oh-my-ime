@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `omime choose` opens a keyboard and pointer input-method chooser. Browse without
+  changing the active method, confirm with Enter or a click, or cancel with Escape.
+  Lists scroll, follow enabled-method changes, and preserve the original app's
+  remembered choice. The modal overlay releases keyboard focus when it closes;
+  existing immediate switches and their passive notifications keep their behavior.
 - Optional per-application input-mode memory: enable `apps.remember` and
   `apps.remember_mode` to keep Rime Chinese in one application and Latin letters in
   another, including after restarting. The mode is restored before queued keys;

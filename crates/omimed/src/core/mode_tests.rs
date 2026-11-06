@@ -505,3 +505,24 @@ fn schema_selection_confirmation_releases_waiting_mode_restoration() {
     );
     assert!(core.engines.get("rime").unwrap().wanted_inner.is_none());
 }
+
+#[test]
+fn chooser_rejects_disabled_methods_and_a_different_focused_application() {
+    let mut core = mode_core();
+    let mut out = TestFrontends::default();
+    assert!(
+        core.choose_input_method("rime/missing".into(), "chat".into(), &mut out)
+            .is_err()
+    );
+    assert!(
+        core.choose_input_method(String::new(), "terminal".into(), &mut out)
+            .is_err()
+    );
+    assert_eq!(core.current(), Some("rime"));
+    core.focused_app = None;
+    core.contexts.clear();
+    core.choose_input_method(String::new(), "chat".into(), &mut out)
+        .unwrap();
+    assert_eq!(core.current(), None);
+    assert_eq!(core.app_engines.get("chat"), Some(&None));
+}

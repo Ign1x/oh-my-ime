@@ -12,6 +12,7 @@ repository.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wayland-client.workspace = true
+xkbcommon.workspace = true
 # Slint is used under its royalty-free license, as in Sparkle; only the software
 # renderer: no winit, no GPU.
 slint = { version = "1.16", default-features = false, features = [

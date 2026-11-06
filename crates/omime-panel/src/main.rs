@@ -3,6 +3,8 @@
 //! screen, the one now in use highlighted, as desktops do. omimed starts it with
 //! `[panel] enabled`; it learns of switches from the control API's `Switched`.
 
+mod chooser;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -91,6 +93,13 @@ const BOTTOM_MARGIN: i32 = 120;
     default_path = "/io/github/ign1x/OhMyIme"
 )]
 trait Daemon {
+    fn choice_context(&self) -> zbus::Result<(String, String)>;
+    fn choose_input_method(&self, input_method: &str, app: &str) -> zbus::Result<()>;
+    #[zbus(signal)]
+    fn input_methods_changed(&self) -> zbus::Result<()>;
+    #[zbus(signal)]
+    fn status_changed(&self, status: HashMap<String, OwnedVariant>) -> zbus::Result<()>;
+
     fn input_methods(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     #[zbus(signal)]
@@ -140,6 +149,9 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--choose") {
+        return chooser::run();
+    }
     let overlay = omime_overlay::install(
         "omime-switcher",
         Placement {

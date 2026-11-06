@@ -173,6 +173,21 @@ enabled = false
 
 ### 切换浮层
 
+v0.4.0 之后的开发版本可用 `omime choose` 打开交互式选择器：方向键或 Tab/Shift+Tab
+浏览，Enter/空格或鼠标点击确认，Esc 取消。长列表支持滚轮、PageUp/PageDown 和
+Home/End。浏览时不改变输入法；开启 `[apps] remember` 后，确认会记到打开选择器前的
+应用。失去焦点或守护进程退出时自动关闭，重复运行命令不会打开多个选择器。
+
+可绑定合成器快捷键，在未输入文字时也能打开，例如 Hyprland 的 `.conf` 配置：
+
+```ini
+bind = SUPER, Space, exec, omime choose
+```
+
+选择器使用名为 `omime-chooser`、可接收键盘焦点的图层窗口，由合成器选择显示器；
+即使 `[panel] enabled = false` 也可使用。打开时会离开原输入框，尚未上屏的组合内容
+按引擎原有的失焦规则处理。现有切换快捷键仍然立即生效，并使用下面的被动提示。
+
 用热键切换，或者用 `omime switch`、`next` 和 `toggle`（比如来自你自己的按键绑定）切换时，屏幕下方会短暂显示输入法，并高亮刚切换到的那个：这就是切换浮层 `omime-panel`，由 omimed 启动。从托盘菜单切换，以及启用 `[apps] remember` 后随应用切换时，不会显示它。它是命名空间为 `omime-switcher` 的图层表面，可用于合成器规则；要关掉它：
 
 ```toml

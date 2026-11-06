@@ -575,6 +575,16 @@ impl Daemon {
                     self.core.current_status().as_ref(),
                 ));
             }
+            ControlRequest::ChoiceContext(reply) => {
+                let _ = reply.send(self.core.choice_context());
+            }
+            ControlRequest::Choose(method, app, reply) => {
+                let _ = reply.send(result(self.core.choose_input_method(
+                    method,
+                    app,
+                    &mut Outputs::new(frontend, &mut self.fcitx, self.xim.as_mut()),
+                )));
+            }
             ControlRequest::Switch(target, reason, reply) => {
                 let _ = reply.send(result(self.core.switch_to(
                     target,
