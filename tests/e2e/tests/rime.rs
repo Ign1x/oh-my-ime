@@ -1,6 +1,7 @@
 //! End-to-end tests of the Rime engine, `omime-rime`, with the Rime data of the dev
 //! shell (`$OMIME_RIME_SHARED_DATA`). See `typing.rs` for how to run them.
 
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -34,6 +35,181 @@ fn wait_for_rime(env: &TestEnv) -> anyhow::Result<()> {
         list.contains("rime/double_pinyin_flypy").then_some(())
     })
     .with_context(|| env.daemon_log())
+}
+
+fn type_two_phrases(env: &TestEnv) -> anyhow::Result<omime_e2e::harness::Editor> {
+    wait_for_rime(env)?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+    let editor = env.editor(&[])?;
+    env.type_text("nihao ")?;
+    editor.wait_for_text("你好")?;
+    env.type_text("zhongguo ")?;
+    editor.wait_for_text("你好中国")?;
+    Ok(editor)
+}
+
+fn assert_last_phrase_saved(env: &TestEnv) -> anyhow::Result<()> {
+    let data = env.dir().join("data/oh-my-ime/rime");
+    let exported = data.join("shutdown-export.txt");
+    let output = env
+        .command("rime_dict_manager")
+        .current_dir(&data)
+        .args(["--export", "luna_pinyin"])
+        .arg(&exported)
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "cannot export Rime's dictionary: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved = std::fs::read_to_string(exported)?;
+    assert!(
+        saved.contains("你好"),
+        "the first transaction was not saved: {saved}"
+    );
+    // The schema stores traditional Chinese, even when it commits simplified text.
+    assert!(
+        saved.contains("中國") && saved.contains("#@/tick\t2"),
+        "the final transaction was not saved: {saved}"
+    );
+    Ok(())
+}
+
+fn wait_for_rime_exit(pid: u32) -> anyhow::Result<()> {
+    wait_until("Rime to exit and be reaped", || {
+        (!Path::new(&format!("/proc/{pid}")).exists()).then_some(())
+    })
+}
+
+/// A shell records the real Rime process's status, even if the supervisor kills
+/// its direct child. This distinguishes Rime's own cleanup from a supervisor kill.
+fn record_rime_exit(mut engine: TestEngine) -> TestEngine {
+    let mut args = vec!["-c".into(),
+        "( \"$@\" & pid=$!; printf '%s\\n' \"$pid\" > \"$XDG_STATE_HOME/rime-pid\"; wait \"$pid\"; status=$?; printf '%s\\n' \"$status\" > \"$XDG_STATE_HOME/rime-status\"; exit \"$status\" ) & wait".into(),
+        "sh".into()];
+    if std::env::var_os("OMIME_E2E_RIME_VALGRIND").is_some() {
+        args.extend([
+            "valgrind".into(),
+            "--log-file=/tmp/omime-rime-valgrind.%p.log".into(),
+            "--num-callers=40".into(),
+        ]);
+    }
+    args.push(engine.program.display().to_string());
+    args.extend(engine.args);
+    engine.program = "sh".into();
+    engine.args = args;
+    engine
+}
+
+fn recorded_rime_pid(env: &TestEnv) -> anyhow::Result<u32> {
+    Ok(std::fs::read_to_string(env.dir().join("state/rime-pid"))?
+        .trim()
+        .parse()?)
+}
+
+fn recorded_rime_exit(env: &TestEnv) -> anyhow::Result<i32> {
+    wait_until("Rime's exit status", || {
+        std::fs::read_to_string(env.dir().join("state/rime-status"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn ordinary_shutdown_preserves_the_last_learned_rime_phrase() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let mut env = TestEnv::start(&[engine], Some("rime"))?;
+    let _editor = type_two_phrases(&env)?;
+    let pid = env.engine_pid("rime").expect("Rime process");
+    env.signal_daemon(rustix::process::Signal::TERM)?;
+    assert!(env.wait_for_daemon_exit(Duration::from_secs(6))?.success());
+    wait_for_rime_exit(pid)?;
+    assert_last_phrase_saved(&env)
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_exits_cleanly_with_a_focused_field() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    for _ in 0..5 {
+        let mut env = TestEnv::start(&[record_rime_exit(engine.clone())], Some("rime"))?;
+        let _editor = type_two_phrases(&env)?;
+        env.signal_daemon(rustix::process::Signal::TERM)?;
+        assert_eq!(recorded_rime_exit(&env)?, 0, "{}", env.daemon_log());
+        assert!(env.wait_for_daemon_exit(Duration::from_secs(6))?.success());
+        assert!(
+            !env.daemon_log().contains("double free"),
+            "{}",
+            env.daemon_log()
+        );
+        assert_last_phrase_saved(&env)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_sigterm_preserves_the_last_learned_phrase() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let env = TestEnv::start(&[record_rime_exit(engine)], Some("rime"))?;
+    let _editor = type_two_phrases(&env)?;
+    let pid =
+        rustix::process::Pid::from_raw(recorded_rime_pid(&env)?.try_into()?).context("Rime pid")?;
+    rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
+    assert_eq!(recorded_rime_exit(&env)?, 0, "{}", env.daemon_log());
+    assert!(
+        !env.daemon_log().contains("double free"),
+        "{}",
+        env.daemon_log()
+    );
+    assert_last_phrase_saved(&env)
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_finalizes_when_its_window_connection_is_lost() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    for _ in 0..5 {
+        let env = TestEnv::start(&[record_rime_exit(engine.clone())], Some("rime"))?;
+        let _editor = type_two_phrases(&env)?;
+        // This is the harness's private compositor. Losing it must finalize Rime
+        // even though Slint returns an error before the usual quit path.
+        let _ = env.command("swaymsg").arg("exit").output()?;
+        let status = recorded_rime_exit(&env)?;
+        assert!(
+            (0..=1).contains(&status),
+            "Rime aborted: status {status}\n{}",
+            env.daemon_log()
+        );
+        assert!(
+            !env.daemon_log().contains("double free"),
+            "{}",
+            env.daemon_log()
+        );
+        assert_last_phrase_saved(&env)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn leaving_the_field_saves_rimes_last_learned_phrase() -> anyhow::Result<()> {
+    let Some(engine) = rime() else { return Ok(()) };
+    let mut env = TestEnv::start(&[engine], Some("rime"))?;
+    let editor = type_two_phrases(&env)?;
+    let before = env.count_in_log("text field left");
+    drop(editor);
+    wait_until("the field to be left", || {
+        (env.count_in_log("text field left") > before).then_some(())
+    })?;
+    // Let the no-reply Deactivate reach the engine before stopping the daemon.
+    std::thread::sleep(Duration::from_millis(500));
+    env.signal_daemon(rustix::process::Signal::TERM)?;
+    assert!(env.wait_for_daemon_exit(Duration::from_secs(6))?.success());
+    assert_last_phrase_saved(&env)
 }
 
 fn wait_for_mode(env: &TestEnv, mode: &str) -> anyhow::Result<()> {

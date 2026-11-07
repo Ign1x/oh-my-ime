@@ -242,6 +242,12 @@ impl omime_sdk::Engine for MyEngine {
 
 托盘点击绑定到提供该条目的引擎；守护进程处理点击时，如果当前已经切换到另一引擎或直接输入，就会忽略它。控制 API 和 `omime activate <id>` 仍然操作当前引擎。
 
+## 退出时保存状态
+
+守护进程关闭、重启引擎、重新加载设置或卸载引擎时，原生引擎会收到 `Shutdown`，并有 **两秒** 保存状态和退出。如果仍未退出，omimed 会发送 SIGTERM，再等两秒后发送 SIGKILL。输入超时监控判定为卡死的引擎仍会被立即杀死。
+
+Rust SDK 收到 `Shutdown`、主机连接关闭或 SIGTERM 后，`run` 会返回，`spawn` 创建的线程会结束。此时应完成保存并关闭界面；窗口连接失败时也必须清理状态。Rime 在每个返回路径上都持有共享状态锁完成 librime 的清理。如果 omimed 自身被杀死，原生引擎会通过 `PR_SET_PDEATHSIG` 收到 SIGKILL，避免卡死的清理过程在监督进程退出后残留。因此，重要状态也应在正常运行期间及时保存。
+
 ## 其他语言
 
 引擎协议是点对点 D-Bus，规范见 [`protocol/io.github.ign1x.OhMyIme.Engine1.xml`](../../protocol/io.github.ign1x.OhMyIme.Engine1.xml)。一个引擎需要：

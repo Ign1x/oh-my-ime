@@ -40,6 +40,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Native engines get time to save state on shutdown, restart, settings reload and
+  uninstall, with bounded SIGTERM/SIGKILL fallback for hung processes. Rime now
+  finalizes its dictionary on SIGTERM and window failures, preserving the last
+  learned phrase and exiting cleanly.
 - Rime and Sparkle support symlinked data directories while restricting their target
   directories to `0700` before writes.
 - Desktop notifications stop opening settings after they are resolved, dismissed or

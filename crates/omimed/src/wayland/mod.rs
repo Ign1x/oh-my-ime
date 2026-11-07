@@ -543,6 +543,9 @@ impl Frontend {
 
     /// Releases everything we hold on the compositor (keys, grabs, input methods).
     pub fn shutdown(&mut self) {
+        // The bridge may still dispatch globals while engines finish saving.
+        // A newly advertised seat must not acquire another input-method grab.
+        self.sessions_started = false;
         for seat in self.seats.values_mut() {
             seat.shutdown();
         }

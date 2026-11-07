@@ -145,6 +145,8 @@ in
         Restart = "on-failure";
         RestartPreventExitStatus = 69;
         RestartSec = 1;
+        KillMode = "mixed";
+        TimeoutStopSec = 6;
         Environment = [
           "PATH=${servicePath}"
         ]

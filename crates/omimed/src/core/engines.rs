@@ -45,8 +45,14 @@ use crate::runtime_dir;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Hosted input methods load all their addons first; Fcitx5 may take a while.
 const HOSTED_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long a hosted input method may take to exit after SIGTERM.
+/// How long a native engine has to receive Shutdown and save its state.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long an engine may take to exit after SIGTERM.
 const TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
+/// The daemon's bound includes both stages and time to reap a killed process.
+pub(crate) const ENGINE_EXIT_WAIT: Duration = SHUTDOWN_TIMEOUT
+    .saturating_add(TERMINATE_TIMEOUT)
+    .saturating_add(Duration::from_secs(1));
 /// Restarts after a crash wait this long, doubling up to [`RESTART_MAX`].
 const RESTART_MIN: Duration = Duration::from_millis(500);
 const RESTART_MAX: Duration = Duration::from_secs(30);
@@ -387,7 +393,7 @@ pub struct EngineSlot {
     /// The minor engine protocol version the running engine registered with.
     api_minor: u16,
     /// Stops the process; dropping it stops the process politely.
-    kill: Option<oneshot::Sender<Stop>>,
+    kill: Option<oneshot::Sender<StopRequest>>,
     /// The process is stopped on purpose, to start again at once: its exit is not a
     /// crash.
     reloading: bool,
@@ -488,13 +494,7 @@ impl EngineManager {
         for id in &removed {
             if let Some(mut slot) = self.slots.remove(id) {
                 info!(engine = id, "engine uninstalled");
-                if let Some(proxy) = slot.proxy.take() {
-                    tokio::task::spawn_local(async move {
-                        let _ = proxy.shutdown().await;
-                    });
-                }
-                // Dropping the kill sender lets the supervisor kill the process.
-                slot.kill.take();
+                Self::request_stop(&mut slot, Stop::Politely);
             }
         }
         for (id, slot) in &mut self.slots {
@@ -554,9 +554,7 @@ impl EngineManager {
             match slot.state {
                 EngineState::Starting { .. } => {
                     warn!(engine = id, "the engine did not register in time");
-                    if let Some(kill) = slot.kill.take() {
-                        let _ = kill.send(Stop::Politely);
-                    }
+                    Self::request_stop(slot, Stop::Politely);
                     slot.state = EngineState::Failed;
                     failed.push((id, EngineFailure::NoStart));
                 }
@@ -627,7 +625,13 @@ impl EngineManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        exit_with_omimed(&mut command);
+        if hosted {
+            exit_with_omimed(&mut command);
+        } else {
+            // Native engines handle SIGTERM to save state. If the daemon itself
+            // dies, no supervisor remains to bound a stuck finalizer.
+            exit_with_omimed_signal(&mut command, rustix::process::Signal::KILL);
+        }
         if !hosted {
             command.env(
                 ENV_ENGINE_ADDRESS,
@@ -729,10 +733,13 @@ impl EngineManager {
             let _alive = alive;
             let status = tokio::select! {
                 status = child.wait() => status,
-                _ = kill_rx => {
-                    let _ = child.start_kill();
-                    child.wait().await
-                }
+                request = kill_rx => match request {
+                    Ok(StopRequest { how: Stop::Now, .. }) => {
+                        let _ = child.start_kill();
+                        child.wait().await
+                    }
+                    request => stop_native(&mut child, request.ok().and_then(|r| r.proxy)).await,
+                },
             };
             let _ = events.send(CoreEvent::Exited {
                 engine,
@@ -1084,7 +1091,7 @@ impl EngineManager {
         }
     }
 
-    /// Kills the engine (it is restarted on demand).
+    /// Stops the engine politely (it is restarted on demand).
     pub fn restart(&mut self, id: &str) {
         self.stop(id, Stop::Politely);
     }
@@ -1099,11 +1106,11 @@ impl EngineManager {
     /// settings again. Not a crash.
     pub fn reload(&mut self, id: &str) {
         if let Some(slot) = self.slots.get_mut(id)
-            && let Some(kill) = slot.kill.take()
+            && slot.kill.is_some()
         {
             info!(engine = id, "restarting the engine to read its settings");
             slot.reloading = true;
-            let _ = kill.send(Stop::Politely);
+            Self::request_stop(slot, Stop::Politely);
         }
     }
 
@@ -1176,11 +1183,19 @@ impl EngineManager {
 
     fn stop(&mut self, id: &str, how: Stop) {
         if let Some(slot) = self.slots.get_mut(id)
-            && let Some(kill) = slot.kill.take()
+            && slot.kill.is_some()
         {
             slot.state = EngineState::Stopping;
-            slot.proxy = None;
-            let _ = kill.send(how);
+            Self::request_stop(slot, how);
+        }
+    }
+
+    /// Hand the live protocol connection to the supervisor along with the stop
+    /// request, so sending Shutdown and waiting for exit share one deadline.
+    fn request_stop(slot: &mut EngineSlot, how: Stop) {
+        let proxy = slot.proxy.take();
+        if let Some(kill) = slot.kill.take() {
+            let _ = kill.send(StopRequest { how, proxy });
         }
     }
 
@@ -1192,13 +1207,7 @@ impl EngineManager {
     /// Asks every engine to exit.
     pub fn shutdown(&mut self) {
         for slot in self.slots.values_mut() {
-            if let Some(proxy) = slot.proxy.take() {
-                tokio::task::spawn_local(async move {
-                    let _ = proxy.shutdown().await;
-                });
-            }
-            // Dropping the kill sender lets the supervisor kill the process.
-            slot.kill.take();
+            Self::request_stop(slot, Stop::Politely);
             slot.state = EngineState::Stopped;
         }
     }
@@ -1261,14 +1270,18 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
 /// Has the process that `command` starts stopped with SIGTERM when omimed dies, even
 /// when it is killed: a child must not outlive the daemon, and nothing else would
 /// stop it.
-#[allow(unsafe_code)]
 pub(crate) fn exit_with_omimed(command: &mut tokio::process::Command) {
+    exit_with_omimed_signal(command, rustix::process::Signal::TERM);
+}
+
+#[allow(unsafe_code)]
+fn exit_with_omimed_signal(command: &mut tokio::process::Command, signal: rustix::process::Signal) {
     let parent = rustix::process::getpid();
     // SAFETY: the closure runs in the child between fork and exec. It makes three
     // system calls and allocates nothing (errors are plain error numbers).
     unsafe {
         command.pre_exec(move || {
-            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))?;
+            rustix::process::set_parent_process_death_signal(Some(signal))?;
             // omimed may have died before the child asked to follow it.
             if rustix::process::getppid() != Some(parent) {
                 return Err(rustix::io::Errno::SRCH.into());
@@ -1320,7 +1333,7 @@ async fn supervise_hosted(
     inherited: Option<OwnedFd>,
     dir: PathBuf,
     icon_dir: Option<String>,
-    kill: oneshot::Receiver<Stop>,
+    kill: oneshot::Receiver<StopRequest>,
     events: mpsc::UnboundedSender<CoreEvent>,
     _alive: Alive,
 ) {
@@ -1388,11 +1401,11 @@ async fn supervise_hosted(
     let status = tokio::select! {
         status = child.wait() => status,
         how = kill => match how {
-            Ok(Stop::Now) => {
+            Ok(StopRequest { how: Stop::Now, .. }) => {
                 let _ = child.start_kill();
                 child.wait().await
             }
-            Ok(Stop::Politely) | Err(_) => terminate(&mut child).await,
+            Ok(StopRequest { how: Stop::Politely, .. }) | Err(_) => terminate(&mut child).await,
         },
     };
     exited(status.ok());
@@ -1401,11 +1414,32 @@ async fn supervise_hosted(
 /// How to stop an engine process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stop {
-    /// SIGTERM, and SIGKILL if it does not exit in time, for hosted input methods:
-    /// they save their state when they exit. Other engines get SIGKILL.
+    /// Native Shutdown first, then SIGTERM and SIGKILL as needed. Hosted input
+    /// methods start with SIGTERM, as they have no native engine protocol.
     Politely,
     /// SIGKILL: the process does not respond anyway.
     Now,
+}
+
+struct StopRequest {
+    how: Stop,
+    proxy: Option<EngineProxy<'static>>,
+}
+
+async fn stop_native(
+    child: &mut tokio::process::Child,
+    proxy: Option<EngineProxy<'static>>,
+) -> std::io::Result<ExitStatus> {
+    let shutdown = async {
+        if let Some(proxy) = proxy {
+            let _ = proxy.shutdown().await;
+        }
+        child.wait().await
+    };
+    if let Ok(status) = tokio::time::timeout(SHUTDOWN_TIMEOUT, shutdown).await {
+        return status;
+    }
+    terminate(child).await
 }
 
 /// Writes what an engine process, and whatever it starts, prints to omimed's log, one

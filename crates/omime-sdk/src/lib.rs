@@ -537,6 +537,9 @@ async fn serve_on(
     engine: Box<dyn Engine>,
     ready: Option<std::sync::mpsc::Sender<Host>>,
 ) -> Result<(), Error> {
+    // Install this before connecting/registering: once the engine is ready, a
+    // service manager's SIGTERM must follow the same cleanup path as Shutdown.
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let host = Host {
         proxy: Arc::new(OnceLock::new()),
         api_minor: Arc::new(AtomicU16::new(0)),
@@ -602,6 +605,7 @@ async fn serve_on(
     tokio::select! {
         () = shutdown.notified() => {}
         () = conn.closed() => {}
+        _ = terminate.recv() => {}
     }
     Ok(())
 }
@@ -612,7 +616,8 @@ fn runtime() -> Result<tokio::runtime::Runtime, Error> {
         .build()?)
 }
 
-/// Runs `engine` on the current thread until the platform stops it.
+/// Runs `engine` until Shutdown, a closed connection or SIGTERM. Save state after
+/// this returns; the daemon allows two seconds before escalating to signals.
 pub fn run(engine: impl Engine) -> Result<(), Error> {
     runtime()?.block_on(serve(Box::new(engine), None))
 }

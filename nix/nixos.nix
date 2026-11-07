@@ -148,6 +148,8 @@ in
     systemd.user.services.omimed = {
       wantedBy = [ "graphical-session.target" ];
       serviceConfig.RestartPreventExitStatus = 69;
+      serviceConfig.KillMode = "mixed";
+      serviceConfig.TimeoutStopSec = 6;
       environment = {
         PATH = lib.mkForce servicePath;
       }

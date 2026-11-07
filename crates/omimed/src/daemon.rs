@@ -394,6 +394,20 @@ impl Daemon {
     async fn run(
         mut self,
         initial_frontend: Frontend,
+        initial_error: Option<anyhow::Error>,
+    ) -> anyhow::Result<()> {
+        let result = self.run_sessions(initial_frontend, initial_error).await;
+        // Normal shutdown already used its stop deadline with the UI bridge
+        // connected. Only error returns still need cleanup here.
+        if result.is_err() {
+            self.stop_engines(None).await;
+        }
+        result
+    }
+
+    async fn run_sessions(
+        &mut self,
+        initial_frontend: Frontend,
         mut initial_error: Option<anyhow::Error>,
     ) -> anyhow::Result<()> {
         let mut recent_failures: Vec<Instant> = Vec::new();
@@ -431,18 +445,11 @@ impl Daemon {
             self.core.forget_wayland_contexts();
             match end {
                 SessionEnd::Shutdown => {
-                    self.core.shutdown();
-                    // Give engines a moment to receive Shutdown, and hosted input
-                    // methods, which save their state when they stop, time to exit.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    let deadline = Instant::now() + ENGINE_EXIT_WAIT;
-                    while self.core.engines_alive() && Instant::now() < deadline {
-                        tokio::time::sleep(Duration::from_millis(20)).await;
-                    }
+                    self.stop_engines(Some(&mut frontend)).await;
+                    frontend.state().destroy();
                     return Ok(());
                 }
                 SessionEnd::Unavailable(e) => {
-                    self.core.shutdown();
                     self.notifier
                         .tell_before_exit(Trouble::UnsupportedDesktop)
                         .await;
@@ -461,13 +468,26 @@ impl Daemon {
                     // object. Allow the last crashing engine's exit to be handled
                     // after reconnect, so its own crash budget stops it first.
                     if recent_failures.len() > crate::core::engines::MAX_CRASHES + 1 {
-                        self.core.shutdown();
                         return Err(e.context(tr!("the connection keeps failing; giving up")));
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     info!("reconnecting");
                 }
             }
+        }
+    }
+
+    async fn stop_engines(&mut self, mut frontend: Option<&mut Frontend>) {
+        self.core.shutdown();
+        let deadline = Instant::now() + crate::core::engines::ENGINE_EXIT_WAIT;
+        while self.core.engines_alive() && Instant::now() < deadline {
+            // Keep engine windows connected until their processes finish. A
+            // toolkit may still need a Wayland roundtrip while closing its UI.
+            if let Some(frontend) = frontend.as_mut() {
+                let _ = frontend.dispatch();
+                let _ = frontend.flush();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
@@ -592,7 +612,9 @@ impl Daemon {
         frontend.shutdown();
         // Best effort: the connection may already be gone.
         let _ = frontend.flush();
-        frontend.state().destroy();
+        if !matches!(end, SessionEnd::Shutdown) {
+            frontend.state().destroy();
+        }
         Ok(end)
     }
 
@@ -901,9 +923,6 @@ async fn xim_readable(xim: Option<&XimFrontend>) -> std::io::Result<()> {
         None => std::future::pending().await,
     }
 }
-
-/// How long omimed waits for engines to exit when it stops.
-const ENGINE_EXIT_WAIT: Duration = Duration::from_secs(2);
 
 /// The first and the longest wait before connecting to the X display again.
 const XIM_RETRY_MIN: Duration = Duration::from_secs(2);

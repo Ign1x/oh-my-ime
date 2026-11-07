@@ -359,6 +359,20 @@ A tray click is bound to the engine that supplied the entry and is ignored if
 another engine or direct input is current when the daemon handles it. The control
 API and `omime activate <id>` continue to target the current engine.
 
+## Saving state on shutdown
+
+On daemon shutdown, restart, settings reload or uninstall, native engines receive
+`Shutdown` and have **two seconds** to save state and exit. If they remain running,
+omimed sends SIGTERM, waits another two seconds, then sends SIGKILL. A stuck engine
+stopped by the typing watchdog is killed immediately.
+
+The Rust SDK returns from `run` (or completes `spawn`'s thread) on `Shutdown`, a
+closed host connection or SIGTERM. Finish saving and close the UI after it returns;
+also finalize state if the window connection fails. Rime finalizes librime under
+its shared state lock on every return path. When omimed itself is killed, native
+engines receive SIGKILL through `PR_SET_PDEATHSIG`, so a hung finalizer cannot outlive
+its supervisor. Save important state during normal operation as well.
+
 ## Other languages
 
 The engine protocol is peer-to-peer D-Bus and is specified in

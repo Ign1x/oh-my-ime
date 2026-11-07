@@ -534,6 +534,14 @@ impl TestEnv {
         Ok(())
     }
 
+    /// Waits for the daemon to exit, with a deadline so shutdown tests cannot hang.
+    pub fn wait_for_daemon_exit(&mut self, timeout: Duration) -> anyhow::Result<ExitStatus> {
+        let daemon = self.daemon.as_mut().context("omimed does not run")?;
+        wait_until_within(timeout, "omimed to exit", || {
+            daemon.try_wait().ok().flatten()
+        })
+    }
+
     /// The runtime directory of this environment.
     pub fn dir(&self) -> &Path {
         &self.dir

@@ -14,6 +14,9 @@ ExecReload=%h/.local/bin/omime reload
 Restart=on-failure
 RestartPreventExitStatus=69
 RestartSec=1
+# Let omimed send native Shutdown before stopping the engines in its cgroup.
+KillMode=mixed
+TimeoutStopSec=6
 
 [Install]
 WantedBy=graphical-session.target

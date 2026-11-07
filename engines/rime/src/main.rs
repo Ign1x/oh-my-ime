@@ -819,7 +819,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     look.set_font_size(f32::from(u16::try_from(style.font_size).unwrap_or(18)));
     let state = Arc::new(Mutex::new(State::default()));
+    let result = run_engine(&ui, &state);
+    // The SDK, UI callbacks and notice thread also own the state. Finalize under
+    // their lock on every return path, before C++ static teardown at process exit.
+    lock(&state).rime = None;
+    result
+}
 
+fn run_engine(
+    ui: &Candidates,
+    state: &Arc<Mutex<State>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Start Rime first: a deployment can take a while, and it runs in its own thread.
     let (notices, noticed) = mpsc::channel();
     match (data::shared_dir(), data::user_dir()) {
@@ -849,7 +859,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         shared.display(),
                         user.display()
                     );
-                    let mut state = lock(&state);
+                    let mut state = lock(state);
                     state.deployed = !rime.deploying();
                     state.rime = Some(rime);
                 }
@@ -924,8 +934,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     ui.show()?;
     slint::run_event_loop_until_quit()?;
     drop(host);
-    // Rime saves what it learned when it stops.
-    lock(&state).rime = None;
     Ok(())
 }
 

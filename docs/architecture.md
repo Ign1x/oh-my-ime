@@ -237,6 +237,15 @@ know which frontend a key came from.
 Engines connect to a private peer-to-peer D-Bus socket whose address is in
 `OMIME_ENGINE_ADDRESS`.
 
+For shutdown, restart, settings reload and uninstall, the native supervisor sends
+`Shutdown` and waits up to two seconds, then sends SIGTERM and waits another two
+seconds before SIGKILL. Sending Shutdown shares the first deadline. Watchdog and
+quarantine kills remain immediate. The daemon waits at most five seconds for its
+engines and keeps a healthy UI bridge connected during their shutdown. Its systemd
+unit uses `KillMode=mixed` and a six-second stop timeout, letting the daemon stop its
+children first. Native children use `PR_SET_PDEATHSIG=SIGKILL` for an abrupt daemon
+death; the SDK treats direct SIGTERM as an orderly stop.
+
 - `io.github.ign1x.OhMyIme.Engine1` is exported by the engine at
   `/io/github/ign1x/OhMyIme/Engine`. It has `Activate`, `Deactivate`, `UpdateContext`,
   `ProcessKey`, `Reset` and `Shutdown`. `ProcessKey` returns `(handled, actions)`, where
@@ -344,7 +353,7 @@ IBus's panel only, so that ibus-daemon and its engines do not hold it.
 - **Process.** omimed starts the input method on a private session bus, a `dbus-daemon`
   without service activation in the engine's runtime directory, so that it cannot take
   `org.fcitx.Fcitx5` on the user's bus from omimed's Fcitx5 frontend. It gets the
-  `WAYLAND_DISPLAY` of its bridge socket and no `DISPLAY`. Engines get SIGTERM when
+  `WAYLAND_DISPLAY` of its bridge socket and no `DISPLAY`. Hosted engines get SIGTERM when
   omimed exits, even when omimed is killed (`PR_SET_PDEATHSIG`), and hosted input methods
   up to two seconds to save their state. One input method per seat: a second
   `get_input_method` gets `unavailable`.
