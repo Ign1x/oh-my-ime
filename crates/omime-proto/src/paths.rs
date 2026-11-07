@@ -76,14 +76,15 @@ fn atomic_write_with(
 }
 
 /// Creates a `0700` data directory, or restricts an existing one to that mode.
-/// Refuses a symlink at `dir`. Missing parents are created privately as well;
-/// existing parent directories keep their permissions.
+/// Follows directory symlinks and restricts their targets, leaving links in place.
+/// Missing parents are created privately as well; existing parent directories
+/// keep their permissions. Non-directories and unresolved links return an error.
 pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(dir)?;
-    let metadata = fs::symlink_metadata(dir)?;
+    let metadata = fs::metadata(dir)?;
     if !metadata.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -334,9 +335,9 @@ mod tests {
     }
 
     #[test]
-    fn private_directories_are_created_restricted_and_never_symlinked() {
+    fn private_directories_are_created_restricted_and_follow_links() {
         under_umask_022(
-            "private_directories_are_created_restricted_and_never_symlinked",
+            "private_directories_are_created_restricted_and_follow_links",
             || {
                 let dir = TestDir::new();
                 let path = dir.0.join("data/engine");
@@ -346,12 +347,23 @@ mod tests {
                 ensure_private_dir(&path).unwrap();
                 assert_eq!(mode(&path), 0o700);
                 let link = dir.0.join("link");
-                std::os::unix::fs::symlink(&path, &link).unwrap();
-                assert!(ensure_private_dir(&link).is_err());
+                std::os::unix::fs::symlink("data/engine", &link).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+                ensure_private_dir(&link).unwrap();
+                assert_eq!(mode(&path), 0o700);
+                assert_eq!(fs::read_link(&link).unwrap(), Path::new("data/engine"));
                 let file = dir.0.join("file");
                 fs::write(&file, "keep").unwrap();
                 assert!(ensure_private_dir(&file).is_err());
+                let file_link = dir.0.join("file-link");
+                std::os::unix::fs::symlink(&file, &file_link).unwrap();
+                assert!(ensure_private_dir(&file_link).is_err());
                 assert_eq!(fs::read(&file).unwrap(), b"keep");
+                let dangling = dir.0.join("dangling");
+                std::os::unix::fs::symlink("absent", &dangling).unwrap();
+                assert!(ensure_private_dir(&dangling).is_err());
+                assert!(dangling.is_symlink());
+                assert!(!dir.0.join("absent").exists());
             },
         );
     }

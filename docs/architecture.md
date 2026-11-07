@@ -517,6 +517,8 @@ and IBus frameworks; a separate Fcitx5 addon host is outside the plan.
   if this fails, Rime leaves keys to applications. Its existing user database files
   are protected by this directory. Sparkle saves its recent emoji atomically as `0600`,
   restricting an older, more permissive history file on the next save, and creates or
-  restricts its parent state directory to `0700`.
+  restricts its parent state directory to `0700`. Both directory paths may be
+  symlinks: the links stay in place and their target directories receive `0700`
+  before writes.
 - Processes running as the same user are not a security boundary. Sandboxing engines (for
   example with bubblewrap) is future work.

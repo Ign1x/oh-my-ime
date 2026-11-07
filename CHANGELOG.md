@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Rime and Sparkle support symlinked data directories while restricting their target
+  directories to `0700` before writes.
 - Desktop notifications stop opening settings after they are resolved, dismissed or
   expired. A recurring problem gets a new notification after it is resolved.
 - Configuration, saved state and the input-method catalog retain their file permissions

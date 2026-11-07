@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use omime_e2e::harness::{
     TIMEOUT, TestEngine, TestEnv, dummy_engine, echo_engine, program_dir, sparkle_engine,
-    wait_until,
+    wait_until, wait_until_within,
 };
 
 /// A running `omime status --watch --json`, with its lines read in the background.
@@ -804,8 +804,8 @@ fn sparkle_commit_history_is_private() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs; requires OMIME_RIME_SHARED_DATA"]
-fn rime_refuses_nonprivate_user_directory() -> anyhow::Result<()> {
-    under_umask_022("rime_refuses_nonprivate_user_directory", || {
+fn rime_uses_linked_private_data_directory() -> anyhow::Result<()> {
+    under_umask_022("rime_uses_linked_private_data_directory", || {
         std::env::var_os("OMIME_RIME_SHARED_DATA").context("requires OMIME_RIME_SHARED_DATA")?;
         let engine = TestEngine {
             id: "rime",
@@ -815,7 +815,7 @@ fn rime_refuses_nonprivate_user_directory() -> anyhow::Result<()> {
             hosted: false,
         };
         let mut env = TestEnv::prepare(&[engine])?;
-        let target = env.dir().join("public-data");
+        let target = env.dir().join("rime-storage");
         std::fs::create_dir(&target)?;
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
         let path = env.dir().join("data/oh-my-ime/rime");
@@ -824,26 +824,70 @@ fn rime_refuses_nonprivate_user_directory() -> anyhow::Result<()> {
         env.launch_daemon()?;
         env.omime(&["switch", "rime"])?;
         env.wait_for_log("engine ready")?;
-        let log = env.daemon_log();
-        assert!(!log.contains("omime-rime: librime"), "{log}");
-        assert!(
-            log.contains("cannot make") && log.contains("private data path is not a directory"),
-            "{log}"
-        );
         assert_eq!(
             mode(&target)?,
-            0o755,
-            "changed a symlink's target permissions"
+            0o700,
+            "Rime did not make the linked directory private:\n{}",
+            env.daemon_log()
         );
-        assert_eq!(
-            std::fs::read_dir(&target)?.count(),
-            0,
-            "Rime wrote through the symlink"
-        );
+        assert_eq!(std::fs::read_link(&path)?, target);
+        wait_until_within(
+            Duration::from_secs(120),
+            "Rime to deploy through the link",
+            || {
+                env.omime(&["list", "--all"])
+                    .ok()?
+                    .contains("rime/luna_pinyin")
+                    .then_some(())
+            },
+        )
+        .with_context(|| env.daemon_log())?;
+        env.omime(&["switch", "rime/luna_pinyin"])?;
+        env.wait_for_status_starting("rime/luna_pinyin")?;
         let editor = env.editor(&[])?;
-        env.type_text("hello")?;
-        editor.wait_for_text("hello")?;
+        env.type_text("nihao ")?;
+        editor.wait_for_text("你好")?;
+        assert!(target.join("default.custom.yaml").is_file());
+        assert_eq!(mode(&target)?, 0o700);
+        assert_eq!(std::fs::read_link(&path)?, target);
         Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn sparkle_uses_linked_private_state_directory() -> anyhow::Result<()> {
+    under_umask_022("sparkle_uses_linked_private_state_directory", || {
+        let mut env = TestEnv::prepare(&[sparkle_engine()])?;
+        let target = env.dir().join("sparkle-storage");
+        std::fs::create_dir(&target)?;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+        let history = target.join("sparkle");
+        std::fs::write(&history, "panel = false\nrecent = 🦀 ✨\n")?;
+        std::fs::set_permissions(&history, std::fs::Permissions::from_mode(0o644))?;
+        let path = env.dir().join("state/oh-my-ime");
+        std::fs::create_dir_all(path.parent().context("state directory")?)?;
+        std::os::unix::fs::symlink(&target, &path)?;
+        env.launch_daemon()?;
+        env.omime(&["switch", "sparkle"])?;
+        let editor = env.editor(&[])?;
+        env.type_text(":rocket ")?;
+        editor.wait_for_text("🚀")?;
+        assert_eq!(
+            mode(&target)?,
+            0o700,
+            "Sparkle did not make the linked directory private:\n{}",
+            env.daemon_log()
+        );
+        wait_until("history saved through the directory link", || {
+            std::fs::read_to_string(&history)
+                .ok()?
+                .contains("recent = 🚀")
+                .then_some(())
+        })?;
+        assert_eq!(mode(&history)?, 0o600);
+        assert_eq!(std::fs::read_link(&path)?, target);
+        no_write_temporaries(&target)
     })
 }
 
