@@ -6,24 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- Setup checks the compositor's input protocols before changing files or taking over
-  Fcitx5/IBus, preserving input on unsupported desktops such as KDE Plasma and GNOME.
-  Inherited Wayland sockets are refused when they cannot be safely verified.
-  Dry runs warn and still preview; failed takeovers stop the daemon they launched
-  before showing framework restart commands. Launch-environment update failures
-  preserve working input.
-  Doctor explains missing protocols when omimed is absent. omimed notifies once and
-  exits with status 69 on unsupported compositors, even when session-bus authentication
-  stalls and the compositor replies late, without a systemd restart loop.
-  Protocol checks work without a libwayland runtime search path. Slow compositor
-  startup keeps the connection and requested engine, and early seat names survive
-  session initialization.
-- Reselecting the active Rime schema preserves its Chinese/Latin mode and ongoing
-  composition. This also prevents a focus change from unexpectedly resetting Rime
-  to Chinese when application input-method memory is enabled without mode memory.
-
 ### Added
 
 - `omime choose` opens a keyboard and pointer input-method chooser. Browse without
@@ -45,6 +27,33 @@ All notable changes to this project are documented here. The format follows
   baseline for Firefox, foot and XIM/xterm. KWin's privileged IM v1 connection is
   probed separately; KDE/GNOME input backends remain future work. See
   [application acceptance](docs/compatibility.md).
+
+### Changed
+
+- Echo and Sparkle still ship with every installation, but are offered rather than
+  enabled by default. Add them to the switching cycle with `omime enable echo`,
+  `omime enable sparkle`, or the settings app's **Add input method…** dialog.
+  `omime switch echo` or `omime switch sparkle` tries one without adding it to the cycle.
+  `omime setup --engine sparkle` enables Sparkle explicitly; `omime doctor` now
+  lists available engines and how to enable one when none is enabled.
+
+### Fixed
+
+- Setup checks the compositor's input protocols before changing files or taking over
+  Fcitx5/IBus, preserving input on unsupported desktops such as KDE Plasma and GNOME.
+  Inherited Wayland sockets are refused when they cannot be safely verified.
+  Dry runs warn and still preview; failed takeovers stop the daemon they launched
+  before showing framework restart commands. Launch-environment update failures
+  preserve working input.
+  Doctor explains missing protocols when omimed is absent. omimed notifies once and
+  exits with status 69 on unsupported compositors, even when session-bus authentication
+  stalls and the compositor replies late, without a systemd restart loop.
+  Protocol checks work without a libwayland runtime search path. Slow compositor
+  startup keeps the connection and requested engine, and early seat names survive
+  session initialization.
+- Reselecting the active Rime schema preserves its Chinese/Latin mode and ongoing
+  composition. This also prevents a focus change from unexpectedly resetting Rime
+  to Chinese when application input-method memory is enabled without mode memory.
 
 ## [0.4.0] - 2026-11-06
 

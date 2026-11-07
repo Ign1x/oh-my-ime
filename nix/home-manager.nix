@@ -95,14 +95,15 @@ in
       example = {
         engines = [
           "fcitx5/shuangpin"
-          "sparkle"
         ];
         initial_input_method = "fcitx5/shuangpin";
       };
       description = ''
         Written to {file}`$XDG_CONFIG_HOME/oh-my-ime/config.toml`; the keys are those
         of the configuration file (data/config.toml), with the same defaults. Empty
-        writes nothing, so omimed uses its own defaults.
+        writes nothing, so omimed uses its own defaults. The bundled Echo and
+        Sparkle demos are offered but disabled by default; add `"echo"` or
+        `"sparkle"` to `settings.engines` to enable them declaratively.
 
         The file is then a symlink into the Nix store, which is read-only: omimed's
         own edits (`omime config`, `omime enable`, and the settings window) do not

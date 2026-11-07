@@ -4,7 +4,7 @@
 
 `omime setup` 将已安装的 oh-my-ime 接入 Hyprland：配置应用输入途径和自启动，按需选择首次使用的输入法，并保存可撤销的修改记录。
 
-先安装平台和需要的输入法。使用 Fcitx5 拼音时，需要安装 Fcitx5 及其拼音插件；Qt 应用还需要匹配的 Fcitx5 Qt 输入模块。自带的 Sparkle 表情输入法无需外部框架。依赖见[安装与应用要求](hyprland.md)。
+先安装平台和需要的输入法。使用 Fcitx5 拼音时，需要安装 Fcitx5 及其拼音插件；Qt 应用还需要匹配的 Fcitx5 Qt 输入模块。自带的 Echo 和 Sparkle 演示引擎默认仅供选择，不启用；Sparkle 无需外部框架。依赖见[安装与应用要求](hyprland.md)。
 
 ## 配置并启动
 
@@ -30,7 +30,7 @@ omime setup --engine fcitx5/pinyin --take-over --dry-run
 omime setup --engine fcitx5/pinyin --take-over --start
 ```
 
-安装 IBus 与 libpinyin 后可用 `--engine ibus/libpinyin`；使用自带表情输入法时改为 `--engine sparkle`。省略 `--engine` 会保留已有输入法配置；省略 `--start` 则只配置下次登录，当前会话继续运行。
+安装 IBus 与 libpinyin 后可用 `--engine ibus/libpinyin`；使用自带表情输入法时改为 `--engine sparkle`。setup 会将选中的引擎加入 `engines` 并设置 `initial_input_method`，因此尚未启用任何引擎时也能使用 Sparkle。也可运行 `omime enable echo` / `omime enable sparkle`，或在设置应用中选择“添加输入法…”，启用演示引擎。省略 `--engine` 会保留已有输入法配置；省略 `--start` 则只配置下次登录，当前会话继续运行。
 
 `--take-over` 暂停所选 Hyprland 文件中能够识别的 Fcitx5/IBus 自启动命令。与 `--start` 一起使用时，还会通过当前会话的 D-Bus 请求旧框架退出，不按进程名称批量终止程序。若其他输入法仍占用 seat，命令会明确报告输入尚未就绪。
 

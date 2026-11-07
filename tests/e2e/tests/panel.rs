@@ -10,7 +10,9 @@ const INSIDE: (u32, u32) = (640, 720 - 120 - 108 + 4);
 
 fn start(config: &str) -> anyhow::Result<TestEnv> {
     let env = TestEnv::start(&[echo_engine()], None)?;
-    env.configure(&format!("{config}[panel]\nenabled = true\n"))?;
+    env.configure(&format!(
+        "engines = [\"echo\"]\n{config}[panel]\nenabled = true\n"
+    ))?;
     env.wait_for_log("omime_panel: waiting for switches")?;
     Ok(env)
 }
@@ -129,7 +131,7 @@ impl ChooserProcess {
 fn choosing_with_keyboard_remembers_the_original_app_and_escape_cancels() -> anyhow::Result<()> {
     // Explicit selection also works when the passive switch notification is disabled.
     let env = TestEnv::start(&[echo_engine()], None)?;
-    env.configure("[apps]\nremember = true\n")?;
+    env.configure("engines = [\"echo\"]\n[apps]\nremember = true\n")?;
     let editor = env.editor(&["--app-id", "chooser-editor"])?;
     let mut chooser = ChooserProcess::start(&env, "keyboard")?;
     if std::env::var_os("OMIME_E2E_SCREENSHOT").is_some() {
@@ -166,6 +168,7 @@ fn choosing_with_keyboard_remembers_the_original_app_and_escape_cancels() -> any
 #[ignore = "end-to-end test; see typing.rs"]
 fn choosing_with_pointer_and_reopening_does_not_start_two_choosers() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    env.omime(&["enable", "echo"])?;
     let editor = env.editor(&[])?;
     let mut chooser = ChooserProcess::start(&env, "pointer")?;
     let status = env

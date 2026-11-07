@@ -5,7 +5,8 @@
 use std::fs;
 use std::process::Child;
 
-use omime_e2e::harness::{TestEnv, echo_engine, program_dir};
+use anyhow::Context as _;
+use omime_e2e::harness::{TestEnv, echo_engine, program_dir, sparkle_engine};
 
 struct App(Child);
 impl Drop for App {
@@ -46,6 +47,40 @@ fn doctor_checks_the_application_environment_without_exposing_other_variables() 
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn doctor_explains_how_to_enable_the_offered_demos() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    for (locale, warning) in [
+        (
+            "C.UTF-8",
+            "no engine is enabled; enable one with `omime enable <id>` or in the settings app; available engines: ",
+        ),
+        (
+            "zh_CN.UTF-8",
+            "尚未启用任何引擎；请运行 `omime enable <id>` 或在设置应用中启用；可用引擎：",
+        ),
+    ] {
+        let output = env
+            .command(program_dir().join("omime"))
+            .env("LC_ALL", locale)
+            .arg("doctor")
+            .output()?;
+        let text = String::from_utf8(output.stdout)?;
+        assert!(output.status.success(), "{text}");
+        let prefix = format!("! {warning}");
+        let available = text
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .with_context(|| format!("no enablement guidance in:\n{text}"))?;
+        let available: Vec<_> = available.split(',').map(str::trim).collect();
+        for id in ["echo", "sparkle"] {
+            assert!(available.contains(&id), "{id} missing from:\n{text}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn doctor_uses_the_running_daemons_engine_list() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
     env.configure("engines = [\"echo\"]\n")?;
@@ -71,6 +106,7 @@ fn doctor_uses_the_running_daemons_engine_list() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see typing.rs"]
 fn doctor_is_happy_with_a_working_setup() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], None)?;
+    env.omime(&["enable", "echo"])?;
     let _editor = env.editor(&[])?;
 
     let (status, stdout) = env.omime_status(&["doctor"])?;
@@ -82,7 +118,9 @@ fn doctor_is_happy_with_a_working_setup() -> anyhow::Result<()> {
         "no seat line in:\n{stdout}"
     );
     assert!(
-        stdout.lines().any(|line| line.contains("echo")),
+        stdout
+            .lines()
+            .any(|line| line.starts_with("✓ engines: echo")),
         "no engine line in:\n{stdout}"
     );
     Ok(())

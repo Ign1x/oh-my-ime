@@ -558,8 +558,11 @@ msgstr "尚未安装引擎 `{engine}`（请运行 `omime engines`）"
 msgid "no engine `{id}` is installed"
 msgstr "尚未安装引擎 `{id}`"
 
-msgid "no engine is enabled"
-msgstr "尚未启用任何引擎"
+msgid "no engine is enabled; enable one with `omime enable <id>` or in the settings app; available engines: {available}"
+msgstr "尚未启用任何引擎；请运行 `omime enable <id>` 或在设置应用中启用；可用引擎：{available}"
+
+msgid "none installed"
+msgstr "尚未安装任何引擎"
 
 msgid "note: {engine} does not list `{arg0}` yet; it gets it when you switch to it"
 msgstr "提示：{engine} 尚未列出 `{arg0}`，切换到它时会获取列表"

@@ -8,7 +8,7 @@ use omime_e2e::harness::{TestEnv, echo_engine};
 #[ignore = "end-to-end test; see typing.rs"]
 fn each_application_keeps_its_engine() -> anyhow::Result<()> {
     let mut env = TestEnv::start(&[echo_engine()], None)?;
-    env.configure("[apps]\nremember = true\n")?;
+    env.configure("engines = [\"echo\"]\n[apps]\nremember = true\n")?;
 
     let a = env.editor(&["--app-id", "editor-a"])?;
     env.wait_for_log("focused application changed app=\"editor-a\"")?;

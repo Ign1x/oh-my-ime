@@ -30,10 +30,21 @@ impl Fixture {
             config_dir,
             state_dir,
         };
-        let engines = [("echo", false), ("sparkle", true)].into_iter().map(|(id, enabled)| {
-            let text = format!("[engine]\nid = {id:?}\nname = {id:?}\nexec = [{}]\napi = \"1.0\"\nenabled_by_default = {enabled}\n", crate::json_string(daemon.to_str().unwrap()));
-            manifest::InstalledEngine { manifest: manifest::Manifest::parse(&text).unwrap().0, dir: root.clone(), unknown_keys: Vec::new() }
-        }).collect();
+        let engines = [
+            include_str!("../../../../engines/echo/engine.toml"),
+            include_str!("../../../../engines/sparkle/engine.toml"),
+        ]
+        .into_iter()
+        .map(|text| {
+            let (mut manifest, unknown_keys) = manifest::Manifest::parse(text).unwrap();
+            manifest.engine.exec = vec![daemon.to_str().unwrap().to_owned()];
+            manifest::InstalledEngine {
+                manifest,
+                dir: root.clone(),
+                unknown_keys,
+            }
+        })
+        .collect();
         Self {
             root,
             locations,
@@ -118,7 +129,11 @@ async fn a_failed_probe_refuses_before_creating_any_files() {
 
 #[test]
 fn preview_is_read_only_and_enables_the_selected_engine_without_hiding_defaults() {
-    let f = Fixture::new();
+    let mut f = Fixture::new();
+    let mut default = f.engines[0].clone();
+    default.manifest.engine.id = "default".into();
+    default.manifest.engine.enabled_by_default = true;
+    f.engines.push(default);
     let p = f.plan(&["--engine", "echo", "--dry-run"]).unwrap();
     assert_eq!(p.changes.len(), 5);
     assert!(!f.locations.config_dir.exists());
@@ -132,7 +147,23 @@ fn preview_is_read_only_and_enables_the_selected_engine_without_hiding_defaults(
         .installed;
     let parsed = Config::parse(text).unwrap().0;
     assert_eq!(parsed.initial_input_method.as_deref(), Some("echo"));
-    assert_eq!(parsed.engines, Some(vec!["sparkle".into(), "echo".into()]));
+    assert_eq!(parsed.engines, Some(vec!["default".into(), "echo".into()]));
+}
+
+#[test]
+fn setup_explicitly_enables_only_the_chosen_demo() {
+    for id in ["echo", "sparkle"] {
+        for config in ["", "engines = []\n"] {
+            let f = Fixture::new();
+            f.write(&f.config(), config);
+            f.apply(&f.plan(&["--engine", id]).unwrap());
+            let parsed = Config::parse(&fs::read_to_string(f.config()).unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(parsed.initial_input_method.as_deref(), Some(id));
+            assert_eq!(parsed.engines, Some(vec![id.to_owned()]));
+        }
+    }
 }
 
 #[test]

@@ -77,6 +77,10 @@ omime list --all
 omime settings
 ```
 
+Echo 和 Sparkle 随平台安装，但与 Fcitx 5、IBus 一样默认仅供选择，不启用。
+运行 `omime enable echo` / `omime enable sparkle`，或在设置应用中选择“添加输入法…”，
+即可将演示引擎加入切换顺序。
+
 NixOS 模块不生成 `config.toml`，可以通过设置窗口或 CLI 管理启用列表和顺序。
 如果希望声明式管理该文件，可选择下面的 Home Manager 模块。
 
@@ -93,7 +97,7 @@ NixOS 模块不生成 `config.toml`，可以通过设置窗口或 CLI 管理启�
     enable = true;
     rime.enable = true;
     settings = {
-      engines = [ "rime/double_pinyin_flypy" "sparkle" ];
+      engines = [ "rime/double_pinyin_flypy" ];
       initial_input_method = "rime/double_pinyin_flypy";
     };
   };
@@ -102,7 +106,8 @@ NixOS 模块不生成 `config.toml`，可以通过设置窗口或 CLI 管理启�
 
 `settings` 的结构与 [config.toml](../../data/config.toml) 相同。`engines` 是切换顺序，
 `initial_input_method` 是首次使用的输入法；之后恢复用户上次的选择，包括直接输入。
-默认 `settings = { };` 不生成文件，允许设置窗口保存修改。
+要加入演示引擎，在 `settings.engines` 中显式添加 `"sparkle"` 或 `"echo"`，无需额外安装包。
+默认 `settings = { };` 不生成文件，允许设置窗口保存修改，两个演示引擎仍默认关闭。
 
 非空 `settings` 会把 `config.toml` 链接到 Nix store。它是声明式配置，运行时修改
 不能作为持久配置保留，下一次 `home-manager switch` 会恢复 Nix 中的内容。

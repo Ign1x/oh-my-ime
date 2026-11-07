@@ -195,7 +195,10 @@ the [Rime engine](engines/rime).
 Shift behavior, horizontal or vertical candidates, colors and font size. Closing the
 window restarts Rime to read the saved changes.
 
-Configure Hyprland and try the bundled Sparkle engine:
+Echo and Sparkle ship with every installation but are disabled by default. Enable
+them with `omime enable echo` / `omime enable sparkle`, or **Add input method…** in
+the settings app, to include them in the switching cycle. To configure Hyprland and
+try Sparkle, setup enables it explicitly:
 
 ```sh
 omime setup --engine sparkle --take-over --dry-run

@@ -105,7 +105,7 @@ impl Drop for ResumeOnDrop {
 #[ignore = "end-to-end test; see typing.rs"]
 fn timeout_recovery_finishes_before_a_new_composition() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
-    env.configure("[engine]\nkey_timeout_ms = 500\n")?;
+    env.configure("engines = [\"echo\"]\n[engine]\nkey_timeout_ms = 500\n")?;
     let editor = env.editor(&[])?;
     env.type_text("x")?;
     editor.wait_for("initial composition", |l| l.starts_with("preedit \"x\""))?;

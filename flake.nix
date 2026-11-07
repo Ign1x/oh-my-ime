@@ -152,7 +152,6 @@
                   settings = {
                     engines = [
                       "fcitx5/shuangpin"
-                      "sparkle"
                     ];
                     initial_input_method = "fcitx5/shuangpin";
                   };
@@ -204,7 +203,7 @@
             grep -qxF 'initial_input_method = "fcitx5/shuangpin"' ${
               home.config.xdg.configFile."oh-my-ime/config.toml".source
             }
-            grep -qxF 'engines = ["fcitx5/shuangpin", "sparkle"]' ${
+            grep -qxF 'engines = ["fcitx5/shuangpin"]' ${
               home.config.xdg.configFile."oh-my-ime/config.toml".source
             }
             # Only the platform: the frameworks are on the unit's PATH, not in the

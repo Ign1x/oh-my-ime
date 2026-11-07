@@ -196,7 +196,7 @@ Rime 的选项保存在 `~/.local/share/oh-my-ime/rime/default.custom.yaml`，�
 勾选新方案后，在 oh-my-ime 设置中把它加入切换顺序。方案自身的 YAML 配置可能覆盖
 全局页大小和 Shift 选项，可通过“打开用户文件夹”进一步调整。
 
-配置 Hyprland，并试用自带的 Sparkle 表情输入法：
+每次安装都包含 Echo 和 Sparkle，但默认不启用。运行 `omime enable echo` / `omime enable sparkle`，或在设置应用中选择“添加输入法…”，即可将它们加入切换顺序。以下命令配置 Hyprland，并显式启用 Sparkle 以供试用：
 
 ```sh
 omime setup --engine sparkle --take-over --dry-run

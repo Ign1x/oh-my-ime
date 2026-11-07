@@ -1,7 +1,7 @@
 //! End-to-end tests of omimed's tray item, shown by `omime-tray-host` as a status bar's
 //! tray would. See `typing.rs` for how to run them.
 
-use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine, hosted_engine};
+use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine, hosted_engine, sparkle_engine};
 
 /// "Direct input" as omimed names it, in English or Chinese after the locale.
 const DIRECT_INPUT: [&str; 2] = ["Direct input", "直接输入"];
@@ -19,6 +19,7 @@ fn without_settings(menu: &str) -> &str {
 #[ignore = "end-to-end test; see typing.rs"]
 fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    env.omime(&["enable", "echo"])?;
     // The tray comes after omimed, as when a status bar restarts: omimed registers its
     // item with the new watcher.
     let tray = env.tray_host()?;
@@ -46,6 +47,30 @@ fn the_tray_shows_the_current_engine_and_switches() -> anyhow::Result<()> {
     // A click goes back to the last engine.
     tray.send("activate")?;
     tray.wait_for_latest("the engine again", "tooltip ", |t| t == "echo")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_tray_lists_demo_engines_once_enabled() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    let config = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
+    assert!(!config.contains("engines ="), "{config}");
+    let tray = env.tray_host()?;
+    tray.wait_for_latest("settings without disabled demos", "menu ", |menu| {
+        menu.split('|').any(|entry| entry == "Settings…")
+            && !menu
+                .split('|')
+                .any(|entry| entry == "echo" || entry == "sparkle")
+    })?;
+    env.omime(&["enable", "sparkle"])?;
+    tray.wait_for_latest("the enabled Sparkle demo", "menu ", |menu| {
+        menu.split('|').any(|entry| entry == "sparkle")
+    })?;
+    tray.send("click sparkle")?;
+    env.wait_for_status_starting("sparkle")?;
+    let list = env.omime(&["list"])?;
+    assert!(!list.contains("echo"), "{list}");
     Ok(())
 }
 
@@ -79,11 +104,11 @@ fn the_tray_item_comes_and_goes_with_the_configuration() -> anyhow::Result<()> {
     let first = tray.wait_for("omimed's item", |l| l.starts_with("registered "))?;
     let name = first.trim_start_matches("registered ").to_owned();
 
-    env.configure("[tray]\nenabled = false\n")?;
+    env.configure("engines = [\"echo\"]\n[tray]\nenabled = false\n")?;
     tray.wait_for("the item to go away", |l| {
         l == format!("unregistered {name}")
     })?;
-    env.configure("[tray]\nenabled = true\n")?;
+    env.configure("engines = [\"echo\"]\n[tray]\nenabled = true\n")?;
     tray.wait_for("a new item", |l| l.starts_with("registered ") && l != first)?;
     tray.wait_for_latest("the engine in the tooltip", "tooltip ", |t| t == "echo")?;
     Ok(())

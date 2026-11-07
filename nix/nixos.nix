@@ -32,7 +32,11 @@ in
       # package for the system, built with the user's nixpkgs.
       default = pkgs.callPackage ./package.nix { };
       defaultText = lib.literalMD "the package built from this flake";
-      description = "The oh-my-ime package that provides omimed and omime.";
+      description = ''
+        The oh-my-ime package that provides omimed and omime. Its bundled Echo and
+        Sparkle demos are offered but disabled by default; use `omime enable echo`
+        or `omime enable sparkle`, or add them in the settings app.
+      '';
     };
 
     fcitx5 = {

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 
 use anyhow::{Context as _, ensure};
-use omime_e2e::harness::{TestEngine, TestEnv, echo_engine, program_dir, wait_until};
+use omime_e2e::harness::{
+    TestEngine, TestEnv, echo_engine, program_dir, sparkle_engine, wait_until,
+};
 
 fn program(name: &str) -> anyhow::Result<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -242,6 +244,24 @@ fn setup_updates_the_matching_launch_manager_and_leaves_other_sessions_alone() -
             assert_eq!(*after, before);
         }
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn setup_enables_the_bundled_sparkle_demo_from_empty_configuration() -> anyhow::Result<()> {
+    let mut env = TestEnv::prepare(&[echo_engine(), sparkle_engine()])?;
+    start(&mut env, &["setup", "--engine", "sparkle", "--start"])?;
+    let config = fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
+    assert!(config.contains("engines = [\"sparkle\"]"), "{config}");
+    assert!(
+        config.contains("initial_input_method = \"sparkle\""),
+        "{config}"
+    );
+    env.wait_for_status_starting("sparkle")?;
+    let editor = env.editor(&[])?;
+    env.type_text(":rocket ")?;
+    editor.wait_for_text("🚀")?;
     Ok(())
 }
 

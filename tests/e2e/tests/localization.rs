@@ -16,6 +16,7 @@ fn chinese_session_has_translated_tray_diagnostics_and_stable_control_ids() -> a
     )?;
     env.set_locale("zh_CN.UTF-8");
     env.launch_daemon()?;
+    env.omime(&["enable", "echo"])?;
     let tray = env.tray_host()?;
     tray.wait_for_latest("Chinese tray menu", "menu ", |menu| {
         menu.contains("回声") && menu.contains("直接输入") && menu.contains("设置…")

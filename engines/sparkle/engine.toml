@@ -6,6 +6,7 @@ languages = ["und"]
 icon = "face-smile"
 exec = ["omime-sparkle"]
 api = "1.0"
+enabled_by_default = false
 
 [engine.i18n.zh-CN]
 name = "闪闪"

@@ -60,6 +60,7 @@ fn backspace_and_escape_edit_the_preedit_first() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see the module docs"]
 fn switching_with_the_cli_and_hotkeys() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], None)?;
+    env.omime(&["enable", "echo"])?;
     let editor = env.editor(&[])?;
     assert!(env.omime(&["list"])?.contains("echo"));
     assert_eq!(env.omime(&["status"])?.trim(), "direct input");

@@ -2447,7 +2447,7 @@ impl Core {
 /// What `config` enables, in switching order: engines (`fcitx5`: all its input
 /// methods) and input methods inside them (`fcitx5/shuangpin`). Entries of engines
 /// that are not installed are left out. Without a list, every installed engine that is
-/// enabled by default: engines of other frameworks are only offered.
+/// enabled by default: demo engines and other frameworks are only offered.
 fn enabled_entries(config: &Config, installed: &[InstalledEngine]) -> Vec<String> {
     let ids: Vec<&str> = installed.iter().map(InstalledEngine::id).collect();
     match &config.engines {

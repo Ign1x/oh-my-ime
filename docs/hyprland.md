@@ -143,6 +143,15 @@ The Nix package also contains its unit; NixOS makes it available through `system
 | The engine's menu (punctuation and the like) | `omime properties`, `omime activate <id>` |
 | Watch the status | `omime status --watch --json` (one line per change, for status bars) |
 
+Echo and Sparkle are installed but disabled by default, like the offered Fcitx 5
+and IBus engines. Add a demo to the hotkey cycle with `omime enable echo` or
+`omime enable sparkle`, or **Add input method…** in the settings app.
+`omime switch sparkle` tries an offered engine without enabling it; the tray menu
+lists enabled input methods, and its **Settings…** entry opens the settings app.
+`omime setup --engine sparkle` enables Sparkle and selects it for the first login.
+When no engine is enabled, `omime doctor` lists the available engines and how to
+enable one.
+
 The first launch uses `initial_input_method` when configured by `omime setup
 --engine ID`, otherwise direct input. Later launches restore the last choice,
 including direct input. To switch now, use `omime switch sparkle`. The hotkeys and the key timeout live in

@@ -89,6 +89,10 @@ omime doctor
 omime list --all
 ```
 
+Echo and Sparkle ship with the platform but are disabled by default, as are the
+offered Fcitx 5 and IBus engines. Use `omime enable echo` / `omime enable sparkle`
+or **Add input method…** in the settings app to include demos in the cycle.
+
 The NixOS module does not write `config.toml`; select engines with `omime setup`,
 `omime enable fcitx5` (or `omime enable ibus`), and the settings window. Use the
 Home Manager module's `settings` option, or write the file yourself, for a
@@ -116,7 +120,6 @@ Import the module and enable it:
     settings = {
       engines = [
         "fcitx5/shuangpin"
-        "sparkle"
       ];
       initial_input_method = "fcitx5/shuangpin";
     };
@@ -129,10 +132,11 @@ in [the configuration](../data/config.toml): `engines` lists the enabled engines
 and input methods in switching order, and `initial_input_method` is the first
 login's choice. `"fcitx5/shuangpin"` is the Xiaohe shuangpin input method inside
 the hosted Fcitx 5, so it needs `fcitx5.enable` and
-`qt6Packages.fcitx5-chinese-addons`. The bundled `sparkle` engine needs nothing
-else.
+`qt6Packages.fcitx5-chinese-addons`. To include a demo, add `"sparkle"` or `"echo"`
+to `settings.engines` explicitly; neither needs another package.
 
-The option defaults to `{ }`, which writes no file and leaves omimed's defaults.
+The option defaults to `{ }`, which writes no file and leaves omimed's defaults,
+with both demos disabled.
 When it is set, the file is a symlink into the Nix store, which is read-only:
 changes made with `omime config`, `omime enable`, or the settings window do not
 persist, and the next `home-manager switch` restores the generated file. Make those

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::{Child, Stdio};
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TestEnv, echo_engine, program_dir, wait_until};
+use omime_e2e::harness::{TestEnv, echo_engine, program_dir, sparkle_engine, wait_until};
 
 /// The settings' application id, which compositors see.
 const APP_ID: &str = "io.github.ign1x.OhMyIme.Settings";
@@ -64,12 +64,42 @@ impl Drop for Settings {
 fn the_settings_show_omimed_and_follow_it_as_it_stops_and_starts() -> anyhow::Result<()> {
     let mut env = TestEnv::start(&[echo_engine()], None)?;
     let settings = Settings::open(&env, "omime", &["settings"])?;
-    settings.wait_for_log("read the settings input_methods=1", 1)?;
+    settings.wait_for_log("read the settings input_methods=", 1)?;
 
     env.restart_daemon()?;
     settings.wait_for_log("omimed is not running", 1)?;
-    settings.wait_for_log("read the settings input_methods=1", 2)?;
+    settings.wait_for_log("read the settings input_methods=", 2)?;
     assert!(env.has_window(APP_ID)?, "the window stays open");
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_add_dialog_enables_offered_demo_engines() -> anyhow::Result<()> {
+    for id in ["echo", "sparkle"] {
+        let env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+        let list = env.omime(&["list"])?;
+        assert!(!list.contains(id), "{list}");
+        let settings = Settings::open(&env, "omime", &["settings"])?;
+        settings.wait_for_log("read the settings input_methods=", 1)?;
+        // With no enabled methods, the first button opens the add dialog. Its
+        // search field takes focus; the matching entry's Add button follows it.
+        env.key(&[], "Tab")?;
+        env.key(&[], "space")?;
+        env.type_text(id)?;
+        env.key(&[], "Tab")?;
+        env.key(&[], "space")?;
+        wait_until("the demo to be enabled in settings", || {
+            let config =
+                std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml")).ok()?;
+            config
+                .contains(&format!("engines = [\"{id}\"]"))
+                .then_some(())
+        })
+        .with_context(|| settings.log())?;
+        let list = env.omime(&["list"])?;
+        assert!(list.contains(id), "{list}");
+    }
     Ok(())
 }
 

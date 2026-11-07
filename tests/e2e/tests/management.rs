@@ -95,6 +95,7 @@ impl Drop for StatusWatch {
 #[ignore = "end-to-end test; see typing.rs"]
 fn status_watch_streams_changes() -> anyhow::Result<()> {
     let mut env = TestEnv::start(&[echo_engine()], None)?;
+    env.omime(&["enable", "echo"])?;
     let _editor = env.editor(&[])?;
     let mut watch = StatusWatch::spawn(&env)?;
 
@@ -129,8 +130,54 @@ fn enabled(list: &str, id: &str) -> Option<bool> {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn demos_are_offered_until_explicitly_enabled() -> anyhow::Result<()> {
+    let mut env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    let config = std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
+    assert!(!config.contains("engines ="), "{config}");
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "echo"), Some(false), "{list}");
+    assert_eq!(enabled(&list, "sparkle"), Some(false), "{list}");
+    let all = env.omime(&["list", "--all"])?;
+    assert!(all.contains("echo") && all.contains("sparkle"), "{all}");
+    let cycle = env.omime(&["list"])?;
+    assert!(
+        !cycle.contains("echo") && !cycle.contains("sparkle"),
+        "{cycle}"
+    );
+
+    let editor = env.editor(&[])?;
+    env.key(&["ctrl", "shift"], "space")?;
+    env.type_text("plain ")?;
+    editor.wait_for_text("plain ")?;
+    env.wait_for_status("direct input")?;
+    assert!(env.engine_pid("echo").is_none());
+    assert!(env.engine_pid("sparkle").is_none());
+
+    // An offered engine can be tried without adding it to the cycle.
+    env.omime(&["switch", "sparkle"])?;
+    env.wait_for_status_starting("sparkle")?;
+    env.type_text(":rocket ")?;
+    editor.wait_for_text("plain 🚀")?;
+    assert_eq!(enabled(&env.omime(&["engines"])?, "sparkle"), Some(false));
+    env.omime(&["switch", "direct"])?;
+    env.omime(&["enable", "sparkle"])?;
+    let list = env.omime(&["engines"])?;
+    assert_eq!(enabled(&list, "sparkle"), Some(true), "{list}");
+    assert_eq!(enabled(&list, "echo"), Some(false), "{list}");
+    env.key(&["ctrl", "shift"], "space")?;
+    env.wait_for_status_starting("sparkle")?;
+    env.restart_daemon()?;
+    env.wait_for_status_starting("sparkle")?;
+    assert_eq!(enabled(&env.omime(&["engines"])?, "echo"), Some(false));
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn engines_can_be_disabled_enabled_and_are_remembered() -> anyhow::Result<()> {
     let mut env = TestEnv::start(&[echo_engine(), sparkle_engine()], None)?;
+    env.omime(&["enable", "echo"])?;
+    env.omime(&["enable", "sparkle"])?;
     let list = env.omime(&["engines"])?;
     assert_eq!(enabled(&list, "echo"), Some(true), "{list}");
     assert_eq!(enabled(&list, "sparkle"), Some(true), "{list}");
@@ -227,7 +274,8 @@ fn sighup_reloads_the_configuration() -> anyhow::Result<()> {
     env.signal_daemon(rustix::process::Signal::HUP)?;
     omime_e2e::harness::wait_until("omimed to read the configuration", || {
         let list = env.omime(&["engines"]).ok()?;
-        (enabled(&list, "sparkle") == Some(false)).then_some(())
+        (enabled(&list, "echo") == Some(true) && enabled(&list, "sparkle") == Some(false))
+            .then_some(())
     })?;
     // It still runs.
     assert_eq!(enabled(&env.omime(&["engines"])?, "echo"), Some(true));
@@ -238,6 +286,7 @@ fn sighup_reloads_the_configuration() -> anyhow::Result<()> {
 #[ignore = "end-to-end test; see typing.rs"]
 fn frameworks_are_offered_where_installed_and_enabled_when_asked() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], None)?;
+    env.omime(&["enable", "echo"])?;
     // Manifests like the ones shipped for Fcitx 5 and IBus: for a program that is
     // installed, and for one that is not.
     let program = program_dir().join("omime-echo").display().to_string();

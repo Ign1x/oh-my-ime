@@ -114,6 +114,8 @@ systemctl --user enable --now omimed
 | 引擎的菜单（标点等） | `omime properties`、`omime activate <id>` |
 | 持续监视状态 | `omime status --watch --json`（每次变化输出一行，供状态栏使用） |
 
+Echo 和 Sparkle 已随平台安装，但与 Fcitx 5、IBus 一样默认仅供选择，不启用。运行 `omime enable echo` 或 `omime enable sparkle`，或在设置应用中选择“添加输入法…”，即可将演示引擎加入热键切换顺序。`omime switch sparkle` 可直接试用尚未启用的引擎；托盘菜单列出已启用的输入法，其中的“设置…”可打开设置应用。`omime setup --engine sparkle` 会启用 Sparkle，并将其设为首次登录的输入法。没有启用任何引擎时，`omime doctor` 会列出可用引擎及启用方式。
+
 首次启动采用 `omime setup --engine ID` 设置的 `initial_input_method`，未设置时使用直接输入；之后会恢复上次选择，包括直接输入。即时切换可用 `omime switch sparkle`。热键和按键超时位于 `~/.config/oh-my-ime/config.toml`；[`data/config.toml`](../../data/config.toml) 说明了每一个选项。文件写错时，`omime reload` 会指出错在哪里，omimed 继续使用原来的配置；它不认识的选项（拼错了，或者属于更新的版本）会被略过，`omime doctor` 会把它们列出来。
 
 ### 每个应用一个引擎

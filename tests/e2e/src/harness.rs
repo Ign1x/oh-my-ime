@@ -275,10 +275,21 @@ impl TestEnv {
             } else {
                 "api = \"1.0\""
             };
+            // Keep the demos' shipped enablement policy while using test commands
+            // and names, so tests cannot silently enable an offered engine.
+            let manifest = match engine.id {
+                "echo" => include_str!("../../../engines/echo/engine.toml"),
+                "sparkle" => include_str!("../../../engines/sparkle/engine.toml"),
+                _ => "",
+            };
+            let defaults = manifest
+                .lines()
+                .find(|line| line.starts_with("enabled_by_default ="))
+                .unwrap_or("");
             std::fs::write(
                 path.join("engine.toml"),
                 format!(
-                    "[engine]\nid = \"{}\"\nname = \"{}\"\nexec = [{}]\n{protocol}\n",
+                    "[engine]\nid = \"{}\"\nname = \"{}\"\nexec = [{}]\n{protocol}\n{defaults}\n",
                     engine.id,
                     engine.id,
                     exec.join(", ")

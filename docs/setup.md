@@ -8,7 +8,8 @@ and keeps enough information to undo its changes.
 
 Install the platform and the input method first. For Chinese input through Fcitx5,
 install Fcitx5 with its Pinyin addon; Qt applications also need the matching Fcitx5
-Qt input plugin. The bundled Sparkle demo is available without a hosted framework.
+Qt input plugin. The bundled Echo and Sparkle demos are offered but disabled by
+default; Sparkle needs no hosted framework.
 See [installation and application requirements](hyprland.md).
 
 ## Configure and start
@@ -38,7 +39,10 @@ omime setup --engine fcitx5/pinyin --take-over --start
 ```
 
 For IBus with libpinyin installed, use `--engine ibus/libpinyin`; for the bundled
-emoji engine, use `--engine sparkle`. Without `--engine`, setup
+emoji engine, use `--engine sparkle`. Setup adds the selected engine to `engines`
+and sets `initial_input_method`, so Sparkle works even with no engines enabled.
+You can also enable demos with `omime enable echo` / `omime enable sparkle`, or
+**Add input method…** in the settings app. Without `--engine`, setup
 preserves the current input-method configuration. Without `--start`, it prepares
 the next login and leaves the current session running as it is.
 

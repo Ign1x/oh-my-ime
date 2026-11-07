@@ -193,7 +193,20 @@ pub fn daemon_findings(daemon: Option<&Daemon>, others: &[OtherIm]) -> Vec<Findi
     }
     let enabled: Vec<&Engine> = daemon.engines.iter().filter(|e| e.enabled).collect();
     if enabled.is_empty() {
-        findings.push(Finding::warning(tr!("no engine is enabled")));
+        let available = if daemon.engines.is_empty() {
+            tr!("none installed")
+        } else {
+            daemon
+                .engines
+                .iter()
+                .map(|engine| engine.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        findings.push(Finding::warning(tr!(
+            "no engine is enabled; enable one with `omime enable <id>` or in the settings app; available engines: {available}",
+            available = available
+        )));
     }
     let working: Vec<String> = enabled
         .iter()
@@ -848,15 +861,31 @@ mod tests {
     }
 
     #[test]
-    fn no_enabled_engine_is_a_warning() {
-        let daemon = daemon(&[("seat0", true)], true, &[("echo", false, "stopped")]);
+    fn no_enabled_engine_lists_available_engines_and_how_to_enable_them() {
+        let daemon = daemon(
+            &[("seat0", true)],
+            true,
+            &[("echo", false, "stopped"), ("sparkle", false, "stopped")],
+        );
         let findings = daemon_findings(Some(&daemon), &[]);
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.level == Level::Warning && f.text == "no engine is enabled")
+        let warnings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.level == Level::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].text,
+            "no engine is enabled; enable one with `omime enable <id>` or in the settings app; available engines: echo, sparkle"
         );
         assert!(!findings.iter().any(|f| f.text.starts_with("engines:")));
+    }
+
+    #[test]
+    fn no_installed_engine_says_none_are_available() {
+        let daemon = daemon(&[("seat0", true)], true, &[]);
+        let findings = daemon_findings(Some(&daemon), &[]);
+        assert!(findings.iter().any(|f| f.level == Level::Warning
+            && f.text == "no engine is enabled; enable one with `omime enable <id>` or in the settings app; available engines: none installed"));
     }
 
     #[test]

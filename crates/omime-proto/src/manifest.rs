@@ -84,8 +84,8 @@ pub struct EngineInfo {
     /// looked up in `$PATH`, or absolute paths.
     #[serde(default)]
     pub requires: Vec<String>,
-    /// Whether the engine is enabled while `config.toml` lists no engines. Engines for
-    /// other frameworks are offered, not imposed, so their manifests say `false`.
+    /// Whether the engine is enabled while `config.toml` lists no engines. Demo engines
+    /// and other frameworks are only offered, so their manifests say `false`.
     #[serde(default = "enabled_by_default")]
     pub enabled_by_default: bool,
     /// The engine's settings program, if it has one.
@@ -579,6 +579,22 @@ protocol = "input-method-v2"
             "[engine.settings]\nexec = []\n\n[engine.i18n.zh-CN]",
         );
         assert!(Manifest::parse(&empty).is_err());
+    }
+
+    #[test]
+    fn bundled_demo_engines_are_offered_without_being_enabled() {
+        for (id, text) in [
+            ("echo", include_str!("../../../engines/echo/engine.toml")),
+            (
+                "sparkle",
+                include_str!("../../../engines/sparkle/engine.toml"),
+            ),
+        ] {
+            let (manifest, unknown) = Manifest::parse(text).unwrap();
+            assert_eq!(manifest.engine.id, id);
+            assert!(unknown.is_empty());
+            assert!(!manifest.engine.enabled_by_default, "{id}");
+        }
     }
 
     #[test]

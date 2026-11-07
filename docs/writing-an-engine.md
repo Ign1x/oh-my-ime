@@ -100,6 +100,7 @@ description = "Commits every word in UPPERCASE."
 languages = ["en"]
 exec = ["omime-echo"]   # looked up in $PATH; "./bin/x" is relative to this directory
 api = "1.0"
+enabled_by_default = false
 
 [engine.i18n.zh-CN]
 name = "回声"
@@ -112,7 +113,9 @@ A manifest that ships with something else, for a program that may not be install
 names the program in `requires = ["fcitx5"]` (names in `$PATH`, or absolute paths):
 omimed offers the engine only where it is installed. `enabled_by_default = false`
 makes it offered rather than enabled while `config.toml` lists no engines; users
-enable it with `omime enable <id>`.
+enable it with `omime enable <id>` or **Add input method…** in the settings app.
+Echo and Sparkle ship this way, as do the Fcitx 5 and IBus manifests. Omitting the
+key enables an engine by default.
 
 To install the directory for the current user, run `omime install <dir>`: it checks the
 manifest, copies the directory to `~/.local/share/oh-my-ime/engines/<id>` and asks a
@@ -133,8 +136,10 @@ cargo build
 PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 ```
 
-Then switch with the hotkeys (`Ctrl+Space` toggles direct input, `Ctrl+Shift+Space`
-cycles engines) or with `omime switch <id>`.
+`--engine echo` tries Echo immediately. In another terminal, run `omime enable echo`
+to include it in the hotkey cycle (`Ctrl+Space` toggles direct input,
+`Ctrl+Shift+Space` cycles enabled engines). `omime switch <id>` can also select an
+offered engine without enabling it.
 
 What your engine prints to stdout and stderr ends up in omimed's log, one line at a
 time, under the target `engine` and with your engine's id

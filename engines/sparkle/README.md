@@ -1,7 +1,14 @@
 # Sparkle ✨
 
+English · [简体中文](README.zh-CN.md)
+
 An oh-my-ime engine that draws its own UI. Type `:` followed by a few letters of an
 emoji's shortcode and pick from an animated deck that appears next to the text cursor.
+
+Sparkle ships with the platform but is disabled by default. Try it with
+`omime switch sparkle`, or add it to the hotkey cycle with `omime enable sparkle`
+or **Add input method…** in the settings app. For first-run setup,
+`omime setup --engine sparkle --start` enables and starts it.
 
 ![Sparkle in foot on Hyprland](../../docs/images/sparkle-in-foot.png)
 

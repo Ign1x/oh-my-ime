@@ -5,7 +5,8 @@
 # Enabled engines and input methods, in switching order. An engine such as "fcitx5"
 # brings every input method it has; "fcitx5/shuangpin" is one input method inside it,
 # which omimed adds to Fcitx 5's group when you switch to it. Without this line every
-# installed engine is enabled, except Fcitx 5 and IBus, which are only offered.
+# installed engine is enabled, except Echo, Sparkle, Fcitx 5 and IBus, which are
+# only offered. Enable the demos explicitly to include them in the switching cycle.
 # `omime enable <id>` and `omime disable <id>` edit it for you.
 # engines = ["fcitx5/shuangpin", "sparkle", "echo"]
 

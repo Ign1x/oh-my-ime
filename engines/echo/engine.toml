@@ -5,6 +5,7 @@ description = "Commits every word in UPPERCASE. A test and tutorial engine witho
 languages = ["en"]
 exec = ["omime-echo"]
 api = "1.0"
+enabled_by_default = false
 
 [engine.i18n.zh-CN]
 name = "回声"

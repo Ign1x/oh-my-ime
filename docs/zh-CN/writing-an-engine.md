@@ -79,6 +79,7 @@ description = "Commits every word in UPPERCASE."
 languages = ["en"]
 exec = ["omime-echo"]   # 在 $PATH 中查找；"./bin/x" 相对此目录
 api = "1.0"
+enabled_by_default = false
 
 [engine.i18n.zh-CN]
 name = "回声"
@@ -86,7 +87,7 @@ name = "回声"
 
 omimed 不认识的键会被略过并给出警告，因此用到新版本键的清单在旧版本里也能加载。
 
-如果清单随别的软件一起分发，而它所依赖的程序未必已安装，就在 `requires = ["fcitx5"]` 中写出这个程序（`$PATH` 中的名字，或者绝对路径）：只有装了它，omimed 才会提供这个引擎。`enabled_by_default = false` 表示在 `config.toml` 没有列出引擎时，它只被列为可用而不被启用；用户用 `omime enable <id>` 启用它。
+如果清单随别的软件一起分发，而它所依赖的程序未必已安装，就在 `requires = ["fcitx5"]` 中写出这个程序（`$PATH` 中的名字，或者绝对路径）：只有装了它，omimed 才会提供这个引擎。`enabled_by_default = false` 表示在 `config.toml` 没有列出引擎时，它只被列为可用而不被启用；用户可用 `omime enable <id>` 或设置应用中的“添加输入法…”启用它。Echo、Sparkle 以及 Fcitx 5、IBus 的清单都采用此设置。省略该键则默认启用引擎。
 
 要为当前用户安装这个目录，运行 `omime install <dir>`：它会检查清单，把目录复制到 `~/.local/share/oh-my-ime/engines/<id>`，并让正在运行的 omimed 重新加载。`--force` 会替换之前安装的副本，`omime uninstall <id>` 则将其移除。
 
@@ -103,7 +104,7 @@ cargo build
 PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 ```
 
-然后用热键切换（`Ctrl+Space` 在直接输入与上一个引擎之间切换，`Ctrl+Shift+Space` 循环切换引擎），或使用 `omime switch <id>`。
+`--engine echo` 可立即试用 Echo。在另一个终端运行 `omime enable echo`，将其加入热键切换顺序（`Ctrl+Space` 在直接输入与上一个引擎之间切换，`Ctrl+Shift+Space` 循环切换已启用的引擎）。`omime switch <id>` 也可直接选择尚未启用的引擎。
 
 引擎输出到 stdout 和 stderr 的内容会逐行写进 omimed 的日志，target 为 `engine`，并带上引擎的 id（`INFO engine: … engine="echo"`）。
 
