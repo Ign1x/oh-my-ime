@@ -39,6 +39,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Desktop notifications stop opening settings after they are resolved, dismissed or
+  expired. A recurring problem gets a new notification after it is resolved.
 - Configuration, saved state and the input-method catalog retain their file permissions
   when updated and use `0600` for new files. Atomic saves clean up temporary files after
   errors and keep the previous contents, including Sparkle's recent emoji. Sparkle's

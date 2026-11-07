@@ -7,10 +7,14 @@
 //! ready
 //! notify <id> <replaces id> <summary>|<body>
 //! close <id>
+//! closed <id> <reason>
+//! clicked <id>
 //! ```
 //!
 //! and reads commands from stdin: `click <id>` invokes the default action of a
-//! notification, as a click on it would.
+//! notification, as a click on it would; `closed <id> <reason>` emits
+//! `NotificationClosed`, as when it expired (1) or was dismissed (2). Clicks are
+//! deliberately allowed for closed and unknown IDs to test stale actions.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, Write as _};
@@ -58,8 +62,14 @@ impl Server {
         id
     }
 
-    fn close_notification(&self, id: u32) {
+    async fn close_notification(
+        &self,
+        id: u32,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<()> {
+        Self::notification_closed(&emitter, id, 3).await?;
         say(&format!("close {id}"));
+        Ok(())
     }
 
     fn get_capabilities(&self) -> Vec<String> {
@@ -80,6 +90,13 @@ impl Server {
         emitter: &SignalEmitter<'_>,
         id: u32,
         action_key: &str,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn notification_closed(
+        emitter: &SignalEmitter<'_>,
+        id: u32,
+        reason: u32,
     ) -> zbus::Result<()>;
 }
 
@@ -112,6 +129,15 @@ async fn main() -> anyhow::Result<()> {
         if let Some(id) = command.strip_prefix("click ") {
             let id: u32 = id.trim().parse().context("a notification id")?;
             Server::action_invoked(&emitter, id, "default").await?;
+            say(&format!("clicked {id}"));
+        } else if let Some(args) = command.strip_prefix("closed ") {
+            let (id, reason) = args
+                .split_once(' ')
+                .context("a notification id and reason")?;
+            let id: u32 = id.parse().context("a notification id")?;
+            let reason: u32 = reason.trim().parse().context("a close reason")?;
+            Server::notification_closed(&emitter, id, reason).await?;
+            say(&format!("closed {id} {reason}"));
         }
     }
     Ok(())

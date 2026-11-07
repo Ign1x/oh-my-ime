@@ -68,7 +68,113 @@ fn a_mistake_in_config_toml_is_told_once_until_it_is_fixed() -> anyhow::Result<(
     })?;
     let shown = shown(&server.lines());
     assert_eq!(shown.len(), 2, "{:?}", server.lines());
-    assert_eq!(shown[1].1, shown[0].0, "in place of the first: {shown:?}");
+    assert_eq!(
+        shown[1].1, 0,
+        "a new notification after resolution: {shown:?}"
+    );
+    assert_ne!(shown[1].0, shown[0].0, "the old ID stays closed: {shown:?}");
+    server.send(&format!("click {}", shown[1].0))?;
+    env.wait_for_log("opened the settings")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn closed_notification_actions_are_ignored() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let server = env.notifications()?;
+    write_config(&env, "[apps]\nremember = 'bad'\n")?;
+    let (status, _) = env.omime_status(&["reload"])?;
+    assert!(!status.success());
+    let told = server.wait_for("the configuration notification", |l| {
+        l.starts_with("notify ")
+    })?;
+    let (id, _, _) = shown(&[told]).pop().context("a notification")?;
+    env.configure("")?;
+    server.wait_for("the resolved notification to close", |l| {
+        l == format!("close {id}")
+    })?;
+    server.send(&format!("click {id}"))?;
+    server.wait_for("the stale action to be sent", |l| {
+        l == format!("clicked {id}")
+    })?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !env.daemon_log().contains("opened the settings"),
+        "a stale ActionInvoked for a closed notification launched settings\n{}",
+        env.daemon_log()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn dismissed_and_expired_notification_actions_are_ignored() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let server = env.notifications()?;
+    for reason in [1, 2] {
+        write_config(&env, "[apps]\nremember = 'bad'\n")?;
+        let (status, _) = env.omime_status(&["reload"])?;
+        assert!(!status.success());
+        let id = wait_until("a new configuration notification", || {
+            let notifications = shown(&server.lines());
+            (notifications.len() == reason as usize).then(|| notifications.last().unwrap().0)
+        })?;
+        // No delay between the close and the stale click: their bus order matters.
+        server.send(&format!("closed {id} {reason}\nclick {id}"))?;
+        server.wait_for("the stale action to be sent", |l| {
+            l == format!("clicked {id}")
+        })?;
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !env.daemon_log().contains("opened the settings"),
+            "ActionInvoked after NotificationClosed({id}, {reason}) launched settings\n{}",
+            env.daemon_log()
+        );
+        // Closing a notification does not resolve its trouble or reset its rate limit.
+        let (status, _) = env.omime_status(&["reload"])?;
+        assert!(!status.success());
+        env.configure("")?;
+    }
+    assert_eq!(shown(&server.lines()).len(), 2, "{:?}", server.lines());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_live_click_before_notification_closed_opens_the_settings_once() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let server = env.notifications()?;
+    write_config(&env, "[apps]\nremember = 'bad'\n")?;
+    let (status, _) = env.omime_status(&["reload"])?;
+    assert!(!status.success());
+    let told = server.wait_for("the configuration notification", |l| {
+        l.starts_with("notify ")
+    })?;
+    let (id, _, _) = shown(&[told]).pop().context("a notification")?;
+    // Desktops normally emit the action before dismissing a notification. An
+    // unknown ID and a later stale action must not open additional windows.
+    server.send(&format!(
+        "click 0\nclick {}\nclick {id}\nclosed {id} 2\nclick {id}",
+        id + 1
+    ))?;
+    env.wait_for_log("opened the settings")?;
+    wait_until("both actions for the notification to be sent", || {
+        (server
+            .lines()
+            .iter()
+            .filter(|l| **l == format!("clicked {id}"))
+            .count()
+            == 2)
+            .then_some(())
+    })?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        env.count_in_log("opened the settings"),
+        1,
+        "{}",
+        env.daemon_log()
+    );
     Ok(())
 }
 

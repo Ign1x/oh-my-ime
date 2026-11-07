@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, info};
 use zbus::Variant;
+use zbus::proxy::SignalStream;
 
 /// How long a trouble that is still there stays untold.
 const REPEAT_AFTER: Duration = Duration::from_secs(60 * 60);
@@ -161,6 +162,9 @@ trait Notifications {
 
     #[zbus(signal)]
     fn action_invoked(&self, id: u32, action_key: &str) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    fn notification_closed(&self, id: u32, reason: u32) -> zbus::Result<()>;
 }
 
 /// What the notifier's task does.
@@ -230,7 +234,7 @@ impl Notifier {
 /// What was told about a subject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Told {
-    /// The notification's id, 0 while the server has not answered.
+    /// The shown notification's id, or 0 before the server answers and after it closes.
     id: u32,
     at: Instant,
     resolved: bool,
@@ -277,9 +281,18 @@ impl Ledger {
             return None;
         }
         told.resolved = true;
-        (told.id != 0).then_some(told.id)
+        let id = std::mem::take(&mut told.id);
+        (id != 0).then_some(id)
     }
 
+    /// The desktop closed this notification, without necessarily resolving its trouble.
+    fn closed(&mut self, id: u32) {
+        for told in self.told.values_mut().filter(|t| t.id == id) {
+            told.id = 0;
+        }
+    }
+
+    /// Whether this is one of our notifications that is still shown.
     fn is_ours(&self, id: u32) -> bool {
         id != 0 && self.told.values().any(|t| t.id == id)
     }
@@ -288,11 +301,11 @@ impl Ledger {
 async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<String>) {
     let mut ledger = Ledger::default();
     let mut server: Option<NotificationsProxy<'static>> = None;
-    let mut clicks: Option<ActionInvokedStream> = None;
+    let mut events: Option<SignalStream<'static>> = None;
     loop {
-        let click = async {
-            match &mut clicks {
-                Some(clicks) => clicks.next().await,
+        let event = async {
+            match &mut events {
+                Some(events) => events.next().await,
                 None => std::future::pending().await,
             }
         };
@@ -311,7 +324,7 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                             match connect().await {
                                 Ok((proxy, stream)) => {
                                     server = Some(proxy);
-                                    clicks = stream;
+                                    events = stream;
                                 }
                                 Err(e) => {
                                     debug!("no notifications: {e}");
@@ -344,25 +357,32 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                     }
                 }
             }
-            Some(signal) = click => {
-                let Ok(args) = signal.args() else { continue };
-                if ledger.is_ours(args.id)
-                    && args.action_key == "default"
-                    && let Err(e) = crate::programs::open_settings_page(display.as_deref(), "about")
-                {
-                    debug!("{e}");
+            Some(signal) = event => {
+                if let Some(closed) = NotificationClosed::from_message(signal.clone()) {
+                    let Ok(args) = closed.args() else { continue };
+                    ledger.closed(args.id);
+                } else if let Some(click) = ActionInvoked::from_message(signal) {
+                    let Ok(args) = click.args() else { continue };
+                    if ledger.is_ours(args.id)
+                        && args.action_key == "default"
+                        && let Err(e) = crate::programs::open_settings_page(display.as_deref(), "about")
+                    {
+                        debug!("{e}");
+                    }
                 }
             }
         }
     }
 }
 
-/// The notification server on the session bus, and its clicks.
-async fn connect() -> zbus::Result<(NotificationsProxy<'static>, Option<ActionInvokedStream>)> {
+/// The notification server on the session bus, and its signals in arrival order.
+async fn connect() -> zbus::Result<(NotificationsProxy<'static>, Option<SignalStream<'static>>)> {
     let conn = zbus::Connection::session().await?;
     let proxy = NotificationsProxy::new(&conn).await?;
-    let clicks = proxy.receive_action_invoked().await.ok();
-    Ok((proxy, clicks))
+    // A click can be followed immediately by NotificationClosed. Separate streams
+    // could reorder them, losing a live click or accepting one after closure.
+    let events = proxy.inner().receive_all_signals().await.ok();
+    Ok((proxy, events))
 }
 
 #[cfg(test)]
@@ -382,10 +402,80 @@ mod tests {
 
         assert_eq!(ledger.resolve(&seat), Some(7));
         assert_eq!(ledger.resolve(&seat), None, "closed once");
-        // Back again: told again, in place of the old notification.
-        assert_eq!(ledger.tell(&seat, start + Duration::from_secs(6)), Some(7));
-        assert!(ledger.is_ours(7));
+        // Back again: the closed notification is not replaced.
+        assert_eq!(ledger.tell(&seat, start + Duration::from_secs(6)), Some(0));
+        assert!(!ledger.is_ours(7));
         assert!(!ledger.is_ours(8));
+    }
+
+    #[test]
+    fn resolved_notification_ids_are_not_actionable() {
+        let mut ledger = Ledger::default();
+        let now = Instant::now();
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 7);
+        assert!(ledger.is_ours(7));
+
+        assert_eq!(ledger.resolve(&Subject::Config), Some(7));
+        assert!(!ledger.is_ours(7), "the resolved notification is closed");
+        assert!(!ledger.is_ours(0), "zero never names a notification");
+        assert_eq!(ledger.resolve(&Subject::Config), None);
+    }
+
+    #[test]
+    fn a_new_notification_about_a_resolved_subject_is_actionable() {
+        let mut ledger = Ledger::default();
+        let now = Instant::now();
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 7);
+        assert_eq!(ledger.resolve(&Subject::Config), Some(7));
+
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        assert!(!ledger.is_ours(7));
+        ledger.shown(&Subject::Config, 8);
+        assert!(ledger.is_ours(8));
+        assert!(!ledger.is_ours(7));
+        assert_eq!(ledger.resolve(&Subject::Config), Some(8));
+        assert!(!ledger.is_ours(8));
+    }
+
+    #[test]
+    fn desktop_closure_keeps_the_repeat_deadline_and_other_live_ids() {
+        let mut ledger = Ledger::default();
+        let now = Instant::now();
+        let seat = Subject::Seat("seat0".to_owned());
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 7);
+        assert_eq!(ledger.tell(&seat, now), Some(0));
+        ledger.shown(&seat, 9);
+        ledger.closed(0);
+        ledger.closed(123);
+        assert!(ledger.is_ours(7));
+        assert!(ledger.is_ours(9));
+
+        ledger.closed(7);
+        assert!(!ledger.is_ours(7));
+        assert!(ledger.is_ours(9));
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER / 2), None);
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER), Some(0));
+        ledger.shown(&Subject::Config, 8);
+        ledger.closed(7); // A delayed old close cannot retire the new notification.
+        assert!(ledger.is_ours(8));
+        assert!(ledger.is_ours(9));
+    }
+
+    #[test]
+    fn resolving_a_dismissed_notification_allows_the_subject_to_be_told_again() {
+        let mut ledger = Ledger::default();
+        let now = Instant::now();
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 7);
+        ledger.closed(7);
+        assert_eq!(ledger.resolve(&Subject::Config), None, "already closed");
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 8);
+        assert!(!ledger.is_ours(7));
+        assert!(ledger.is_ours(8));
     }
 
     #[test]
@@ -393,9 +483,11 @@ mod tests {
         let mut ledger = Ledger::default();
         let engine = Subject::Engine("sparkle".to_owned());
         let start = Instant::now();
-        assert!(ledger.tell(&engine, start).is_some());
+        assert_eq!(ledger.tell(&engine, start), Some(0));
+        ledger.shown(&engine, 7);
         assert!(ledger.tell(&engine, start + REPEAT_AFTER / 2).is_none());
-        assert!(ledger.tell(&engine, start + REPEAT_AFTER).is_some());
+        assert_eq!(ledger.tell(&engine, start + REPEAT_AFTER), Some(7));
+        assert!(ledger.is_ours(7), "a live notification can be replaced");
         // Nothing was told about a subject that never was in trouble.
         assert_eq!(ledger.resolve(&Subject::Config), None);
     }
