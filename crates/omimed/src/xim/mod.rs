@@ -15,8 +15,10 @@
 mod keymap;
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::num::NonZeroU16;
 use std::os::fd::AsFd as _;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -36,8 +38,8 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use xim::x11rb::{HasConnection as _, X11rbServer};
 use xim::{
-    CommitData, Feedback, ForwardEventFlag, InputContext, InputStyle, PreeditDrawStatus, Request,
-    Server as _, ServerCore as _, ServerError, ServerHandler, UserInputContext, XEvent,
+    CommitData, ErrorCode, Feedback, ForwardEventFlag, InputContext, InputStyle, PreeditDrawStatus,
+    Request, Server as _, ServerCore as _, ServerError, ServerHandler, UserInputContext, XEvent,
     XimConnections,
 };
 
@@ -57,6 +59,11 @@ pub const ALIASES: [&str; 2] = ["fcitx", "ibus"];
 const KEY_EVENTS: u32 = 1;
 /// The major opcode of `XIM_SYNC_REPLY`.
 const XIM_SYNC_REPLY: u8 = 62;
+/// The major opcode of `XIM_CREATE_IC`.
+const XIM_CREATE_IC: u8 = 50;
+/// `xim` increments its ID before storing a context, and panics when it reaches zero.
+/// Count all allocations on a connection, including contexts already destroyed.
+const MAX_IC_ALLOCATIONS: u16 = u16::MAX - 1;
 /// How long to wait for an application to consume a commit or key before sending the
 /// next one anyway.
 const SYNC_TIMEOUT: Duration = Duration::from_millis(300);
@@ -123,8 +130,13 @@ struct Handler {
     root: u32,
     /// The communication window of the protocol message being handled.
     com_win: Option<u32>,
+    /// The CreateIc being handled, for an error that libX11 can match to its request.
+    create_ic_im: Option<NonZeroU16>,
     /// The communication window of each client window with input contexts.
     clients: BTreeMap<u32, u32>,
+    ic_allocations: BTreeMap<u32, u16>,
+    /// Connections already warned about their lifetime input context allocation limit.
+    ic_limit_warned: BTreeSet<u32>,
     keymap: Keymap,
     ics: BTreeMap<IcKey, Ic>,
     pending: BTreeMap<u64, Pending>,
@@ -141,6 +153,74 @@ fn ic_key(ic: &InputContext) -> IcKey {
 }
 
 impl Handler {
+    fn reserve_ic(&mut self, com_win: u32) -> bool {
+        let count = self.ic_allocations.entry(com_win).or_default();
+        if *count >= MAX_IC_ALLOCATIONS {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    fn allocate_ic(&mut self, server: &mut impl xim::Server) -> Result<(), ServerError> {
+        let com_win = self.com_win.ok_or(ServerError::ClientNotExists)?;
+        if !self.reserve_ic(com_win) {
+            if self.ic_limit_warned.insert(com_win) {
+                warn!(
+                    com_win,
+                    "XIM: input context allocation limit reached; refusing CreateIc"
+                );
+            }
+            // libX11 waits for an error with a valid, matching IMID. An error without
+            // it is unrelated to the pending CreateIc and leaves the caller waiting.
+            let im = self.create_ic_im.ok_or(ServerError::ClientNotExists)?;
+            if let Some((&client_win, _)) = self.clients.iter().find(|(_, win)| **win == com_win) {
+                server.error(
+                    client_win,
+                    ErrorCode::BadAlloc,
+                    String::new(),
+                    Some(im),
+                    None,
+                )?;
+            }
+            return Err(ServerError::XimError(ErrorCode::BadAlloc, String::new()));
+        }
+        Ok(())
+    }
+
+    fn forget_connection(
+        &mut self,
+        com_win: u32,
+        queue: &mut VecDeque<Queued>,
+        waiting: &mut Option<(Instant, u32)>,
+    ) {
+        self.ic_allocations.remove(&com_win);
+        self.ic_limit_warned.remove(&com_win);
+        let clients: Vec<u32> = self
+            .clients
+            .iter()
+            .filter_map(|(&client, &owner)| (owner == com_win).then_some(client))
+            .collect();
+        for client in clients {
+            let keys: Vec<IcKey> = self
+                .ics
+                .keys()
+                .filter(|key| key.0 == client)
+                .copied()
+                .collect();
+            for key in keys {
+                self.focus_out(key);
+                self.ics.remove(&key);
+            }
+            self.pending.retain(|_, pending| pending.ic.0 != client);
+            queue.retain(|queued| queued.client_win != client);
+            if waiting.is_some_and(|(_, waiting_for)| waiting_for == client) {
+                *waiting = None;
+            }
+            self.clients.remove(&client);
+        }
+    }
+
     fn focus_in(&mut self, key: IcKey) {
         let Some(ic) = self.ics.get_mut(&key) else {
             return;
@@ -193,8 +273,8 @@ impl ServerHandler<Server> for Handler {
     type InputStyleArray = [InputStyle; 3];
     type InputContextData = ();
 
-    fn new_ic_data(&mut self, _server: &mut Server, _style: InputStyle) -> Result<(), ServerError> {
-        Ok(())
+    fn new_ic_data(&mut self, server: &mut Server, _style: InputStyle) -> Result<(), ServerError> {
+        self.allocate_ic(server)
     }
 
     fn input_styles(&self) -> Self::InputStyleArray {
@@ -434,7 +514,10 @@ impl XimFrontend {
                 context_ids,
                 root,
                 com_win: None,
+                create_ic_im: None,
                 clients: BTreeMap::new(),
+                ic_allocations: BTreeMap::new(),
+                ic_limit_warned: BTreeSet::new(),
                 keymap,
                 ics: BTreeMap::new(),
                 pending: BTreeMap::new(),
@@ -479,6 +562,8 @@ impl XimFrontend {
     }
 
     fn handle_event(&mut self, event: &Event) -> anyhow::Result<()> {
+        self.handler.com_win = None;
+        self.handler.create_ic_im = None;
         match event {
             Event::MappingNotify(_) => {
                 self.handler.keymap = Keymap::load(self.server.conn())?;
@@ -486,47 +571,66 @@ impl XimFrontend {
             Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
                 self.monitors = load_monitors(self.server.conn(), self.handler.root);
             }
-            // The `xim` crate ignores this answer; it lets the next request out.
-            Event::ClientMessage(msg)
-                if msg.type_ == self.xim_protocol && is_sync_reply(self.server.conn(), msg) =>
-            {
-                self.waiting = None;
+            Event::ClientMessage(msg) if msg.type_ == self.xim_protocol => {
+                self.handler.com_win = Some(msg.window);
+                if let Some(header) = protocol_header(self.server.conn(), msg) {
+                    self.handler.create_ic_im = create_ic_im(&header);
+                    // The `xim` crate ignores this answer; it lets the next request out.
+                    if header[0] == XIM_SYNC_REPLY {
+                        self.waiting = None;
+                    }
+                }
             }
             Event::DestroyNotify(notify) => self.client_gone(notify.window),
             _ => {}
         }
-        self.handler.com_win = match event {
-            Event::ClientMessage(msg) if msg.type_ == self.xim_protocol => Some(msg.window),
-            _ => None,
+        let connected = self
+            .handler
+            .com_win
+            .is_some_and(|win| self.connections.get_connection(win).is_some());
+        // Open has no allocation hook. Its ID counter can panic too, even in release
+        // builds; keep panic=unwind and discard the affected connection before reuse.
+        let panicked = match catch_unwind(AssertUnwindSafe(|| {
+            self.server
+                .filter_event(event, &mut self.connections, &mut self.handler)
+        })) {
+            Ok(Ok(_)) => false,
+            Ok(Err(e)) => {
+                debug!("XIM: {e}");
+                false
+            }
+            Err(_) => {
+                warn!("XIM: protocol handler panicked; disconnecting client");
+                true
+            }
         };
-        if let Err(e) = self
-            .server
-            .filter_event(event, &mut self.connections, &mut self.handler)
+        if let Some(com_win) = self.handler.com_win.take()
+            && connected
+            && (panicked || self.connections.get_connection(com_win).is_none())
         {
-            debug!("XIM: {e}");
+            self.disconnect_client(com_win);
         }
         Ok(())
     }
 
     /// Ends the input contexts of an application whose client window is gone.
     fn client_gone(&mut self, client_win: u32) {
-        let Some(com_win) = self.handler.clients.remove(&client_win) else {
+        let Some(&com_win) = self.handler.clients.get(&client_win) else {
             return;
         };
         debug!(client_win, "XIM: an application went away");
-        if let Some(connection) = self.connections.get_connection(com_win)
-            && let Err(e) = connection.disconnect(&mut self.server, &mut self.handler)
-        {
-            debug!("XIM: {e}");
-        }
+        self.disconnect_client(com_win);
+    }
+
+    /// Discards protocol state and output belonging only to this connection, including
+    /// an Open-only client that never registered an input context with the handler.
+    fn disconnect_client(&mut self, com_win: u32) {
         self.connections.remove_connection(com_win);
-        self.queue.retain(|queued| queued.client_win != client_win);
-        if self
-            .waiting
-            .is_some_and(|(_, waiting_for)| waiting_for == client_win)
-        {
-            self.waiting = None;
-        }
+        self.handler
+            .forget_connection(com_win, &mut self.queue, &mut self.waiting);
+        // The transport window belongs to omimed, not the application. Destroy it so
+        // the client can detect the disconnect, including after an Open panic.
+        let _ = self.server.conn().destroy_window(com_win);
     }
 
     /// When to give up on an application that did not answer a synchronous request.
@@ -878,21 +982,28 @@ fn connect_display(wait: Duration) -> anyhow::Result<(RustConnection, usize)> {
     }
 }
 
-/// Whether the protocol message `msg` is `XIM_SYNC_REPLY`. Short messages travel in the
-/// client message itself (format 8); others in a property it names (format 32), which is
-/// only peeked at here and left for the `xim` crate to read.
-fn is_sync_reply(conn: &RustConnection, msg: &ClientMessageEvent) -> bool {
+/// The protocol header and first ID. Long messages travel in a property, which is
+/// only peeked at here and left for the `xim` crate to read and delete.
+fn protocol_header(conn: &RustConnection, msg: &ClientMessageEvent) -> Option<[u8; 8]> {
     match msg.format {
-        8 => msg.data.as_data8()[0] == XIM_SYNC_REPLY,
+        8 => msg.data.as_data8()[..8].try_into().ok(),
         32 => {
             let [_length, property, ..] = msg.data.as_data32();
-            conn.get_property(false, msg.window, property, AtomEnum::ANY, 0, 1)
+            conn.get_property(false, msg.window, property, AtomEnum::ANY, 0, 2)
                 .ok()
                 .and_then(|cookie| cookie.reply().ok())
-                .is_some_and(|reply| reply.value.first() == Some(&XIM_SYNC_REPLY))
+                .and_then(|reply| reply.value.get(..8)?.try_into().ok())
         }
-        _ => false,
+        _ => None,
     }
+}
+
+fn create_ic_im(header: &[u8]) -> Option<NonZeroU16> {
+    if header.first() != Some(&XIM_CREATE_IC) {
+        return None;
+    }
+    // Match the native byte order used by the xim crate's protocol reader.
+    NonZeroU16::new(u16::from_ne_bytes(header.get(4..6)?.try_into().ok()?))
 }
 
 /// The monitors of the screen of `root`, or none if RandR cannot tell.
@@ -920,4 +1031,218 @@ fn load_monitors(conn: &RustConnection, root: u32) -> Vec<Monitor> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Replies(Vec<(u32, Request)>);
+
+    impl xim::ServerCore for Replies {
+        type XEvent = XEvent;
+
+        fn deserialize_event(&self, event: &XEvent) -> XEvent {
+            event.clone()
+        }
+
+        fn send_req(&mut self, client: u32, request: Request) -> Result<(), ServerError> {
+            self.0.push((client, request));
+            Ok(())
+        }
+    }
+
+    fn handler() -> Handler {
+        Handler {
+            context_ids: ContextIds::default(),
+            root: 0,
+            com_win: None,
+            create_ic_im: None,
+            clients: BTreeMap::new(),
+            ic_allocations: BTreeMap::new(),
+            ic_limit_warned: BTreeSet::new(),
+            keymap: Keymap::default(),
+            ics: BTreeMap::new(),
+            pending: BTreeMap::new(),
+            next_key: 0,
+            events: VecDeque::new(),
+        }
+    }
+
+    #[test]
+    fn context_allocations_are_bounded_per_connection_without_live_contexts() {
+        let mut handler = handler();
+        // No contexts remain live, as in repeated CreateIc / DestroyIc churn.
+        for allocation in 0..70_000 {
+            assert_eq!(
+                handler.reserve_ic(10),
+                allocation < u32::from(MAX_IC_ALLOCATIONS),
+                "allocation {allocation}"
+            );
+        }
+        assert!(handler.ics.is_empty());
+        assert!(
+            handler.reserve_ic(20),
+            "another connection can still allocate"
+        );
+        assert!(
+            !handler.reserve_ic(10),
+            "another client cannot reset the limit"
+        );
+    }
+
+    #[test]
+    fn refused_create_ic_error_matches_libx11_reply_filter() {
+        let mut handler = handler();
+        let mut replies = Replies::default();
+        handler.com_win = Some(10);
+        handler.clients.insert(100, 10);
+        handler.ic_allocations.insert(10, MAX_IC_ALLOCATIONS);
+        // Use multiple, nontrivial IMIDs: the refused request need not belong to the
+        // first input method opened on the connection.
+        for im in [2, 0x1234] {
+            let wire = xim::write_to_vec(Request::CreateIc {
+                input_method_id: im,
+                ic_attributes: Vec::new(),
+            });
+            handler.create_ic_im = create_ic_im(&wire);
+            assert!(handler.allocate_ic(&mut replies).is_err());
+            let (client, request) = replies.0.pop().unwrap();
+            assert_eq!(client, 100);
+            // _XimCreateICCheck ignores errors without IMID_VALID or with a different
+            // IMID. Exercise Server::error's real serialization and validity flags.
+            let wire = xim::write_to_vec(request);
+            let Request::Error {
+                input_method_id,
+                input_context_id,
+                flag,
+                code,
+                ..
+            } = xim::read::<Request>(&wire).unwrap()
+            else {
+                panic!("CreateIc was not answered with XIM_ERROR");
+            };
+            assert!(flag.contains(xim::ErrorFlag::INPUT_METHOD_ID_VALID));
+            assert_eq!(input_method_id, im);
+            assert_eq!(input_context_id, 0);
+            assert!(!flag.contains(xim::ErrorFlag::INPUT_CONTEXT_ID_VALID));
+            assert_eq!(code, ErrorCode::BadAlloc);
+        }
+        assert_eq!(create_ic_im(&[]), None);
+        assert_eq!(create_ic_im(&[XIM_CREATE_IC; 5]), None);
+        assert_eq!(
+            create_ic_im(&xim::write_to_vec(Request::Close { input_method_id: 2 })),
+            None
+        );
+    }
+
+    fn active_connections() -> (Handler, VecDeque<Queued>, Option<(Instant, u32)>) {
+        let mut handler = handler();
+        let mut queue = VecDeque::new();
+        let waiting = Some((Instant::now(), 100));
+        let event = serialize_event(&KeyPressEvent::default());
+        for (client, connection, id) in [(100, 10, 1), (200, 20, 2)] {
+            let key = (client, 2, 1);
+            handler.clients.insert(client, connection);
+            handler.ics.insert(key, Ic::default());
+            handler.focus_in(key);
+            handler.pending.insert(
+                id,
+                Pending {
+                    ic: key,
+                    event: event.clone(),
+                },
+            );
+            queue.push_back(Queued {
+                client_win: client,
+                request: Request::Commit {
+                    input_method_id: 2,
+                    input_context_id: 1,
+                    data: CommitData::Chars {
+                        commited: b"queued".to_vec(),
+                        syncronous: true,
+                    },
+                },
+                sync: true,
+            });
+        }
+        handler.events.clear();
+        handler.com_win = Some(10);
+        handler.create_ic_im = NonZeroU16::new(2);
+        handler.ic_allocations.insert(10, MAX_IC_ALLOCATIONS);
+        (handler, queue, waiting)
+    }
+
+    #[test]
+    fn refusing_create_ic_preserves_existing_contexts_and_work() {
+        let (mut handler, queue, waiting) = active_connections();
+        let mut replies = Replies::default();
+        let ctx = handler.ics[&(100, 2, 1)].ctx;
+        let since = waiting.unwrap().0;
+        // Repeated requests from the same connection keep receiving errors without
+        // ending existing contexts or discarding their work.
+        for _ in 0..3 {
+            assert!(matches!(
+                handler.allocate_ic(&mut replies),
+                Err(ServerError::XimError(ErrorCode::BadAlloc, _))
+            ));
+            assert_eq!(handler.ics.len(), 2);
+            assert!(handler.ics[&(100, 2, 1)].focused);
+            assert_eq!(handler.ics[&(100, 2, 1)].ctx, ctx);
+            assert_eq!(handler.pending.len(), 2);
+            assert_eq!(handler.pending[&1].ic, (100, 2, 1));
+            assert_eq!(handler.clients.get(&100), Some(&10));
+            assert_eq!(handler.ic_allocations.get(&10), Some(&MAX_IC_ALLOCATIONS));
+            assert_eq!(handler.ic_limit_warned, BTreeSet::from([10]));
+            assert!(
+                handler.events.is_empty(),
+                "refusal must not deactivate a context"
+            );
+            assert_eq!(queue.len(), 2);
+            assert_eq!(queue.front().unwrap().client_win, 100);
+            assert_eq!(waiting, Some((since, 100)));
+        }
+        assert_eq!(replies.0.len(), 3);
+        assert!(replies.0.iter().all(|(client, request)| *client == 100
+            && matches!(
+                request,
+                Request::Error {
+                    input_method_id: 2,
+                    code: ErrorCode::BadAlloc,
+                    ..
+                }
+            )));
+        assert!(handler.reserve_ic(20));
+    }
+
+    #[test]
+    fn forgetting_connection_cleans_live_context_pending_key_and_queued_output() {
+        let (mut handler, mut queue, mut waiting) = active_connections();
+        let lost_ctx = handler.ics[&(100, 2, 1)].ctx.unwrap();
+        let surviving_ctx = handler.ics[&(200, 2, 1)].ctx.unwrap();
+        handler.ic_limit_warned.insert(10);
+        handler.forget_connection(10, &mut queue, &mut waiting);
+
+        assert!(
+            matches!(handler.events.pop_front(), Some(FrontendEvent::Deactivated { ctx }) if ctx == lost_ctx)
+        );
+        assert!(handler.events.is_empty());
+        assert!(!handler.ics.contains_key(&(100, 2, 1)));
+        // finish_key can no longer send the departed client's late key reply.
+        assert!(handler.pending.remove(&1).is_none());
+        assert!(handler.pending.contains_key(&2));
+        assert_eq!(handler.ics[&(200, 2, 1)].ctx, Some(surviving_ctx));
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.front().unwrap().client_win, 200);
+        assert!(waiting.is_none());
+        assert!(!handler.ic_allocations.contains_key(&10));
+        assert!(!handler.ic_limit_warned.contains(&10));
+        assert!(handler.reserve_ic(20));
+        // Repeated cleanup is harmless and preserves another client's sync wait.
+        waiting = Some((Instant::now(), 200));
+        handler.forget_connection(10, &mut queue, &mut waiting);
+        assert!(waiting.is_some());
+        assert!(handler.events.is_empty());
+    }
 }

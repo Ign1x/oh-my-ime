@@ -39,6 +39,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- XIM clients that exhaust input-context or input-method IDs no longer terminate
+  omimed. After 65,534 context allocations on a connection, CreateIc receives
+  `XIM_ERROR` (`BadAlloc`) and `XCreateIC` returns NULL; the connection and its existing
+  contexts keep working. New contexts need a new XIM connection, for example by
+  restarting the application. A protocol-handler panic drops only that connection;
+  repeated Open/Close can trigger this, but libX11 opens one input method per connection.
 - Fcitx5-module clients are limited to 1,024 input contexts per connection across both
   bus names, with 8,192 in total, and 4,000 bytes of surrounding text per context.
   Destroying contexts or disconnecting releases their quota, including creations still

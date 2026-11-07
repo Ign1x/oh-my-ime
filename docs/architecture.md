@@ -176,7 +176,18 @@ know which frontend a key came from.
   or a key sent back at the front of the application's event queue, so two in a row would
   arrive in the wrong order: omimed sends them one at a time as synchronous requests and
   waits for the application's `XIM_SYNC_REPLY` (300 ms at most) before the next. Keysyms
-  come from the X server's core keyboard mapping.
+  come from the X server's core keyboard mapping. Each connection may allocate at most
+  65,534 input contexts over its lifetime, including contexts already destroyed. Further
+  CreateIc requests receive `XIM_ERROR` (`BadAlloc`), so libX11's `XCreateIC` returns NULL.
+  The connection and its existing contexts keep working, including pending keys and
+  queued output. New contexts need a new XIM connection, for example by restarting
+  the application. omimed warns once per connection about the limit.
+  Only a panic in the XIM protocol handler drops a connection as fault containment,
+  releasing that connection's contexts, pending keys and queued output. Input-method
+  ID exhaustion from repeated Open/Close requests is one such panic; libX11 never
+  causes it because it opens one input method per connection. Other clients keep
+  working. This containment requires `panic = "unwind"`, Rust's default, in release
+  builds too.
 - **Fcitx5 modules.** omimed serves `org.fcitx.Fcitx.InputMethod1` and
   `org.fcitx.Fcitx.InputContext1` under the bus names `org.fcitx.Fcitx5` and
   `org.freedesktop.portal.Fcitx`, and queues for them while another program, such as a
