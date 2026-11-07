@@ -4,16 +4,16 @@
 //! exercised without a real home directory and without a running daemon.
 
 use omime_proto::tr;
-use std::env;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{PermissionsExt as _, symlink};
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use omime_proto::manifest::{
     InstalledEngine, MANIFEST_FILE, Manifest, discover, is_valid_engine_id,
 };
+use omime_proto::paths::find_program;
 
 /// Copies the engine directory `source` to `engines_dir/<id>` and returns the installed
 /// engine. `source` itself stays as it is.
@@ -114,17 +114,18 @@ pub fn uninstall(engines_dir: &Path, id: &str, search: &[PathBuf]) -> anyhow::Re
 /// in `$PATH` (for a bare name) or the file it resolves to is missing or not executable.
 pub fn command_warning(engine: &InstalledEngine) -> Option<String> {
     let program = engine.command().into_iter().next()?;
-    if !program.contains('/') {
-        return find_in_path(&program).is_none().then(|| {
-            tr!(
-                "`{program}` is not in PATH, so omimed cannot start this engine",
-                program = program
-            )
-        });
+    if find_program(&program).is_some() {
+        return None;
     }
+    if !program.contains('/') {
+        return Some(tr!(
+            "`{program}` is not in PATH, so omimed cannot start this engine",
+            program = program
+        ));
+    }
+    // Keep the more specific diagnostic for an explicit path after lookup fails.
     let path = Path::new(&program);
     match fs::metadata(path) {
-        Ok(metadata) if is_executable(&metadata) => None,
         Ok(_) => Some(tr!(
             "{program} is not executable, so omimed cannot start this engine",
             program = program
@@ -183,20 +184,10 @@ fn remove_path(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Finds the executable `name` in `$PATH`.
-pub(super) fn find_in_path(name: &str) -> Option<PathBuf> {
-    env::split_paths(&env::var_os("PATH")?)
-        .map(|dir| dir.join(name))
-        .find(|path| fs::metadata(path).is_ok_and(|m| is_executable(&m)))
-}
-
-fn is_executable(metadata: &fs::Metadata) -> bool {
-    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     const MANIFEST: &str = r#"

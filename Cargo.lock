@@ -3008,6 +3008,7 @@ dependencies = [
 name = "omime-proto"
 version = "0.4.0"
 dependencies = [
+ "rustix 1.1.6",
  "serde",
  "serde_ignored",
  "toml",

@@ -204,12 +204,11 @@ async fn stop(child: &mut Child) {
 /// The program `$env` names, or `name` on `$PATH`.
 fn program(env: &str, name: &str) -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os(env) {
+        // Explicit overrides go straight to Command, which reports launch errors
+        // for that exact choice instead of falling back to another installation.
         return Ok(PathBuf::from(path));
     }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|path| path.is_file())
+    omime_proto::paths::find_program(name)
         .with_context(|| format!("{name} is not on $PATH; is IBus installed?"))
 }
 

@@ -1,6 +1,7 @@
-//! Standard locations, following the XDG base directory specification.
+//! Standard XDG locations, private file writes and executable lookup.
 
 use std::env;
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -151,6 +152,34 @@ pub fn engine_dirs() -> Vec<PathBuf> {
             .map(|p| p.join(PROJECT_DIR).join("engines")),
     );
     dirs
+}
+
+/// Finds an executable regular file, following symlinks and checking execute access
+/// for the current user. Names containing `/` are paths used as supplied; bare names
+/// are searched in `$PATH` order. Empty entries mean the current directory, while an
+/// absent `$PATH` has no entries. Returned paths retain their symlinks and may be
+/// relative to the current directory.
+pub fn find_program(program: impl AsRef<Path>) -> Option<PathBuf> {
+    find_program_in(program.as_ref(), env::var_os("PATH").as_deref())
+}
+
+fn find_program_in(program: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
+    let executable = |path: &Path| {
+        path.is_file() && rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok()
+    };
+    if program.as_os_str().as_encoded_bytes().contains(&b'/') {
+        return executable(program).then(|| program.to_path_buf());
+    }
+    env::split_paths(path?)
+        .map(|dir| {
+            // Keep a slash in the result so Command does not search PATH again.
+            if dir.as_os_str().is_empty() {
+                Path::new(".").join(program)
+            } else {
+                dir.join(program)
+            }
+        })
+        .find(|path| executable(path))
 }
 
 #[cfg(test)]
@@ -325,5 +354,160 @@ mod tests {
                 assert_eq!(fs::read(&file).unwrap(), b"keep");
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod program_tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::symlink;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static NEXT: AtomicU32 = AtomicU32::new(0);
+            let dir = env::temp_dir().join(format!(
+                "omime-program-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn file(&self, name: impl AsRef<Path>, mode: u32) -> PathBuf {
+            let path = self.0.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "#!/bin/sh\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn explicit_paths_do_not_need_path() {
+        let temp = TempDir::new();
+        let program = temp.file("run", 0o755);
+        assert_eq!(find_program_in(&program, None), Some(program));
+        assert_eq!(find_program_in(&temp.0.join("missing"), None), None);
+        assert_eq!(find_program_in(Path::new("run"), None), None);
+    }
+
+    #[test]
+    fn path_search_skips_directories_and_non_executable_files() {
+        let temp = TempDir::new();
+        fs::create_dir_all(temp.0.join("first/run")).unwrap();
+        temp.file("second/run", 0o644);
+        let expected = temp.file("third/run", 0o755);
+        temp.file("fourth/run", 0o755);
+        let path = env::join_paths(["first", "second", "third", "fourth"].map(|d| temp.0.join(d)))
+            .unwrap();
+        assert_eq!(
+            find_program_in(Path::new("run"), Some(&path)),
+            Some(expected)
+        );
+        assert_eq!(find_program_in(&temp.0.join("first/run"), None), None);
+        assert_eq!(find_program_in(&temp.0.join("second/run"), None), None);
+        assert_eq!(find_program_in(Path::new(""), Some(&path)), None);
+    }
+
+    #[test]
+    fn symlinks_keep_their_installation_path() {
+        let temp = TempDir::new();
+        let target = temp.file("real/run", 0o755);
+        let link = temp.0.join("run");
+        symlink(&target, &link).unwrap();
+        assert_eq!(find_program_in(&link, None), Some(link.clone()));
+        fs::remove_file(&target).unwrap();
+        assert_eq!(find_program_in(&link, None), None);
+        fs::remove_file(&link).unwrap();
+        symlink(&temp.0, &link).unwrap();
+        assert_eq!(find_program_in(&link, None), None);
+    }
+
+    #[test]
+    fn execute_permission_must_apply_to_the_current_user() {
+        let temp = TempDir::new();
+        // The owner cannot execute this file even though another user's bit is
+        // set. Root can execute a regular file with any execute bit set.
+        let program = temp.file("run", 0o001);
+        assert_eq!(
+            find_program_in(&program, None).is_some(),
+            rustix::process::getuid().is_root()
+        );
+    }
+
+    #[test]
+    fn path_entries_and_programs_need_not_be_utf8() {
+        let temp = TempDir::new();
+        let name = OsStr::from_bytes(b"run-\xff");
+        let dir = temp.0.join(OsStr::from_bytes(b"bin-\xfe"));
+        let program = temp.file(dir.join(name), 0o755);
+        assert_eq!(
+            find_program_in(Path::new(name), Some(dir.as_os_str())),
+            Some(program)
+        );
+    }
+
+    #[test]
+    fn relative_paths_and_empty_path_entries_use_the_current_directory() {
+        const CHILD: &str = "OMIME_TEST_PATH_LOOKUP_CHILD";
+        if env::var_os(CHILD).is_some() {
+            // The parent supplies an isolated cwd and PATH; no process-global
+            // environment or cwd changes can race the other tests.
+            assert_eq!(find_program("run"), Some(PathBuf::from("./bin/run")));
+            for path in ["", ":missing", "missing::elsewhere", "missing:"] {
+                assert_eq!(
+                    find_program_in(Path::new("run"), Some(OsStr::new(path))),
+                    Some(PathBuf::from("./run"))
+                );
+            }
+            assert_eq!(find_program_in(Path::new("run"), None), None);
+            assert_eq!(
+                find_program_in(Path::new("./run"), None),
+                Some("./run".into())
+            );
+            assert_eq!(
+                find_program_in(Path::new("bin/run"), None),
+                Some("bin/run".into())
+            );
+            // A relative name containing a slash is never appended to PATH.
+            assert_eq!(
+                find_program_in(Path::new("other/run"), Some(OsStr::new("bin"))),
+                None
+            );
+            assert_eq!(
+                find_program_in(Path::new("run/"), Some(OsStr::new("bin"))),
+                None
+            );
+            return;
+        }
+        let temp = TempDir::new();
+        temp.file("run", 0o755);
+        temp.file("bin/run", 0o755);
+        temp.file("bin/other/run", 0o755);
+        let output = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "paths::program_tests::relative_paths_and_empty_path_entries_use_the_current_directory",
+                "--nocapture",
+            ])
+            .current_dir(&temp.0)
+            .env(CHILD, "1")
+            .env("PATH", "./bin")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
     }
 }

@@ -9,6 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rustix.workspace = true
 serde.workspace = true
 serde_ignored.workspace = true
 toml.workspace = true

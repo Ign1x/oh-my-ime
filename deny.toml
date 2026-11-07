@@ -6,14 +6,16 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# Unmaintained transitive crates of Slint 1.16, used only by the UI programs and
-# their build macros. [bans] below confines them to those dependency paths.
+# Unmaintained transitive crates of Slint 1.16 (Sparkle, Rime, omime-panel,
+# omime-overlay, omime-settings and their build macros). zvariant 5 and its derive
+# macro also reach omimed through gvdb 0.10. The [bans] wrappers constrain the Slint
+# and zbus:<6 entry points and selected direct parents, not every transitive crate.
 ignore = [
-  { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via Slint (demo engine only)" },
-  { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via Slint (demo engine only)" },
-  { id = "RUSTSEC-2026-0370", reason = "zvariant 5, via Slint's zbus 5 (demo engine only)" },
-  { id = "RUSTSEC-2026-0371", reason = "zbus_names 4, via Slint's zbus 5 (demo engine only)" },
-  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5, via Slint's zbus 5 (demo engine only)" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via Slint in the UI programs" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via Slint in the UI programs" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant 5, via Slint's zbus 5 in the UI programs and gvdb in omimed" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names 4, via Slint's zbus 5 in the UI programs" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5, via Slint's zbus 5 in the UI programs and gvdb in omimed" },
   { id = "RUSTSEC-2026-0441", reason = "pin-utils is used only by spin_on in Slint's build-time macros; spin_on 0.1.1 has no newer release. This advisory records maintenance status, not a reported vulnerability. Remove when Slint replaces this dependency." },
 ]
 
@@ -71,6 +73,7 @@ deny = [
   { crate = "i-slint-backend-testing", wrappers = ["omime-settings"] },
   # The platform uses zbus 6; the old zbus only comes with Slint.
   { crate = "zbus:<6", wrappers = ["i-slint-backend-winit"] },
+  { crate = "ttf-parser", wrappers = ["fontdb", "owned_ttf_parser", "rustybuzz", "usvg"] },
   { crate = "rustybuzz", wrappers = ["usvg"] },
   { crate = "pin-utils", wrappers = ["spin_on"] },
   { crate = "spin_on", wrappers = ["slint-macros"] },

@@ -30,6 +30,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The minimum supported Rust version is 1.92, matching the locked dependencies.
 - Echo and Sparkle still ship with every installation, but are offered rather than
   enabled by default. Add them to the switching cycle with `omime enable echo`,
   `omime enable sparkle`, or the settings app's **Add input method…** dialog.

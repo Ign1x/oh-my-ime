@@ -387,7 +387,9 @@ fn checks(diagnosis: &model::Diagnosis) -> Vec<Check> {
     checks
 }
 
-#[cfg(test)]
+// Element lookup needs the debug information enabled by build.rs. These UI tests
+// run in the debug profile; release checks still run the other settings tests.
+#[cfg(all(test, slint_debug_info))]
 mod tests {
     use i_slint_backend_testing::{AccessibleRole, ElementHandle};
     use slint::Model as _;

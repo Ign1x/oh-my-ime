@@ -149,7 +149,7 @@ pub(super) async fn prepare(take_over: bool) -> anyhow::Result<Prepared> {
 }
 
 async fn ibus_connection() -> Option<zbus::Connection> {
-    let program = crate::install::find_in_path("ibus")?;
+    let program = omime_proto::paths::find_program("ibus")?;
     let mut command = tokio::process::Command::new(program);
     command
         .arg("address")

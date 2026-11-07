@@ -560,7 +560,7 @@ fn print_changes(changes: &[Change], dry_run: bool) {
 }
 
 fn find_daemon() -> anyhow::Result<PathBuf> {
-    if let Some(path) = crate::install::find_in_path("omimed") {
+    if let Some(path) = omime_proto::paths::find_program("omimed") {
         return Ok(std::path::absolute(path)?);
     }
     let path = std::env::current_exe()?

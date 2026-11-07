@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use omime_proto::paths::find_program;
 use tracing::{info, warn};
 
 /// The settings program.
@@ -14,12 +15,8 @@ pub fn find(name: &str) -> Option<PathBuf> {
     let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.join(name)))
-        .filter(|path| path.is_file());
-    beside.or_else(|| {
-        std::env::split_paths(&std::env::var_os("PATH")?)
-            .map(|dir| dir.join(name))
-            .find(|path| path.is_file())
-    })
+        .and_then(find_program);
+    beside.or_else(|| find_program(name))
 }
 
 /// Opens the settings on the compositor at `display` (`$WAYLAND_DISPLAY` when `None`):

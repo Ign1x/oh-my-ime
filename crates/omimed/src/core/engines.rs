@@ -658,7 +658,7 @@ impl EngineManager {
         if hosted {
             // The private bus has to be up before the input method starts, which takes
             // a moment; a missing program is better reported right away.
-            let Some(path) = find_program(program) else {
+            let Some(path) = omime_proto::paths::find_program(program) else {
                 slot.state = EngineState::Stopped;
                 slot.kill = None;
                 anyhow::bail!(
@@ -1484,7 +1484,7 @@ pub fn install_prefixes(installed: &InstalledEngine) -> Vec<PathBuf> {
     let engine = &installed.manifest.engine;
     let mut prefixes: Vec<PathBuf> = Vec::new();
     for program in engine.exec.first().into_iter().chain(&engine.requires) {
-        let Some(path) = find_program(program) else {
+        let Some(path) = omime_proto::paths::find_program(program) else {
             continue;
         };
         let real = std::fs::canonicalize(&path).ok();
@@ -1497,20 +1497,6 @@ pub fn install_prefixes(installed: &InstalledEngine) -> Vec<PathBuf> {
         }
     }
     prefixes
-}
-
-/// Where `program` is: itself if it is a path, or the first match in `$PATH`.
-fn find_program(program: &str) -> Option<PathBuf> {
-    let executable = |path: &Path| {
-        rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok() && path.is_file()
-    };
-    if program.contains('/') {
-        let path = PathBuf::from(program);
-        return executable(&path).then_some(path);
-    }
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(program))
-        .find(|path| executable(path))
 }
 
 /// Accepts UI bridge connections on the engine's Wayland socket.

@@ -10,7 +10,7 @@
 
 [![CI](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml/badge.svg)](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#许可证)
-[![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](rust-toolchain.toml)
+[![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](rust-toolchain.toml)
 [![Wayland first](https://img.shields.io/badge/wayland-first-ffbc00.svg)](#桌面支持)
 
 </div>

@@ -300,7 +300,7 @@ impl InstalledEngine {
             .engine
             .requires
             .iter()
-            .find(|program| !is_installed(program))
+            .find(|program| crate::paths::find_program(program).is_none())
             .map(String::as_str)
     }
 
@@ -315,7 +315,7 @@ impl InstalledEngine {
         let settings = self.manifest.engine.settings.as_ref()?;
         let argv = self.resolve(settings.exec.clone());
         argv.first()
-            .is_some_and(|p| is_installed(p))
+            .is_some_and(|p| crate::paths::find_program(p).is_some())
             .then_some(argv)
     }
 
@@ -328,19 +328,6 @@ impl InstalledEngine {
         }
         argv
     }
-}
-
-/// Whether `program`, a name looked up in `$PATH` or a path, is an executable file.
-fn is_installed(program: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    let executable = |path: &Path| {
-        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-    };
-    if program.contains('/') {
-        return executable(Path::new(program));
-    }
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| executable(&dir.join(program))))
 }
 
 /// What [`discover`] found.
