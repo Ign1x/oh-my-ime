@@ -156,8 +156,15 @@ and `zwp_virtual_keyboard_v1`.
 |---|---|---|
 | **Hyprland** | IM v2 + popups + virtual keyboard | first target |
 | sway ≥ 1.10, labwc, river, niri, COSMIC | IM v2 + popups | expected to work; sway is used for automated tests |
-| KDE Plasma (KWin) | IM v1 only | needs an IM v1 frontend (later) |
-| GNOME (Mutter) | IBus integration | system IBus adapter planned; not supported yet |
+| KDE Plasma (KWin) | IM v1 only | not supported yet; setup refuses and preserves the running input method |
+| GNOME (Mutter) | IBus integration | not supported yet; setup refuses and preserves the running input method |
+
+Setup checks both required manager protocols before changing files or stopping an
+input method. Run it from Hyprland; `--dry-run` can still preview on unsupported
+desktops. There, `omime doctor` explains the missing protocols and omimed exits
+with status 69, without a systemd restart loop, even if the session bus stalls.
+Setup also refuses inherited `WAYLAND_SOCKET` connections that it cannot safely
+verify; use a Hyprland terminal without an inherited Wayland socket.
 
 ## Getting started
 

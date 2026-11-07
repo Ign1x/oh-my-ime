@@ -1,6 +1,8 @@
 //! Desktop notifications (`org.freedesktop.Notifications`) about trouble that would
 //! otherwise only be in omimed's log: an engine that stopped, another input method on a
-//! seat, a mistake in config.toml. Each trouble is told once, again only after it was
+//! seat, a mistake in config.toml, or an unsupported desktop. For an unsupported
+//! desktop omimed exits right after telling, so the click action has nothing left
+//! to do. Each trouble is told once, again only after it was
 //! resolved in between or after [`REPEAT_AFTER`], and its notification goes away when it
 //! is resolved. A click on one opens the settings, where the About page shows the
 //! state of things. `[notifications] enabled = false` keeps omimed quiet.
@@ -10,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, info};
 use zbus::Variant;
@@ -32,6 +34,8 @@ pub enum Trouble {
     /// config.toml has a mistake. `kept`: omimed keeps the configuration it had;
     /// otherwise it uses the defaults.
     Config { error: String, kept: bool },
+    /// This compositor lacks the protocols omimed requires.
+    UnsupportedDesktop,
 }
 
 /// Why an engine stopped.
@@ -61,6 +65,7 @@ pub enum Subject {
     Engine(String),
     Seat(String),
     Config,
+    UnsupportedDesktop,
 }
 
 impl Trouble {
@@ -69,12 +74,17 @@ impl Trouble {
             Self::Engine { id, .. } => Subject::Engine(id.clone()),
             Self::Seat { name } => Subject::Seat(name.clone()),
             Self::Config { .. } => Subject::Config,
+            Self::UnsupportedDesktop => Subject::UnsupportedDesktop,
         }
     }
 
     /// The summary and body, translated together with the rest of the platform.
     fn text(&self, tr: &omime_proto::i18n::Translator) -> (String, String) {
         match self {
+            Self::UnsupportedDesktop => (
+                tr.text("This desktop is not supported").to_owned(),
+                tr.text("oh-my-ime cannot provide input on this desktop yet. See the omimed log for details.").to_owned(),
+            ),
             Self::Engine { name, why, .. } => {
                 let why = match why {
                     EngineFailure::Crashed => tr.text("It crashed again and again.").to_owned(),
@@ -158,6 +168,7 @@ trait Notifications {
 enum Command {
     Tell(Trouble),
     Resolved(Subject),
+    Flush(oneshot::Sender<()>),
 }
 
 /// Tells the user about trouble. Cheap to call often: it decides what to show.
@@ -196,6 +207,17 @@ impl Notifier {
         if self.enabled.get() {
             let _ = self.commands.send(Command::Tell(trouble));
         }
+    }
+
+    /// Give the usual rate-limited notification a chance to arrive before exit.
+    pub async fn tell_before_exit(&self, trouble: Trouble) {
+        if !self.enabled.get() {
+            return;
+        }
+        self.tell(trouble);
+        let (done, pending) = oneshot::channel();
+        let _ = self.commands.send(Command::Flush(done));
+        let _ = tokio::time::timeout(Duration::from_secs(2), pending).await;
     }
 
     /// The trouble about `subject` is over: its notification goes, and it is told again
@@ -278,6 +300,7 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
             command = pending.recv() => {
                 let Some(command) = command else { return };
                 match command {
+                    Command::Flush(done) => { let _ = done.send(()); }
                     Command::Tell(trouble) => {
                         let subject = trouble.subject();
                         let Some(replaces) = ledger.tell(&subject, Instant::now()) else {
@@ -375,6 +398,45 @@ mod tests {
         assert!(ledger.tell(&engine, start + REPEAT_AFTER).is_some());
         // Nothing was told about a subject that never was in trouble.
         assert_eq!(ledger.resolve(&Subject::Config), None);
+    }
+
+    #[tokio::test]
+    async fn notifications_before_exit_honor_enabled_and_wait_for_delivery() {
+        let (commands, mut pending) = mpsc::unbounded_channel();
+        let notifier = Notifier {
+            commands,
+            enabled: Cell::new(false),
+        };
+        notifier.tell_before_exit(Trouble::UnsupportedDesktop).await;
+        assert!(pending.try_recv().is_err());
+        notifier.set_enabled(true);
+        let send = notifier.tell_before_exit(Trouble::UnsupportedDesktop);
+        let deliver = async {
+            assert!(matches!(
+                pending.recv().await,
+                Some(Command::Tell(Trouble::UnsupportedDesktop))
+            ));
+            let Some(Command::Flush(done)) = pending.recv().await else {
+                panic!("missing flush")
+            };
+            done.send(()).unwrap();
+        };
+        tokio::join!(send, deliver);
+    }
+
+    #[test]
+    fn an_unsupported_desktop_is_told_once_in_both_languages() {
+        let trouble = Trouble::UnsupportedDesktop;
+        let mut ledger = Ledger::default();
+        let now = Instant::now();
+        assert_eq!(ledger.tell(&trouble.subject(), now), Some(0));
+        assert_eq!(ledger.tell(&trouble.subject(), now), None);
+        let (summary, body) = trouble.text(&omime_proto::i18n::Translator::for_locale("en"));
+        assert_eq!(summary, "This desktop is not supported");
+        assert!(body.contains("omimed log"));
+        let (summary, body) = trouble.text(&omime_proto::i18n::Translator::for_locale("zh"));
+        assert_eq!(summary, "尚不支持此桌面");
+        assert!(body.contains("日志"));
     }
 
     #[test]

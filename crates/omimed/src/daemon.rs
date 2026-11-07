@@ -64,7 +64,80 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         .build()
         .context(tr!("failed to start the async runtime"))?;
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, async { Daemon::new(options).await?.run().await })
+    local.block_on(&runtime, async {
+        let context_ids = ContextIds::default();
+        let mut frontend = Frontend::connect(options.display.as_deref(), context_ids.clone())?;
+        let display = options.display.clone();
+        match initialize(options, context_ids, &mut frontend).await {
+            Ok((daemon, initial_error)) => daemon.run(frontend, initial_error).await,
+            Err(error) => {
+                frontend.state().destroy();
+                if error.is::<crate::wayland::UnsupportedCompositor>() {
+                    let (config, _) = load_config();
+                    Notifier::start(config.notifications.enabled, display)
+                        .tell_before_exit(Trouble::UnsupportedDesktop)
+                        .await;
+                }
+                Err(error)
+            }
+        }
+    })
+}
+
+async fn initialize(
+    options: Options,
+    context_ids: ContextIds,
+    frontend: &mut Frontend,
+) -> anyhow::Result<(Daemon, Option<anyhow::Error>)> {
+    let initial_error = match read_registry(frontend).await {
+        Err(error) if error.is::<crate::wayland::UnsupportedCompositor>() => return Err(error),
+        result => result.err(),
+    };
+    let mut services = Box::pin(Daemon::new(options, context_ids));
+    if initial_error.is_some() {
+        return Ok((services.await?, initial_error));
+    }
+    let poll_fd = watch(PollFd(frontend.state().poll_fd().clone()))
+        .context(tr!("failed to watch the Wayland connection"))?;
+    // Keep the original connection dispatching while D-Bus services start. A late
+    // unsupported verdict cancels initialization without taking any input seats.
+    loop {
+        let dispatch = async {
+            frontend.flush()?;
+            poll_fd.readable().await?.clear_ready();
+            frontend.dispatch()
+        };
+        tokio::select! {
+            result = dispatch => {
+                if let Err(error) = result {
+                    if error.is::<crate::wayland::UnsupportedCompositor>() {
+                        return Err(error);
+                    }
+                    // Real connection loss still goes through the session's retry path.
+                    return Ok((services.await?, Some(error)));
+                }
+            }
+            result = &mut services => return Ok((result?, None)),
+        }
+    }
+}
+
+async fn read_registry(frontend: &mut Frontend) -> anyhow::Result<()> {
+    let poll_fd = watch(PollFd(frontend.state().poll_fd().clone()))
+        .context(tr!("failed to watch the Wayland connection"))?;
+    let read = async {
+        while !frontend.is_ready() {
+            frontend.flush()?;
+            poll_fd.readable().await?.clear_ready();
+            frontend.dispatch()?;
+        }
+        Ok(())
+    };
+    // A slow compositor is not a lost one. The session keeps the same connection
+    // and handles an unsupported verdict if the registry arrives later.
+    tokio::time::timeout(Duration::from_secs(2), read)
+        .await
+        .unwrap_or(Ok(()))
 }
 
 /// Reads config.toml; no file is the defaults. Keys this version does not know are
@@ -130,6 +203,8 @@ enum SessionEnd {
     Shutdown,
     /// The connection broke; it may be re-established.
     Lost(anyhow::Error),
+    /// The compositor cannot supply the required input protocols.
+    Unavailable(anyhow::Error),
 }
 
 struct Signals {
@@ -172,7 +247,7 @@ struct Daemon {
 }
 
 impl Daemon {
-    async fn new(options: Options) -> anyhow::Result<Self> {
+    async fn new(options: Options, context_ids: ContextIds) -> anyhow::Result<Self> {
         let signals = Signals {
             term: signal(SignalKind::terminate())?,
             int: signal(SignalKind::interrupt())?,
@@ -189,7 +264,6 @@ impl Daemon {
             }
         };
 
-        let context_ids = ContextIds::default();
         let (fcitx_tx, fcitx_rx) = mpsc::unbounded_channel();
         let fcitx = FcitxFrontend::new(fcitx::start(fcitx_tx).await, context_ids.clone());
         let (xim, xim_retry) = if std::env::var_os("DISPLAY").is_some() {
@@ -317,15 +391,24 @@ impl Daemon {
         })
     }
 
-    async fn run(mut self) -> anyhow::Result<()> {
+    async fn run(
+        mut self,
+        initial_frontend: Frontend,
+        mut initial_error: Option<anyhow::Error>,
+    ) -> anyhow::Result<()> {
         let mut recent_failures: Vec<Instant> = Vec::new();
         let mut first = true;
+        let mut initial_frontend = Some(initial_frontend);
         loop {
             // A failure to connect means the compositor is gone: that ends the daemon.
-            let mut frontend =
-                Frontend::connect(self.options.display.as_deref(), self.context_ids.clone())?;
+            let mut frontend = match initial_frontend.take() {
+                Some(frontend) => frontend,
+                None => {
+                    Frontend::connect(self.options.display.as_deref(), self.context_ids.clone())?
+                }
+            };
             info!("connected to the compositor");
-            let startup_engine = if first {
+            let startup_engine = if first && initial_error.is_none() {
                 first = false;
                 self.options.engine.clone()
             } else {
@@ -338,7 +421,13 @@ impl Daemon {
                 }
                 None
             };
-            let end = self.session(&mut frontend, startup_engine).await?;
+            let end = if let Some(error) = initial_error.take() {
+                frontend.state().destroy();
+                SessionEnd::Lost(error)
+            } else {
+                frontend.start_sessions();
+                self.session(&mut frontend, startup_engine).await?
+            };
             self.core.forget_wayland_contexts();
             match end {
                 SessionEnd::Shutdown => {
@@ -351,6 +440,13 @@ impl Daemon {
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     }
                     return Ok(());
+                }
+                SessionEnd::Unavailable(e) => {
+                    self.core.shutdown();
+                    self.notifier
+                        .tell_before_exit(Trouble::UnsupportedDesktop)
+                        .await;
+                    return Err(e);
                 }
                 SessionEnd::Lost(e) => {
                     error!("lost the compositor connection: {e:#}");
@@ -432,6 +528,9 @@ impl Daemon {
                     };
                     guard.clear_ready();
                     if let Err(e) = frontend.dispatch() {
+                        if e.is::<crate::wayland::UnsupportedCompositor>() {
+                            break SessionEnd::Unavailable(e);
+                        }
                         break SessionEnd::Lost(e);
                     }
                 }

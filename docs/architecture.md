@@ -456,12 +456,14 @@ desktop notifications (`org.freedesktop.Notifications`, connected to once there 
 something to tell): an engine that stopped and stays stopped until the user switches to
 it again (it kept crashing, did not register in time, could not be launched, or was
 quarantined after a compositor protocol error), another input method holding a seat
-(`unavailable` from the compositor), and a mistake in config.toml, at startup (omimed
-uses the defaults) or on a reload (it keeps what it had). The core reports engine and
+(`unavailable` from the compositor), a mistake in config.toml, at startup (omimed
+uses the defaults) or on a reload (it keeps what it had), and a desktop missing the
+required input protocols. For an unsupported desktop omimed exits right after
+telling, so the click action has nothing left to do. The core reports engine and
 seat trouble to the daemon with a listener, as it reports state and lists. Each trouble
 is told once, again only after it was resolved (the engine registered, the seat's input
 method was activated, the configuration loaded) or an hour later, and a resolved
-trouble's notification is closed. The default action opens `omime-settings` on its
+trouble's notification is closed. While omimed runs, the default action opens `omime-settings` on its
 About page. Texts are in Chinese under a Chinese locale. `[notifications] enabled =
 false` turns them off.
 

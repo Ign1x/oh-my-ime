@@ -60,6 +60,8 @@
               # End-to-end tests: a headless compositor, its X server, a virtual
               # keyboard and screenshots.
               sway
+              # The setup safety tests need a compositor without input-method-v2.
+              weston
               # Validates both generated Hyprland setup formats without starting a desktop.
               hyprland
               xwayland
@@ -177,6 +179,8 @@
             echo ${builtins.unsafeDiscardStringContext nixos.config.systemd.user.services.omimed.environment.PATH} >> $out
             echo ${builtins.unsafeDiscardStringContext nixos.config.systemd.user.services.omimed.environment.OMIME_ENGINE_PATH} >> $out
             echo "${nixos.config.environment.sessionVariables.QT_IM_MODULES}" >> $out
+            echo 'RestartPreventExitStatus=${toString nixos.config.systemd.user.services.omimed.serviceConfig.RestartPreventExitStatus}' >> $out
+            grep -qx 'RestartPreventExitStatus=69' $out
             # The unit starts with the session, and the frameworks sit on its PATH.
             grep -qx 'graphical-session.target' $out
             grep -q 'fcitx5-with-addons' $out
@@ -193,6 +197,7 @@
             config=${home.config.xdg.configFile."oh-my-ime/config.toml".source}
             packages=${toString (builtins.length home.config.home.packages)}
             QT_IM_MODULES=${home.config.home.sessionVariables.QT_IM_MODULES}
+            RestartPreventExitStatus=${toString home.config.systemd.user.services.omimed.Service.RestartPreventExitStatus}
             EOF
             # The settings become omimed's configuration, and the unit is the one from
             # data/omimed.service, with the package's absolute paths.
@@ -207,6 +212,7 @@
             grep -qx 'packages=1' $out
             grep -q 'fcitx5-with-addons' <<< '${builtins.unsafeDiscardStringContext (toString home.config.systemd.user.services.omimed.Service.Environment)}'
             grep -qx 'QT_IM_MODULES=wayland;fcitx' $out
+            grep -qx 'RestartPreventExitStatus=69' $out
           '';
         }
       );

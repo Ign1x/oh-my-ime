@@ -9,7 +9,7 @@ nix develop            # 共用测试工具，加上 cargo-deny 和 foot
 nix develop .#e2e      # 共用测试工具，加上 Python/GTK 4（CI 使用）
 ```
 
-两个开发环境都提供端到端测试所需的原生库、Hyprland、可无头运行的 sway（含 XWayland）、wtype、grim、dbus-daemon、Fcitx 5 与 IBus。默认环境额外提供 cargo-deny 和 foot；e2e 环境额外提供带 PyGObject 的 Python 和 GTK 4，用于测试 Python 引擎示例。Rust 来自 rustup 和 `rust-toolchain.toml`。
+两个开发环境都提供端到端测试所需的原生库、Hyprland、无头 Weston、可无头运行的 sway（含 XWayland）、wtype、grim、dbus-daemon、Fcitx 5 与 IBus。默认环境额外提供 cargo-deny 和 foot；e2e 环境额外提供带 PyGObject 的 Python 和 GTK 4，用于测试 Python 引擎示例。Rust 来自 rustup 和 `rust-toolchain.toml`。
 
 ## 检查
 
@@ -28,6 +28,16 @@ cargo deny check
 `C.UTF-8`，语言测试单独指定环境，不依赖开发者的桌面语言。
 
 `setup.rs` 从空配置验证预览、应用与撤销、首次登录选择、真实 Fcitx5/IBus 接管和首个按键开始的中文输入，并通过 Hyprland 的 `--verify-config` 校验两种生成格式。
+`setup_safety.rs` 使用不支持 input-method-v2 的无头 Weston，验证 setup 保留模拟的
+Fcitx5 总线所有者，以及 omimed 以状态码 69 退出，即使桌面通知发送或总线认证卡住也不会
+一直等待。还组合测试总线认证卡住时合成器延迟报告不受支持的情况，分别启用和禁用通知，
+以及继承套接字指向其他合成器的情况。`setup.rs` 验证缺少插件时先退出
+daemon 再恢复框架，而应用启动环境更新失败时继续保留可用的输入服务。
+`setup_safety.rs` 还在 sway 上验证移除 `LD_LIBRARY_PATH` 后的配置，以及合成器暂停超过
+两秒时的启动。Unix 套接字脚本模拟首次连接断开，验证重连后仍选择指定引擎；另一个脚本
+让座位名称随首次同步回复到达，验证名称得到保留。座位名称测试延迟启动 daemon，等到
+状态请求成功后才运行 doctor，防止诊断探针抢先占用模拟合成器的连接。暂停合成器的
+测试在清理时始终恢复它。
 
 `tests/e2e` 会为每个测试启动一个私有的无头 sway、一个私有会话总线以及 omimed，并通过虚拟键盘向 `omime-ti-client` 输入。`omime-ti-client` 是一个小型编辑器，会打印每一个 text-input 事件。整个过程不碰你的桌面会话。
 

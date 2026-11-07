@@ -23,6 +23,9 @@ use std::process::ExitCode;
 
 use tracing_subscriber::EnvFilter;
 
+/// EX_UNAVAILABLE: the compositor lacks required protocols; systemd must not retry.
+const EX_UNAVAILABLE: u8 = 69;
+
 const USAGE: &str = omime_proto::i18n::message(
     "\
 Usage: omimed [OPTIONS]
@@ -89,7 +92,11 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
-            ExitCode::FAILURE
+            if e.is::<wayland::UnsupportedCompositor>() {
+                ExitCode::from(EX_UNAVAILABLE)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }

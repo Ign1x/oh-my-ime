@@ -6,7 +6,7 @@ use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail, ensure};
@@ -33,6 +33,13 @@ impl Framework {
         match self.kind {
             FrameworkKind::Fcitx => "Fcitx5",
             FrameworkKind::Ibus => "IBus",
+        }
+    }
+
+    fn restart(&self) -> &'static str {
+        match self.kind {
+            FrameworkKind::Fcitx => "fcitx5 -d",
+            FrameworkKind::Ibus => "ibus-daemon -drx",
         }
     }
 
@@ -198,13 +205,84 @@ pub(super) async fn start(
     state_dir: &Path,
     engine: Option<&str>,
 ) -> anyhow::Result<()> {
-    for framework in prepared.frameworks {
-        framework.stop().await?;
-    }
-    let connection = prepared.connection;
+    let mut stopped = Vec::new();
     let mut child = None;
+    let result = async {
+        for framework in prepared.frameworks {
+            framework.stop().await?;
+            stopped.push(format!("{} (`{}`)", framework.name(), framework.restart()));
+        }
+        start_daemon(
+            &prepared.connection,
+            daemon_path,
+            state_dir,
+            engine,
+            &mut child,
+        )
+        .await
+    }
+    .await;
+    let status = match result {
+        Ok(status) => status,
+        Err(error) if stopped.is_empty() => return Err(error),
+        Err(error) => {
+            if let Some(child) = &mut child
+                && let Err(stop_error) = stop_launched_daemon(child).await
+            {
+                return Err(error.context(tr!(
+                    "Could not stop the omimed started by setup ({error}). Run `kill -TERM {pid}` and wait for it to exit before restarting these frameworks: {frameworks}.",
+                    error = stop_error,
+                    pid = child.id(),
+                    frameworks = stopped.join(", ")
+                )));
+            }
+            return Err(error.context(tr!(
+                "Input could not be started after stopping these frameworks. Stop any other omimed instance first (`systemctl --user stop omimed` for the service); once it has exited, restart the frameworks with these commands: {frameworks}.",
+                frameworks = stopped.join(", ")
+            )));
+        }
+    };
+    // Input already works here. A launch-environment failure must not undo it or
+    // tell the user to start competing frameworks.
+    crate::launch_env::apply(&prepared.connection).await
+        .context(tr!("input is running, but application launch settings could not be updated; retry setup --start or log out and back in"))?;
+    println!("{}", tr!("Input is ready: {arg0}.", arg0 = status));
+    Ok(())
+}
+
+async fn stop_launched_daemon(child: &mut Child) -> anyhow::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+    match rustix::process::kill_process(
+        rustix::process::Pid::from_child(child),
+        rustix::process::Signal::TERM,
+    ) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Let the daemon release its seats, names and hosted frameworks gracefully.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Ok(())
+}
+
+async fn start_daemon(
+    connection: &zbus::Connection,
+    daemon_path: &Path,
+    state_dir: &Path,
+    engine: Option<&str>,
+    child: &mut Option<Child>,
+) -> anyhow::Result<String> {
     let log_path = state_dir.join("omimed.log");
-    if !crate::daemon_owns_bus_name(&connection).await? {
+    if !crate::daemon_owns_bus_name(connection).await? {
         std::fs::create_dir_all(state_dir)?;
         // Do not follow an unexpected log symlink while preparing a new daemon.
         if let Ok(meta) = std::fs::symlink_metadata(&log_path) {
@@ -223,7 +301,7 @@ pub(super) async fn start(
             .mode(0o600)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(&log_path)?;
-        child = Some(
+        *child = Some(
             Command::new(daemon_path)
                 .envs(super::ENVIRONMENT)
                 .env_remove("IBUS_ADDRESS")
@@ -237,8 +315,8 @@ pub(super) async fn start(
         );
     }
     let deadline = Instant::now() + START_TIMEOUT;
-    while !crate::daemon_owns_bus_name(&connection).await? {
-        if let Some(child) = &mut child
+    while !crate::daemon_owns_bus_name(connection).await? {
+        if let Some(child) = child
             && let Some(status) = child.try_wait()?
         {
             bail!(
@@ -260,7 +338,7 @@ pub(super) async fn start(
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let daemon = DaemonProxy::new(&connection).await?;
+    let daemon = DaemonProxy::new(connection).await?;
     check_display(&daemon.diagnose().await?)?;
     daemon.reload().await?;
     if let Some(engine) = engine {
@@ -327,16 +405,7 @@ pub(super) async fn start(
             && ready
             && configured
         {
-            crate::launch_env::apply(&connection).await
-                .context(tr!("input is running, but application launch settings could not be updated; retry setup --start or log out and back in"))?;
-            println!(
-                "{}",
-                tr!(
-                    "Input is ready: {arg0}.",
-                    arg0 = crate::format_status(&status, false)
-                )
-            );
-            return Ok(());
+            return Ok(crate::format_status(&status, false));
         }
         ensure!(
             Instant::now() < deadline,

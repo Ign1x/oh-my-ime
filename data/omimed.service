@@ -12,6 +12,7 @@ ExecStart=%h/.local/bin/omimed
 # Fails, and says why, when config.toml has a mistake.
 ExecReload=%h/.local/bin/omime reload
 Restart=on-failure
+RestartPreventExitStatus=69
 RestartSec=1
 
 [Install]

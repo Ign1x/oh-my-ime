@@ -471,11 +471,11 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
 /// do not need the daemon still run.
 async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Finding> {
     let Ok(conn) = zbus::Connection::session().await else {
-        return daemon_findings(None, others);
+        return stopped_daemon_findings(crate::probe::current().await);
     };
     match crate::daemon_owns_bus_name(&conn).await {
         Ok(true) => {}
-        Ok(false) => return daemon_findings(None, others),
+        Ok(false) => return stopped_daemon_findings(crate::probe::current().await),
         Err(e) => {
             return vec![Finding::problem(tr!(
                 "cannot ask the session bus for {DAEMON_BUS_NAME}: {e}",
@@ -539,6 +539,20 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
         )));
     }
     findings
+}
+
+fn stopped_daemon_findings(compositor: anyhow::Result<crate::probe::Verdict>) -> Vec<Finding> {
+    match compositor {
+        Ok(verdict) => match verdict.warning() {
+            Some(warning) => vec![Finding::problem(warning)],
+            None => daemon_findings(None, &[]),
+        },
+        Err(error) => {
+            let mut findings = daemon_findings(None, &[]);
+            findings.push(Finding::warning(format!("{error:#}")));
+            findings
+        }
+    }
 }
 
 /// Turns the reply of `Diagnose` into plain values.
@@ -718,6 +732,26 @@ mod tests {
         let findings = daemon_findings(None, &[]);
         assert_eq!(levels(&findings), [Level::Problem]);
         assert!(findings[0].text.contains("systemctl --user start omimed"));
+    }
+
+    #[test]
+    fn unsupported_desktop_explains_why_the_daemon_is_not_running() {
+        let findings = stopped_daemon_findings(Ok(crate::probe::Verdict::Unsupported(vec![
+            "zwp_virtual_keyboard_manager_v1",
+        ])));
+        assert_eq!(levels(&findings), [Level::Problem]);
+        assert!(findings[0].text.contains("zwp_virtual_keyboard_manager_v1"));
+        assert!(findings[0].text.contains("KDE Plasma and GNOME"));
+        assert!(!findings[0].text.contains("systemctl --user start"));
+        for verdict in [
+            crate::probe::Verdict::Supported,
+            crate::probe::Verdict::NoDisplay,
+        ] {
+            assert_eq!(
+                stopped_daemon_findings(Ok(verdict)),
+                daemon_findings(None, &[])
+            );
+        }
     }
 
     #[test]

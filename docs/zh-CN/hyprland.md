@@ -308,6 +308,17 @@ layerrule = no_anim on, match:namespace omime-popup
 
 ## 故障排查
 
+- **setup 报告不支持当前桌面。** KDE Plasma 和 GNOME 未提供必需的
+  `zwp_input_method_manager_v2` 和 `zwp_virtual_keyboard_manager_v1`。
+  请在 Hyprland 会话中运行 setup。工具会在写入文件或停止 Fcitx5/IBus 之前拒绝执行；
+  `--dry-run` 仍会显示警告并预览。继承 `WAYLAND_SOCKET` 时也会拒绝执行，请使用未继承
+  该套接字的 Hyprland 终端。两个 Wayland 变量均未设置时，可以不带 `--start`
+  配置下次登录。omimed 未运行时，`omime doctor` 会指出缺少的协议。omimed 会记录
+  原因并发送一次通知（除非已禁用），然后以状态码 69 退出；systemd 不会重启它。
+- **接管后启动输入服务失败。** setup 的错误信息会列出已停止的框架和恢复命令
+  （`fcitx5 -d`、`ibus-daemon -drx`）。setup 会先停止它启动的 omimed；请先停止其他
+  omimed 实例（服务可用 `systemctl --user stop omimed` 停止）。仅应用启动环境更新失败时，
+  输入服务会继续运行。重试前请查看错误中指定的日志。
 - **某些功能不正常。** 先运行 `omime doctor`：它检查守护进程、seat、`config.toml`、已安装的引擎和环境，每个发现输出一行（`✓` 正常、`!` 警告、`✗` 问题）。
 - **打字没有任何反应。** 检查 `omime status`。如果 omimed 没有运行，在终端里用 `OMIME_LOG=debug omimed` 启动它，看它输出什么。
 - **`another input method is active on this seat`。** fcitx5、IBus 或其他输入法正在运行；见第 2 步。omimed 会持续重试，一旦 seat 空闲就接管。

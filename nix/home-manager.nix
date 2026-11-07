@@ -142,6 +142,7 @@ in
         ExecStart = "${cfg.package}/bin/omimed";
         ExecReload = "${cfg.package}/bin/omime reload";
         Restart = "on-failure";
+        RestartPreventExitStatus = 69;
         RestartSec = 1;
         Environment = [
           "PATH=${servicePath}"

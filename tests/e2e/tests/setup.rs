@@ -355,6 +355,172 @@ impl Drop for Process {
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn failed_start_after_takeover_lists_framework_recovery_commands() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let env = TestEnv::prepare(&[])?;
+    let mut fcitx = Process(
+        env.command("fcitx5")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
+    wait_until("the old Fcitx5", || {
+        bus_pid(&env, "org.fcitx.Fcitx5").ok().flatten()
+    })?;
+    let address = format!("unix:path={}", env.dir().join("old-ibus").display());
+    let address_file = env.dir().join("old-ibus-address");
+    let mut ibus = Process(
+        env.command("ibus-daemon")
+            .args(["--single", "--address", &address])
+            .env("IBUS_ADDRESS_FILE", &address_file)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
+    wait_until("the old IBus", || {
+        fs::read_to_string(&address_file)
+            .ok()
+            .filter(|text| text.contains("IBUS_ADDRESS="))
+    })?;
+
+    let bin = env.dir().join("broken-bin");
+    fs::create_dir(&bin)?;
+    fs::write(bin.join("omimed"), "#!/bin/sh\nexit 1\n")?;
+    fs::set_permissions(bin.join("omimed"), fs::Permissions::from_mode(0o700))?;
+    let mut command = env.command(program_dir().join("omime"));
+    let path = command
+        .get_envs()
+        .find_map(|(key, value)| (key == "PATH").then_some(value).flatten())
+        .context("test PATH")?;
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(path)))?;
+    let output = command
+        .env("PATH", path)
+        .env("IBUS_ADDRESS", address)
+        .env("IBUS_ADDRESS_FILE", address_file)
+        .args(["setup", "--start", "--take-over"])
+        .output()?;
+    assert!(!output.status.success());
+    let message = String::from_utf8(output.stderr)?;
+    assert!(message.contains("Fcitx5 (`fcitx5 -d`)"), "{message}");
+    assert!(message.contains("IBus (`ibus-daemon -drx`)"), "{message}");
+    assert!(message.contains("omimed exited with"), "{message}");
+    wait_until("Fcitx5 to exit", || fcitx.0.try_wait().ok().flatten())?;
+    wait_until("IBus to exit", || ibus.0.try_wait().ok().flatten())?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn missing_addon_after_takeover_releases_the_daemon_before_framework_recovery() -> anyhow::Result<()>
+{
+    let mut env = TestEnv::prepare(&[fcitx5()?])?;
+    offered(&env, "fcitx5")?;
+    let mut old = Process(
+        env.command("fcitx5")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
+    wait_until("the original Fcitx5", || {
+        bus_pid(&env, "org.fcitx.Fcitx5").ok().flatten()
+    })?;
+    let error = start(
+        &mut env,
+        &[
+            "setup",
+            "--engine",
+            "fcitx5/missing-addon",
+            "--start",
+            "--take-over",
+        ],
+    )
+    .expect_err("a missing addon must fail");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("missing-addon` is not installed"),
+        "{message}"
+    );
+    assert!(message.contains("fcitx5 -d"), "{message}");
+    assert!(old.0.try_wait()?.is_some());
+    assert_eq!(
+        bus_pid(&env, "io.github.ign1x.OhMyIme")?,
+        None,
+        "omimed still owns its seat and service"
+    );
+    assert_eq!(
+        bus_pid(&env, "org.fcitx.Fcitx5")?,
+        None,
+        "the framework cannot restart"
+    );
+    let mut restored = Process(
+        env.command("fcitx5")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
+    wait_until("Fcitx5 recovery", || {
+        (bus_pid(&env, "org.fcitx.Fcitx5").ok().flatten() == Some(restored.0.id())).then_some(())
+    })?;
+    assert!(restored.0.try_wait()?.is_none());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn launch_environment_failure_after_takeover_keeps_working_input() -> anyhow::Result<()> {
+    let mut env = TestEnv::prepare(&[echo_engine()])?;
+    let mut old = Process(
+        env.command("fcitx5")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
+    wait_until("the original Fcitx5", || {
+        bus_pid(&env, "org.fcitx.Fcitx5").ok().flatten()
+    })?;
+    let address = env
+        .command("printenv")
+        .arg("DBUS_SESSION_BUS_ADDRESS")
+        .output()?;
+    let address = String::from_utf8(address.stdout)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let _manager = zbus::connection::Builder::address(address.trim())
+                .name("org.freedesktop.systemd1")
+                .serve_at(
+                    "/org/freedesktop/systemd1",
+                    UserManager(std::sync::Arc::new(std::sync::Mutex::new(vec![
+                        "WAYLAND_DISPLAY=another-desktop".into(),
+                    ]))),
+                )
+                .build()
+                .await?;
+            tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let error = start(
+                    &mut env,
+                    &["setup", "--engine", "echo", "--start", "--take-over"],
+                )
+                .expect_err("the launch manager belongs to another display");
+                let message = format!("{error:#}");
+                assert!(message.contains("input is running"), "{message}");
+                assert!(!message.contains("fcitx5 -d"), "{message}");
+                assert!(!message.contains("input could not be started"), "{message}");
+                assert!(old.0.try_wait()?.is_some());
+                assert!(bus_pid(&env, "io.github.ign1x.OhMyIme")?.is_some());
+                let editor = env.editor(&[])?;
+                env.type_on_seat("seat0", "abc ")?;
+                editor.wait_for_text("ABC ")?;
+                Ok(())
+            })
+            .await?
+        })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn takeover_exits_the_old_fcitx5_and_restores_its_startup_on_undo() -> anyhow::Result<()> {
     let mut env = TestEnv::prepare(&[fcitx5()?])?;
     offered(&env, "fcitx5")?;

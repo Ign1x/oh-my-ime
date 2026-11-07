@@ -8,6 +8,16 @@
 
 ## 配置并启动
 
+请在 Hyprland 会话中运行 setup。修改文件或停止 Fcitx5、IBus 之前，工具会检查
+`zwp_input_method_manager_v2` 和 `zwp_virtual_keyboard_manager_v1`。
+目前尚不支持 KDE Plasma 和 GNOME；setup 会说明缺少的协议并拒绝执行，
+即使指定了 `--take-over` 也一样。显示连接不可达或无响应时也不会应用修改。
+`--dry-run` 会先显示警告，再继续预览，并说明实际应用将被拒绝。
+继承的 `WAYLAND_SOCKET` 优先于 `WAYLAND_DISPLAY`，无法在安全探测后交给 omimed
+复用，因此 setup 也会拒绝这种情况。请在未继承 Wayland 套接字的 Hyprland 终端中运行。
+在这两个 Wayland 变量均未设置的文本控制台中，可以配置下次 Hyprland 登录；
+`--start` 仍需要 Wayland 会话。
+
 先预览：
 
 ```sh
@@ -25,6 +35,10 @@ omime setup --engine fcitx5/pinyin --take-over --start
 `--take-over` 暂停所选 Hyprland 文件中能够识别的 Fcitx5/IBus 自启动命令。与 `--start` 一起使用时，还会通过当前会话的 D-Bus 请求旧框架退出，不按进程名称批量终止程序。若其他输入法仍占用 seat，命令会明确报告输入尚未就绪。
 
 启动时会等到框架接受输入法选择；最初的按键会等到输入上下文获得焦点再交给框架，缺少插件时会明确报错。
+接管后若启动失败，错误信息会列出已停止的框架及恢复命令：`fcitx5 -d` 或
+`ibus-daemon -drx`。setup 会先停止它启动的 omimed，释放输入 seat 和总线名称。
+恢复旧框架前，请停止其他 omimed 实例（服务可用 `systemctl --user stop omimed` 停止）。
+如果只有应用启动环境更新失败，输入服务会继续运行，错误信息会说明如何重试更新。
 
 `--start` 还会更新当前会话总线上的 D-Bus 激活环境与 systemd 用户管理器的环境，
 之后通过它们启动的应用（包括 UWSM 启动器）即可继承输入法配置。
@@ -88,3 +102,13 @@ omime setup --undo
 工具管理范围之外的修改都会保留，包括 setup 之后新增的设置。若管理范围内的内容被手动改过，撤销会先报告冲突，不改动任何文件。原内容与写入内容保存在 `$XDG_STATE_HOME/oh-my-ime/setup.toml`，默认是 `~/.local/state/oh-my-ime/setup.toml`；需要恢复时请保留这份记录。
 
 重复执行不会重复添加自启动。写入失败会回滚已经改过的文件；进程中断后，先用 `omime setup --undo` 按记录恢复，再重新配置。
+
+## 故障排查
+
+若 setup 或 `omime doctor` 报告不支持当前桌面，请继续使用原有输入法，登录
+Hyprland 后再运行 setup。omimed 未运行时，`omime doctor` 会检查这些协议。
+在不支持的合成器上启动 omimed，会记录缺少的协议，发送一次桌面通知（除非设置
+`[notifications] enabled = false`），然后以状态码 69 退出。systemd 不会因该
+状态重启它。协议检查先于会话总线服务启动，并在服务初始化期间持续处理 Wayland
+事件。即使总线认证卡住、合成器迟迟才报告不受支持，也会按上述方式退出。通知发送
+最多等待两秒。任何桌面上均可使用 `omime setup --undo`。

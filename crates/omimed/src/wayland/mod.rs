@@ -14,6 +14,11 @@ mod outputs;
 mod seat;
 mod toplevels;
 
+/// The registry is complete, but this compositor cannot serve our input methods.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct UnsupportedCompositor(String);
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::os::fd::OwnedFd;
@@ -198,8 +203,11 @@ pub struct Frontend {
     output_set: outputs::OutputSet,
     /// Bound `wl_seat`s by registry name, before and after a session exists.
     seat_objects: BTreeMap<SeatId, Rc<WlSeat>>,
+    /// Names received while session services are still starting.
+    seat_names: BTreeMap<SeatId, String>,
     seats: BTreeMap<SeatId, SeatSession>,
     initial_sync_done: bool,
+    sessions_started: bool,
     bridge: Bridge,
     active_engine: Option<EngineId>,
     /// The text cursor of the focused X11 application, in compositor coordinates.
@@ -264,8 +272,10 @@ impl Frontend {
             focused_app: None,
             output_set: outputs::OutputSet::default(),
             seat_objects: BTreeMap::new(),
+            seat_names: BTreeMap::new(),
             seats: BTreeMap::new(),
             initial_sync_done: false,
+            sessions_started: false,
             bridge,
             active_engine: None,
             x11_cursor: None,
@@ -315,7 +325,7 @@ impl Frontend {
         self.process_events()
     }
 
-    /// Whether the initial roundtrip finished and input method sessions exist.
+    /// Whether the initial roundtrip finished with the required input protocols.
     pub fn is_ready(&self) -> bool {
         self.initial_sync_done
     }
@@ -565,23 +575,28 @@ impl Frontend {
             Event::GlobalRemove { name } => self.on_global_remove(name),
             Event::InitialSyncDone => {
                 self.initial_sync_done = true;
-                if self.im_manager.is_none() {
-                    bail!(
-                        "the compositor does not support zwp_input_method_manager_v2; \
-                         oh-my-ime needs a compositor with input-method-v2 (e.g. Hyprland or sway)"
-                    );
+                let missing: Vec<_> = [
+                    (self.im_manager.is_none(), "zwp_input_method_manager_v2"),
+                    (self.vk_manager.is_none(), "zwp_virtual_keyboard_manager_v1"),
+                ]
+                .into_iter()
+                .filter_map(|(missing, name)| missing.then_some(name))
+                .collect();
+                if !missing.is_empty() {
+                    return Err(UnsupportedCompositor(omime_proto::tr!(
+                        "This desktop is not supported: missing {protocols}. KDE Plasma and GNOME are not supported yet. Run setup from a Hyprland session.",
+                        protocols = missing.join(", ")
+                    )).into());
                 }
-                if self.vk_manager.is_none() {
-                    bail!(
-                        "the compositor does not support zwp_virtual_keyboard_manager_v1, \
-                         which oh-my-ime needs to pass keys through"
-                    );
+                if self.sessions_started {
+                    self.start_sessions();
                 }
-                self.start_sessions();
             }
             Event::SeatName { seat, name } => {
                 if let Some(session) = self.seats.get_mut(&seat) {
                     session.set_name(name);
+                } else {
+                    self.seat_names.insert(seat, name);
                 }
             }
             Event::Im {
@@ -703,7 +718,7 @@ impl Frontend {
                 });
                 self.registry.send_bind(name, seat.clone());
                 self.seat_objects.insert(name, seat);
-                if self.initial_sync_done {
+                if self.initial_sync_done && self.sessions_started {
                     self.start_sessions();
                 }
             }
@@ -712,6 +727,7 @@ impl Frontend {
     }
 
     fn on_global_remove(&mut self, name: u32) {
+        self.seat_names.remove(&name);
         self.output_set.remove(name);
         if let Some(mut session) = self.seats.remove(&name) {
             info!(seat = session.name(), "seat removed");
@@ -759,7 +775,9 @@ impl Frontend {
             .push_back(FrontendEvent::FocusedApp(app));
     }
 
-    fn start_sessions(&mut self) {
+    /// Start taking input only after the daemon's session services are ready.
+    pub fn start_sessions(&mut self) {
+        self.sessions_started = true;
         let (Some(im_manager), Some(vk_manager)) = (&self.im_manager, &self.vk_manager) else {
             return;
         };
@@ -776,6 +794,9 @@ impl Frontend {
                 self.queue.clone(),
                 self.outputs.clone(),
             );
+            if let Some(name) = self.seat_names.remove(&id) {
+                session.set_name(name);
+            }
             session.set_app_id(self.focused_app.clone());
             self.seats.insert(id, session);
         }

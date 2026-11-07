@@ -13,6 +13,18 @@ See [installation and application requirements](hyprland.md).
 
 ## Configure and start
 
+Run setup from a Hyprland session. Before changing any files or stopping Fcitx5 or
+IBus, it checks for `zwp_input_method_manager_v2` and
+`zwp_virtual_keyboard_manager_v1`. KDE Plasma and GNOME are not supported yet;
+setup names the missing protocols and refuses, including with `--take-over`.
+An unreachable or unresponsive display also prevents applying changes.
+`--dry-run` prints the warning first and still previews, explaining that applying
+would be refused. An inherited `WAYLAND_SOCKET` takes precedence over
+`WAYLAND_DISPLAY` and cannot be safely probed for reuse by omimed, so setup refuses
+it too. Run setup from a Hyprland terminal without an inherited Wayland socket.
+On a text console with neither Wayland variable set, setup can prepare
+the next Hyprland login; `--start` still requires a Wayland session.
+
 Preview the changes:
 
 ```sh
@@ -36,6 +48,12 @@ this session's D-Bus connection to exit. It does not stop every process with tha
 name. If another method still owns a seat, setup reports that input is not ready.
 Starting input waits for the selected framework to accept the input method. Its
 first keys wait for activation in the focused field; missing addons are reported.
+If startup fails after a takeover, the error lists the frameworks it stopped and
+their restart commands: `fcitx5 -d` or `ibus-daemon -drx`. Setup first stops the
+omimed instance it launched, releasing its input seat and bus names. Stop any
+other omimed instance before restoring the old framework
+(`systemctl --user stop omimed` for the service). If only the application launch-environment update fails,
+input stays running; the error explains how to retry that update.
 
 `--start` also updates D-Bus activation and the systemd user manager's environment
 on this session bus. Applications started through them afterwards inherit the input
@@ -128,3 +146,16 @@ Re-running setup updates its own configuration without duplicating startup entri
 A failed write rolls back the files already changed. After an interrupted run,
 `omime setup --undo` uses the journal to recover the configuration before another
 setup is attempted.
+
+## Troubleshooting
+
+If setup or `omime doctor` reports an unsupported desktop, keep using its existing
+input method and run setup after logging into Hyprland. `omime doctor` checks the
+protocols when omimed is absent. Starting omimed on an unsupported compositor logs
+the missing protocols, sends one desktop notification (unless
+`[notifications] enabled = false`) and exits with status 69. The systemd unit does
+not restart it for this status. The protocol check begins before session-bus
+services start and keeps reading Wayland events while they initialize. Even a
+late unsupported reply with stalled bus authentication leads to this exit.
+Notification delivery waits at most two seconds.
+`omime setup --undo` remains available on any desktop.

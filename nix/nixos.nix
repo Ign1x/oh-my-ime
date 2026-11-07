@@ -143,6 +143,7 @@ in
     systemd.packages = [ cfg.package ];
     systemd.user.services.omimed = {
       wantedBy = [ "graphical-session.target" ];
+      serviceConfig.RestartPreventExitStatus = 69;
       environment = {
         PATH = lib.mkForce servicePath;
       }

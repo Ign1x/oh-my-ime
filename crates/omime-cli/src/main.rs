@@ -3,6 +3,7 @@
 mod doctor;
 mod install;
 mod launch_env;
+mod probe;
 mod setup;
 mod watch;
 

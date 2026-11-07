@@ -19,6 +19,7 @@ futures-core = "0.3"
 toml_edit.workspace = true
 toml.workspace = true
 serde.workspace = true
+wl-proxy = { workspace = true, features = ["protocol-input_method_unstable_v2", "protocol-virtual_keyboard_unstable_v1"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 tokio = { workspace = true, features = ["rt", "macros", "process"] }
 zbus = { workspace = true, features = ["tokio", "p2p", "proxy", "service"] }

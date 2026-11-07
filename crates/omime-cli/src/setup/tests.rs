@@ -81,6 +81,41 @@ impl Drop for Fixture {
     }
 }
 
+#[tokio::test]
+async fn unsupported_compositors_refuse_before_creating_any_files() {
+    for args in [
+        vec![],
+        vec!["--start"],
+        vec!["--start", "--take-over"],
+        vec!["--take-over"],
+    ] {
+        let f = Fixture::new();
+        let options = Options::parse(&args).unwrap();
+        let verdict = crate::probe::Verdict::Unsupported(vec!["zwp_input_method_manager_v2"]);
+        let error = run_with(&options, &f.locations, Ok(verdict))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("zwp_input_method_manager_v2"));
+        assert!(!f.locations.config_dir.parent().unwrap().exists());
+        assert!(!f.locations.state_dir.parent().unwrap().exists());
+    }
+}
+
+#[tokio::test]
+async fn a_failed_probe_refuses_before_creating_any_files() {
+    let f = Fixture::new();
+    let error = run_with(
+        &Options::parse(&["--start", "--take-over"]).unwrap(),
+        &f.locations,
+        Err(anyhow::anyhow!("probe failed")),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.to_string(), "probe failed");
+    assert!(!f.locations.config_dir.parent().unwrap().exists());
+    assert!(!f.locations.state_dir.parent().unwrap().exists());
+}
+
 #[test]
 fn preview_is_read_only_and_enables_the_selected_engine_without_hiding_defaults() {
     let f = Fixture::new();

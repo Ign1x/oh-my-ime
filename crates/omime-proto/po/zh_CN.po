@@ -612,8 +612,8 @@ msgstr "座位 {seat}：被另一个输入法占用"
 msgid "seat {seat}: oh-my-ime is the input method"
 msgstr "座位 {seat}：输入法由 oh-my-ime 提供"
 
-msgid "settings were saved, but input could not be started; correct the reported problem and retry omime setup --start"
-msgstr "设置已保存，但输入服务未能启动；请修复报告的问题，再运行 omime setup --start"
+msgid "settings were saved, but session setup did not finish; correct the reported problem and retry omime setup --start"
+msgstr "设置已保存，但会话配置未完成；请修复报告的问题，再运行 omime setup --start"
 
 msgid "setup --undo accepts only --dry-run"
 msgstr "setup --undo 仅接受 --dry-run 选项"
@@ -1088,3 +1088,33 @@ msgstr "↑ ↓  浏览    Enter  选择    Esc  取消"
 
 msgid "the daemon did not confirm the selection"
 msgstr "守护进程未确认所选输入法"
+
+msgid "This desktop is not supported: missing {protocols}. KDE Plasma and GNOME are not supported yet. Run setup from a Hyprland session."
+msgstr "尚不支持此桌面：缺少 {protocols}。目前尚不支持 KDE Plasma 和 GNOME。请在 Hyprland 会话中运行 setup。"
+
+msgid "cannot probe the Wayland display: XDG_RUNTIME_DIR is not an absolute path"
+msgstr "无法探测 Wayland 显示：XDG_RUNTIME_DIR 不是绝对路径"
+
+msgid "cannot check the Wayland display's input protocols"
+msgstr "无法检查 Wayland 显示的输入协议"
+
+msgid "the Wayland protocol check timed out; setup cannot safely continue"
+msgstr "Wayland 协议检查超时；setup 无法安全继续"
+
+msgid "Preview only: applying setup would be refused."
+msgstr "仅供预览：应用配置将被拒绝。"
+
+msgid "Input could not be started after stopping these frameworks. Stop any other omimed instance first (`systemctl --user stop omimed` for the service); once it has exited, restart the frameworks with these commands: {frameworks}."
+msgstr "停止以下框架后未能启动输入服务。请先停止其他 omimed 实例（服务可用 `systemctl --user stop omimed` 停止）；等待其退出后，再使用以下命令重新启动框架：{frameworks}。"
+
+msgid "Could not stop the omimed started by setup ({error}). Run `kill -TERM {pid}` and wait for it to exit before restarting these frameworks: {frameworks}."
+msgstr "无法停止 setup 启动的 omimed（{error}）。请运行 `kill -TERM {pid}`，等待其退出后再重新启动以下框架：{frameworks}。"
+
+msgid "cannot safely check the inherited WAYLAND_SOCKET; it overrides WAYLAND_DISPLAY. Run setup from a Hyprland terminal without an inherited Wayland socket."
+msgstr "无法安全检查继承的 WAYLAND_SOCKET；它的优先级高于 WAYLAND_DISPLAY。请在未继承 Wayland 套接字的 Hyprland 终端中运行 setup。"
+
+msgid "This desktop is not supported"
+msgstr "尚不支持此桌面"
+
+msgid "oh-my-ime cannot provide input on this desktop yet. See the omimed log for details."
+msgstr "oh-my-ime 目前无法在此桌面上提供输入服务。详情请查看 omimed 日志。"

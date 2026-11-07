@@ -158,8 +158,14 @@ oh-my-ime 面向同时实现了以下协议的合成器：
 |---|---|---|
 | **Hyprland** | IM v2 + 弹窗 + 虚拟键盘 | 首要目标 |
 | sway ≥ 1.10、labwc、river、niri、COSMIC | IM v2 + 弹窗 | 预计可用；自动化测试使用 sway |
-| KDE Plasma（KWin） | 仅 IM v1 | 需要 IM v1 前端（后续） |
-| GNOME（Mutter） | IBus 集成 | 规划系统 IBus 适配，尚未支持 |
+| KDE Plasma（KWin） | 仅 IM v1 | 尚未支持；setup 会拒绝执行，保留正在运行的输入法 |
+| GNOME（Mutter） | IBus 集成 | 尚未支持；setup 会拒绝执行，保留正在运行的输入法 |
+
+setup 会在修改文件或停止输入法之前检查两种必需的管理器协议。请在 Hyprland
+会话中运行；不支持的桌面仍可用 `--dry-run` 预览。`omime doctor` 会说明缺少的
+协议，omimed 则以状态码 69 退出，即使会话总线卡住也一样，systemd 不会循环重启它。
+setup 也会拒绝无法安全验证的继承 `WAYLAND_SOCKET` 连接；请使用未继承 Wayland
+套接字的 Hyprland 终端。
 
 ## 快速开始
 

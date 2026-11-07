@@ -9,7 +9,7 @@ nix develop            # shared test tools plus cargo-deny and foot
 nix develop .#e2e      # shared test tools plus Python/GTK 4 (used by CI)
 ```
 
-Both shells provide the native libraries, Hyprland, a headless-capable sway with
+Both shells provide the native libraries, Hyprland, headless Weston, a headless-capable sway with
 XWayland, wtype, grim, dbus-daemon, Fcitx 5 and IBus for the end-to-end tests. The default
 shell adds cargo-deny and foot; the e2e shell adds Python with PyGObject and GTK 4
 for the Python engine example's test. Rust comes from rustup and `rust-toolchain.toml`.
@@ -49,6 +49,21 @@ the item shows and clicks it and its menu.
 first-login choices, takeover of real Fcitx5/IBus processes, and Chinese input from
 the first keystroke. It also validates both generated formats with Hyprland's
 `--verify-config`.
+`setup_safety.rs` uses headless Weston, which lacks input-method-v2, to check that
+setup leaves a fake Fcitx5 owner running and omimed exits with status 69, including
+when desktop notification delivery or bus authentication stalls. It combines late
+unsupported replies with stalled authentication, with notifications both enabled
+and disabled, and covers inherited sockets that point to a different compositor.
+`setup.rs` checks that a
+missing-addon failure releases the daemon before framework recovery, while a
+launch-environment failure keeps working input running.
+On sway, `setup_safety.rs` also checks setup with `LD_LIBRARY_PATH` removed and
+startup with the compositor stopped for more than two seconds. Scripted Unix-socket
+fixtures verify that an initial connection loss preserves the requested engine
+and that seat names arriving with the initial sync are retained. The seat-name
+test delays daemon startup and waits for a successful status request before
+running doctor, so the diagnostic probe cannot take the fixture's connection.
+Tests that stop a compositor always resume it during cleanup.
 
 ```sh
 cargo build --workspace

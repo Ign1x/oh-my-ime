@@ -116,7 +116,33 @@ struct Plan {
 }
 
 pub async fn run(options: Options) -> anyhow::Result<()> {
+    let compositor = if options.undo {
+        Ok(crate::probe::Verdict::NoDisplay)
+    } else {
+        crate::probe::current().await
+    };
     let locations = Locations::from_environment()?;
+    run_with(&options, &locations, compositor).await
+}
+
+async fn run_with(
+    options: &Options,
+    locations: &Locations,
+    compositor: anyhow::Result<crate::probe::Verdict>,
+) -> anyhow::Result<()> {
+    if !options.undo {
+        let warning = match compositor {
+            Ok(verdict) => verdict.warning(),
+            Err(error) => Some(format!("{error:#}")),
+        };
+        if let Some(warning) = warning {
+            if !options.dry_run {
+                bail!("{warning}");
+            }
+            println!("{warning}");
+            println!("{}", tr!("Preview only: applying setup would be refused."));
+        }
+    }
     // Preview never creates a lock, journal, configuration or state directory.
     let _lock = if options.dry_run {
         None
@@ -137,10 +163,10 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
         Some(file)
     };
     if options.undo {
-        return undo(&locations, options.dry_run);
+        return undo(locations, options.dry_run);
     }
 
-    let plan = prepare(&locations, &options)?;
+    let plan = prepare(locations, options)?;
     let runtime = if options.start && !options.dry_run {
         Some(session::prepare(options.take_over).await?)
     } else {
@@ -184,7 +210,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
     );
     if let Some(runtime) = runtime {
         session::start(runtime, &plan.daemon, &locations.state_dir, options.engine.as_deref()).await
-            .context(tr!("settings were saved, but input could not be started; correct the reported problem and retry omime setup --start"))?;
+            .context(tr!("settings were saved, but session setup did not finish; correct the reported problem and retry omime setup --start"))?;
     }
     println!(
         "{}",

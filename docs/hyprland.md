@@ -448,6 +448,20 @@ layerrule = no_anim on, match:namespace omime-popup
 
 ## Troubleshooting
 
+- **Setup reports an unsupported desktop.** KDE Plasma and GNOME do not offer the
+  required `zwp_input_method_manager_v2` and `zwp_virtual_keyboard_manager_v1`.
+  Run setup from Hyprland. It refuses before writing files or stopping Fcitx5/IBus;
+  `--dry-run` still previews with a warning. Inherited `WAYLAND_SOCKET` connections
+  are also refused; use a Hyprland terminal without one. With neither Wayland
+  variable set, setup can configure the next login without `--start`.
+  `omime doctor` identifies missing
+  protocols when omimed is absent. omimed logs the reason, sends one notification
+  unless disabled, and exits with status 69; systemd does not restart it.
+- **Starting input fails after a takeover.** The setup error names the frameworks
+  stopped and their restart commands (`fcitx5 -d`, `ibus-daemon -drx`). Setup stops
+  the omimed it launched before offering recovery. Stop other omimed instances
+  first (`systemctl --user stop omimed` for the service). A launch-environment
+  update failure leaves working input running. See the reported log before retrying.
 - **Something does not work.** Run `omime doctor` first: it checks the daemon, the seats,
   `config.toml`, the installed engines and the environment, one line per finding (`✓`
   fine, `!` warning, `✗` problem).
