@@ -1029,6 +1029,12 @@ msgstr "引擎没有菜单"
 msgid "there is no option `{key}`"
 msgstr "没有选项 `{key}`"
 
+msgid "configuration section `{table}` must be a table"
+msgstr "配置节 `{table}` 必须是表"
+
+msgid "a hotkey cannot contain control characters"
+msgstr "热键不能包含控制字符"
+
 msgid "this socket belongs to engine `{arg0}`"
 msgstr "此 socket 属于引擎 `{arg0}`"
 

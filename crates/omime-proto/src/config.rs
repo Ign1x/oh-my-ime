@@ -180,7 +180,7 @@ pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
         return Err(tr!("there is no option `{key}`", key = key));
     }
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-    let item = match value {
+    let mut item = match value {
         Value::Bool(b) => toml_edit::value(b),
         Value::Integer(i) => toml_edit::value(i),
         Value::String(s) => toml_edit::value(s),
@@ -193,10 +193,25 @@ pub fn edit(text: &str, key: &str, value: Value) -> Result<String, String> {
     match key.split_once('.') {
         None => doc[key] = item,
         Some((table, name)) => {
-            if doc.get(table).is_none() {
-                doc[table] = toml_edit::table();
+            let section = doc
+                .entry(table)
+                .or_insert(toml_edit::table())
+                .as_table_like_mut()
+                .ok_or_else(|| {
+                    tr!(
+                        "configuration section `{table}` must be a table",
+                        table = table
+                    )
+                })?;
+            if let Some(previous) = section.get_mut(name) {
+                if let (Some(old_value), Some(value)) = (previous.as_value(), item.as_value_mut()) {
+                    // Keep whitespace and trailing comments on the replaced value.
+                    *value.decor_mut() = old_value.decor().clone();
+                }
+                *previous = item;
+            } else {
+                section.insert(name, item);
             }
-            doc[table][name] = item;
         }
     }
     let edited = doc.to_string();
@@ -237,6 +252,9 @@ impl HotkeySpec {
     /// Parses `Mod+Mod+key`. Returns `Ok(None)` for an empty string (disabled).
     pub fn parse(text: &str) -> Result<Option<Self>, String> {
         use crate::engine::modifiers as m;
+        if text.chars().any(char::is_control) {
+            return Err(tr!("a hotkey cannot contain control characters"));
+        }
         let text = text.trim();
         if text.is_empty() {
             return Ok(None);

@@ -2,6 +2,7 @@
 //!
 //! See `typing.rs` for how to run them.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
@@ -262,6 +263,162 @@ fn a_broken_config_is_reported_and_the_one_in_effect_kept() -> anyhow::Result<()
     let log = env.daemon_log();
     assert!(log.contains("future, hotkeys.togle"), "{log}");
     Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn reloading_a_nul_hotkey_keeps_the_daemon_alive() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    env.wait_for_log("engine ready")?;
+    std::fs::write(
+        env.dir().join("config/oh-my-ime/config.toml"),
+        "engines = [\"echo\"]\n[hotkeys]\ntoggle = \"Control+\\u0000\"\n[panel]\nenabled = false\n",
+    )?;
+    // Rejecting the configuration or disabling this hotkey both keep input working.
+    let _ = env.omime_status(&["reload"])?;
+    let status = env.omime(&["status"]);
+    assert!(
+        status.is_ok(),
+        "NUL in config terminated omimed: {status:?}\n{}",
+        env.daemon_log()
+    );
+    let editor = env.editor(&[])?;
+    env.type_text("ok ")?;
+    editor.wait_for_text("OK ")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn starting_with_a_nul_hotkey_keeps_the_daemon_alive() -> anyhow::Result<()> {
+    let mut env = TestEnv::prepare(&[echo_engine()])?;
+    std::fs::write(
+        env.dir().join("config/oh-my-ime/config.toml"),
+        "engines = [\"echo\"]\n[hotkeys]\ntoggle = \"Control+\\u0000\"\n[panel]\nenabled = false\n",
+    )?;
+    env.launch_daemon()
+        .with_context(|| format!("NUL in startup config\n{}", env.daemon_log()))?;
+    env.omime(&["status"])?;
+    env.omime(&["switch", "echo"])?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    env.type_text("ok ")?;
+    editor.wait_for_text("OK ")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn configuring_a_mistyped_section_keeps_the_daemon_alive() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    env.wait_for_log("engine ready")?;
+    let path = env.dir().join("config/oh-my-ime/config.toml");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let conn = zbus::connection::Builder::address(
+            format!("unix:path={}/bus", env.dir().display()).as_str(),
+        )
+        .method_timeout(TIMEOUT)
+        .build()
+        .await?;
+        let daemon = zbus::Proxy::new(
+            &conn,
+            "io.github.ign1x.OhMyIme",
+            "/io/github/ign1x/OhMyIme",
+            "io.github.ign1x.OhMyIme.Daemon1",
+        )
+        .await?;
+        for (malformed, key, value, wire_value) in [
+            (
+                "apps = false",
+                "apps.remember",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "apps = 'oops'",
+                "apps.remember",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "apps = []",
+                "apps.remember",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "apps = 1",
+                "apps.remember",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "[[apps]]",
+                "apps.remember",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "tray = false",
+                "tray.enabled",
+                "true",
+                zbus::Variant::from(true),
+            ),
+            (
+                "engine = \"rime\"",
+                "engine.key_timeout_ms",
+                "300",
+                zbus::Variant::from(300u64),
+            ),
+            (
+                "hotkeys = []",
+                "hotkeys.toggle",
+                "Control+space",
+                zbus::Variant::from("Control+space"),
+            ),
+        ] {
+            let text = format!("# my settings\n{malformed}\n[panel]\nenabled = false\n");
+            std::fs::write(&path, &text)?;
+            let (reload, _) = env.omime_status(&["reload"])?;
+            if malformed == "apps = false" {
+                assert!(!reload.success(), "the invalid file must first be rejected");
+            }
+            env.omime(&["status"])?;
+
+            // The settings app uses the same Configure method as the CLI.
+            let changes = HashMap::from([(key, wire_value)]);
+            let result = daemon.call::<_, _, ()>("Configure", &changes).await;
+            let status = daemon
+                .call::<_, _, HashMap<String, zbus::OwnedVariant>>("Status", &())
+                .await;
+            assert!(
+                status.is_ok(),
+                "Configure terminated omimed on {malformed:?}: {result:?}, {status:?}\n{}",
+                env.daemon_log()
+            );
+            let error = result.expect_err("Configure must reject a malformed section");
+            assert!(
+                matches!(&error, zbus::Error::FDO(error)
+                    if matches!(error.as_ref(), zbus::fdo::Error::Failed(_))),
+                "{error}"
+            );
+            let section = key.split_once('.').context("dotted option")?.0;
+            assert!(
+                error.to_string().contains(&format!("`{section}`")),
+                "{error}"
+            );
+            assert_eq!(std::fs::read(&path)?, text.as_bytes());
+
+            let error = format!("{:#}", env.omime(&["config", key, value]).unwrap_err());
+            assert!(error.contains(&format!("`{section}`")), "{error}");
+            assert_eq!(std::fs::read(&path)?, text.as_bytes());
+            env.omime(&["status"])?;
+        }
+        anyhow::Ok(())
+    })
 }
 
 #[test]

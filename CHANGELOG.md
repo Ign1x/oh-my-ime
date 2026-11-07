@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Editing a malformed configuration section through settings or `omime config`
+  reports an error and leaves the file unchanged without stopping omimed. Inline
+  and dotted tables remain editable with comments preserved. Hotkeys containing
+  control characters are rejected so NUL in config.toml cannot crash startup or
+  reload.
 - XIM clients that exhaust input-context or input-method IDs no longer terminate
   omimed. After 65,534 context allocations on a connection, CreateIc receives
   `XIM_ERROR` (`BadAlloc`) and `XCreateIC` returns NULL; the connection and its existing
