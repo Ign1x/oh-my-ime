@@ -39,6 +39,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Long engine commits reach Wayland applications in ordered chunks of at most
+  4,000 UTF-8 bytes before following keys, including commits from hosted input
+  methods. Oversized preedits are truncated with valid cursor offsets, and engine
+  output is bounded to protect the shared compositor connection. Queue limits also
+  cover hosted forwarding and completed keys; accepted presses retain room for
+  their releases when the queue fills.
 - Setup checks the compositor's input protocols before changing files or taking over
   Fcitx5/IBus, preserving input on unsupported desktops such as KDE Plasma and GNOME.
   Inherited Wayland sockets are refused when they cannot be safely verified.

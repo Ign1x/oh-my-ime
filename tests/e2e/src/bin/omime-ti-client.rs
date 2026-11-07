@@ -106,8 +106,13 @@ impl App {
     /// Tells the input method what the field looks like now.
     fn send_state(&self) {
         let Some(ti) = &self.text_input else { return };
-        let cursor = self.text.len() as i32;
-        ti.set_surrounding_text(self.text.clone(), cursor, cursor);
+        let mut start = self.text.len().saturating_sub(4000);
+        while !self.text.is_char_boundary(start) {
+            start += 1;
+        }
+        let surrounding = &self.text[start..];
+        let cursor = surrounding.len() as i32;
+        ti.set_surrounding_text(surrounding.to_owned(), cursor, cursor);
         // Pretend to be a monospace editor: 8 px per character on a 20 px line.
         let column = self.text.chars().count() as i32;
         ti.set_cursor_rectangle(12 + 8 * column, 20, 2, 18);

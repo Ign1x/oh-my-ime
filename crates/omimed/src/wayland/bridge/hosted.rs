@@ -53,6 +53,7 @@ use super::{Bridge, BridgeSeat, BridgeSurface, EngineId, Shared, kill_client};
 use crate::frontend::{HostedEvent, KeyDelivery};
 use crate::keyboard::{self, ModifierState, RepeatInfo};
 use crate::placement::Rect;
+use crate::wayland::seat::{MAX_PENDING_COMMIT_BYTES, MAX_TEXT_BYTES};
 use crate::wayland::{Event, SeatId};
 
 /// Registry names of the virtual globals hosted input methods see.
@@ -66,7 +67,7 @@ const KEY_STATE_PRESSED: u32 = 1;
 
 /// Text longer than this cannot be sent in one Wayland message; such a field gets no
 /// surrounding text.
-const MAX_SURROUNDING: usize = 4000;
+const MAX_SURROUNDING: usize = MAX_TEXT_BYTES;
 
 /// What hosted input methods need to know about a seat's keyboard.
 #[derive(Debug, Default, Clone)]
@@ -450,9 +451,26 @@ struct Pending {
     commit: String,
     preedit: Option<Preedit>,
     delete: Option<(u32, u32)>,
+    rejected: bool,
 }
 
 impl Pending {
+    /// Returns true only when this transaction first exceeds the queue limit.
+    fn push_commit(&mut self, text: &str) -> bool {
+        if self.rejected {
+            return false;
+        }
+        if text.len() > MAX_PENDING_COMMIT_BYTES - self.commit.len() {
+            *self = Self {
+                rejected: true,
+                ..Self::default()
+            };
+            return true;
+        }
+        self.commit.push_str(text);
+        false
+    }
+
     /// The actions that one `commit` stands for, in the order a compositor applies
     /// them. A commit without `set_preedit_string` removes the preedit.
     fn into_actions(self) -> Vec<Action> {
@@ -551,7 +569,12 @@ fn send_field_state(im: &Rc<ZwpInputMethodV2>, info: &ContextInfo, changed_by_ot
 
 impl ZwpInputMethodV2Handler for VirtualIm {
     fn handle_commit_string(&mut self, _slf: &Rc<ZwpInputMethodV2>, text: &str) {
-        self.pending.commit.push_str(text);
+        if self.pending.push_commit(text) {
+            warn!(
+                engine = &*self.engine,
+                "dropping hosted commit: output queue limit exceeded"
+            );
+        }
     }
 
     fn handle_set_preedit_string(
@@ -561,6 +584,9 @@ impl ZwpInputMethodV2Handler for VirtualIm {
         cursor_begin: i32,
         cursor_end: i32,
     ) {
+        if self.pending.rejected {
+            return;
+        }
         self.pending.preedit = Some(Preedit {
             text: text.to_owned(),
             cursor_begin,
@@ -574,7 +600,9 @@ impl ZwpInputMethodV2Handler for VirtualIm {
         before_length: u32,
         after_length: u32,
     ) {
-        self.pending.delete = Some((before_length, after_length));
+        if !self.pending.rejected {
+            self.pending.delete = Some((before_length, after_length));
+        }
     }
 
     fn handle_commit(&mut self, _slf: &Rc<ZwpInputMethodV2>, serial: u32) {
@@ -995,6 +1023,7 @@ mod tests {
             commit: "你好".into(),
             preedit: None,
             delete: Some((3, 0)),
+            ..Pending::default()
         };
         assert_eq!(
             pending.into_actions(),
@@ -1014,6 +1043,33 @@ mod tests {
         assert_eq!(
             pending.into_actions(),
             [Action::Preedit(Preedit::with_cursor_at_end("ni"))]
+        );
+    }
+
+    #[test]
+    fn small_requests_cannot_overflow_a_hosted_transaction() {
+        let mut pending = Pending::default();
+        for _ in 0..16 {
+            assert!(!pending.push_commit(&"x".repeat(4000)));
+        }
+        assert!(!pending.push_commit(&"x".repeat(1536)));
+        assert_eq!(pending.commit.len(), MAX_PENDING_COMMIT_BYTES);
+        assert!(pending.push_commit("中"));
+        assert!(pending.rejected);
+        assert!(pending.commit.is_empty());
+        assert!(!pending.push_commit("later"));
+        let rejected = std::mem::take(&mut pending);
+        assert_eq!(
+            rejected.into_actions(),
+            [Action::Preedit(Preedit::default())]
+        );
+        assert!(!pending.push_commit("next"));
+        assert_eq!(
+            pending.into_actions(),
+            [
+                Action::Commit("next".into()),
+                Action::Preedit(Preedit::default())
+            ]
         );
     }
 }

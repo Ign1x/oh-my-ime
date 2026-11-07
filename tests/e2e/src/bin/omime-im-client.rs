@@ -50,7 +50,8 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 use xkbcommon::xkb;
 
 const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] \
-     [--keep-releases] [--slow-ms MS] [--tray ICON|TITLE|LABEL] [--spawn PROGRAM]";
+     [--keep-releases] [--slow-ms MS] [--commit-bytes N] [--forward-strokes N] \
+     [--tray ICON|TITLE|LABEL] [--spawn PROGRAM]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -108,6 +109,10 @@ struct App {
     keep_releases: bool,
     /// How long to think before forwarding a key (`--slow-ms`).
     slow: std::time::Duration,
+    /// Commit this many bytes on `a`, using small requests before one commit.
+    commit_bytes: Option<usize>,
+    /// Forward the triggering press, then this many F2 strokes after the commit.
+    forward_strokes: usize,
 }
 
 impl App {
@@ -221,6 +226,33 @@ impl App {
             .iter()
             .any(|m| xkb.mod_name_is_active(m, xkb::STATE_MODS_EFFECTIVE));
         let text = xkb.key_get_utf8(code);
+        if text == "a"
+            && let Some(bytes) = self.commit_bytes
+        {
+            if let Some(im) = &seat.im {
+                let text = omime_e2e::long_engine_text(bytes);
+                let mut rest = text.as_str();
+                while !rest.is_empty() {
+                    let mut end = rest.len().min(4000);
+                    while !rest.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    im.commit_string(rest[..end].to_owned());
+                    rest = &rest[end..];
+                }
+                im.commit(seat.serial);
+            }
+            if self.forward_strokes != 0 {
+                seat.forwarded.push(key);
+                Self::forward(seat, time, key, PRESSED);
+                for _ in 0..self.forward_strokes {
+                    Self::forward(seat, time, 60, PRESSED);
+                    Self::forward(seat, time, 60, RELEASED);
+                }
+                say("forwarded burst");
+            }
+            return;
+        }
         let letter = text
             .chars()
             .next()
@@ -440,6 +472,8 @@ fn main() -> anyhow::Result<()> {
     let mut size = (120, 40);
     let mut keep_releases = false;
     let mut slow = std::time::Duration::ZERO;
+    let mut commit_bytes = None;
+    let mut forward_strokes = 0;
     let mut tray = None;
     let mut spawn = None;
     let mut args = std::env::args().skip(1);
@@ -454,6 +488,8 @@ fn main() -> anyhow::Result<()> {
             }
             "--keep-releases" => keep_releases = true,
             "--slow-ms" => slow = std::time::Duration::from_millis(value()?.parse()?),
+            "--commit-bytes" => commit_bytes = Some(value()?.parse()?),
+            "--forward-strokes" => forward_strokes = value()?.parse()?,
             "--tray" => tray = Some(omime_e2e::tray_item::TrayItem::parse(&value()?)?),
             "--spawn" => spawn = Some(value()?),
             "--log" => {
@@ -482,6 +518,8 @@ fn main() -> anyhow::Result<()> {
         size,
         keep_releases,
         slow,
+        commit_bytes,
+        forward_strokes,
         ..App::default()
     };
     queue.roundtrip(&mut app)?;

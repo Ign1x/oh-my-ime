@@ -7,6 +7,20 @@ use std::os::fd::OwnedFd;
 
 use rustix::fs::MemfdFlags;
 
+/// Distinguishable UTF-8 text of exactly `bytes` bytes for large engine replies.
+pub fn long_engine_text(bytes: usize) -> String {
+    let mut text = String::new();
+    for index in 0.. {
+        let part = format!("{index:05}:中文🙂|");
+        if text.len() + part.len() > bytes {
+            text.extend(std::iter::repeat_n('x', bytes - text.len()));
+            return text;
+        }
+        text.push_str(&part);
+    }
+    text
+}
+
 /// Creates an shm file of `size` bytes whose 32-bit pixel `i` is `pixels(i)`.
 ///
 /// Uses `pwrite` instead of `mmap`, which keeps the test clients free of `unsafe`.

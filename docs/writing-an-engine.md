@@ -75,6 +75,22 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   key reaches the application.
 - Offsets and lengths into text are UTF-8 bytes, as in Wayland's text-input protocol.
   `Preedit::with_cursor_at_end` does the counting for you.
+- Wayland strings have a **4,000-byte limit**. omimed splits longer commits at UTF-8
+  boundaries into successive commit cycles, preserving the complete text and its
+  order before forwarded keys. Applications may treat each chunk as a separate
+  undo step. Preedits are truncated to that limit and cursor offsets are clamped to
+  character boundaries in the retained text; `-1` still hides the cursor.
+  Each seat can retain at most **64 KiB of committed text** awaiting delivery.
+  Replies exceeding that budget are rejected, as are replies with more
+  than 128 actions or insufficient room in the 256-entry output queue (each action
+  reserves up to two entries). Every accepted press also reserves a slot for its
+  release. Once the queue is full, further presses are dropped, including hosted
+  forwarding and unconsumed keys; accepted text stays in order and required
+  releases are preserved, even from a rejected reply.
+  Hosted input methods have the same 64 KiB limit
+  across `commit_string` requests before a `commit`. Rejections log no text and
+  still settle the triggering key. Application feedback can delay each chunk by
+  up to 200 ms, so keep replies short when later keys need to arrive promptly.
 - Answer quickly. After 200 ms (configurable) the key is passed to the application.
   Further keys bypass the busy context until its late answer is discarded and a
   queued `reset` finishes. A reply abandoned on switching or deactivation is simply
