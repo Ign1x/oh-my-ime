@@ -191,14 +191,21 @@ fn a_closure_burst_before_close_reply_does_not_stall_later_notifications() -> an
 }
 
 fn closure_burst_recovery(method: &str) -> anyhow::Result<()> {
-    let missing = TestEngine {
-        id: "missing",
-        program: target_dir().join("omime-e2e-nonexistent-engine"),
-        args: Vec::new(),
-        env: Vec::new(),
-        hosted: false,
-    };
-    let env = TestEnv::start(&[missing], None)?;
+    let mut env = TestEnv::prepare(&[])?;
+    let missing = env.dir().join("nonexistent-engine");
+    assert!(!missing.exists());
+    let engine_dir = env.dir().join("engines/missing");
+    std::fs::create_dir_all(&engine_dir)?;
+    // A target/debug program gets an `env LD_LIBRARY_PATH=...` launcher during
+    // installed tests. Use an absent private path so spawn itself must fail.
+    std::fs::write(
+        engine_dir.join("engine.toml"),
+        format!(
+            "[engine]\nid = 'missing'\nname = 'missing'\napi = '1.0'\nexec = [{:?}]\n",
+            missing.display().to_string()
+        ),
+    )?;
+    env.launch_daemon()?;
     let server = env.notifications()?;
     // Keep an unrelated notification live. Its later click proves the ordered
     // stream has drained the burst before another notification is requested.

@@ -78,11 +78,13 @@ to keep each test's runtime directory with the full logs.
 
 The same tests run against an installed build when `OMIME_E2E_INSTALL_DIR` points at its
 `bin` directory. omimed then runs without the dev shell's `LD_LIBRARY_PATH`, so a
-library the build cannot find fails the tests. CI does this with the Nix package:
+library the build cannot find fails the tests. Rime is packaged separately from the
+platform, so these tests also build it locally and use it when the installed
+directory has no Rime binary. CI does this with the Nix platform package:
 
 ```sh
 nix build
-cargo build -p omime-e2e
+cargo build -p omime-e2e -p omime-rime --locked
 OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e -- --ignored
 ```
 

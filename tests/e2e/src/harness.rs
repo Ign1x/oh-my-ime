@@ -126,6 +126,23 @@ pub fn echo_engine() -> TestEngine {
     }
 }
 
+/// Rime is packaged separately from the platform; use its development build if
+/// the installed directory contains only the platform.
+pub fn rime_engine() -> anyhow::Result<TestEngine> {
+    let program = [program_dir(), target_dir()]
+        .into_iter()
+        .map(|dir| dir.join("omime-rime"))
+        .find(|path| path.is_file())
+        .context("omime-rime must be installed or built with `cargo build --workspace`")?;
+    Ok(TestEngine {
+        id: "rime",
+        program,
+        args: Vec::new(),
+        env: Vec::new(),
+        hosted: false,
+    })
+}
+
 /// `omime-dummy-ui`, an engine that draws a window of one color and consumes nothing.
 pub fn dummy_engine(args: &[&str]) -> TestEngine {
     TestEngine {

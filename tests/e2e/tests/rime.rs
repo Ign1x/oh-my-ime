@@ -6,26 +6,15 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use omime_e2e::harness::{
-    TestEngine, TestEnv, program_dir, target_dir, wait_until, wait_until_within,
+    TestEngine, TestEnv, rime_engine, target_dir, wait_until, wait_until_within,
 };
 
-fn rime() -> Option<TestEngine> {
+fn rime() -> anyhow::Result<Option<TestEngine>> {
     if std::env::var_os("OMIME_RIME_SHARED_DATA").is_none() {
         eprintln!("no OMIME_RIME_SHARED_DATA (Rime's data); nothing to test");
-        return None;
+        return Ok(None);
     }
-    // The Nix package of the platform comes without it (nix/rime.nix builds it).
-    let program = [program_dir(), target_dir()]
-        .into_iter()
-        .map(|dir| dir.join("omime-rime"))
-        .find(|path| path.is_file())?;
-    Some(TestEngine {
-        id: "rime",
-        program,
-        args: Vec::new(),
-        env: Vec::new(),
-        hosted: false,
-    })
+    Ok(Some(rime_engine()?))
 }
 
 /// Waits until Rime has deployed its schemas, the first time a while.
@@ -84,6 +73,14 @@ fn wait_for_rime_exit(pid: u32) -> anyhow::Result<()> {
 /// A shell records the real Rime process's status, even if the supervisor kills
 /// its direct child. This distinguishes Rime's own cleanup from a supervisor kill.
 fn record_rime_exit(mut engine: TestEngine) -> TestEngine {
+    // Remember the development child's libraries before the observer shell hides
+    // its path from TestEnv. Packaged Rime and the daemon keep their own loaders.
+    if std::env::var_os("OMIME_E2E_INSTALL_DIR").is_some()
+        && engine.program.starts_with(target_dir())
+        && let Ok(path) = std::env::var("LD_LIBRARY_PATH")
+    {
+        engine.env.push(("LD_LIBRARY_PATH".into(), path));
+    }
     let mut args = vec!["-c".into(),
         "( \"$@\" & pid=$!; printf '%s\\n' \"$pid\" > \"$XDG_STATE_HOME/rime-pid\"; wait \"$pid\"; status=$?; printf '%s\\n' \"$status\" > \"$XDG_STATE_HOME/rime-status\"; exit \"$status\" ) & wait".into(),
         "sh".into()];
@@ -120,7 +117,7 @@ fn recorded_rime_exit(env: &TestEnv) -> anyhow::Result<i32> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn ordinary_shutdown_preserves_the_last_learned_rime_phrase() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let mut env = TestEnv::start(&[engine], Some("rime"))?;
     let _editor = type_two_phrases(&env)?;
     let pid = env.engine_pid("rime").expect("Rime process");
@@ -133,7 +130,7 @@ fn ordinary_shutdown_preserves_the_last_learned_rime_phrase() -> anyhow::Result<
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_exits_cleanly_with_a_focused_field() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     for _ in 0..5 {
         let mut env = TestEnv::start(&[record_rime_exit(engine.clone())], Some("rime"))?;
         let _editor = type_two_phrases(&env)?;
@@ -153,7 +150,7 @@ fn rime_exits_cleanly_with_a_focused_field() -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_sigterm_preserves_the_last_learned_phrase() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let env = TestEnv::start(&[record_rime_exit(engine)], Some("rime"))?;
     let _editor = type_two_phrases(&env)?;
     let pid =
@@ -171,7 +168,7 @@ fn rime_sigterm_preserves_the_last_learned_phrase() -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_finalizes_when_its_window_connection_is_lost() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     for _ in 0..5 {
         let env = TestEnv::start(&[record_rime_exit(engine.clone())], Some("rime"))?;
         let _editor = type_two_phrases(&env)?;
@@ -197,7 +194,7 @@ fn rime_finalizes_when_its_window_connection_is_lost() -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn leaving_the_field_saves_rimes_last_learned_phrase() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let mut env = TestEnv::start(&[engine], Some("rime"))?;
     let editor = type_two_phrases(&env)?;
     let before = env.count_in_log("text field left");
@@ -231,7 +228,7 @@ fn wait_for_mode(env: &TestEnv, mode: &str) -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_types_xiaohe_and_pinyin() -> anyhow::Result<()> {
-    let Some(engine) = rime() else {
+    let Some(engine) = rime()? else {
         return Ok(());
     };
     let env = TestEnv::start(&[engine], Some("rime"))?;
@@ -259,7 +256,7 @@ fn rime_types_xiaohe_and_pinyin() -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rimes_candidates_are_clicked_and_shift_switches_to_letters() -> anyhow::Result<()> {
-    let Some(engine) = rime() else {
+    let Some(engine) = rime()? else {
         return Ok(());
     };
     let env = TestEnv::start(&[engine], Some("rime"))?;
@@ -315,7 +312,7 @@ fn rimes_candidates_are_clicked_and_shift_switches_to_letters() -> anyhow::Resul
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_restores_each_apps_mode_before_typing_and_after_restart() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let mut env = TestEnv::start(&[engine], Some("rime"))?;
     env.configure("[apps]\nremember = true\nremember_mode = true\n")?;
     wait_for_rime(&env)?;
@@ -386,7 +383,7 @@ fn rime_restores_each_apps_mode_before_typing_and_after_restart() -> anyhow::Res
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rime_restores_a_saved_mode_while_deploying_for_the_first_time() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let mut env = TestEnv::prepare(&[engine])?;
     std::fs::create_dir_all(env.dir().join("config/oh-my-ime"))?;
     std::fs::create_dir_all(env.dir().join("state/oh-my-ime"))?;
@@ -417,7 +414,7 @@ fn rime_restores_a_saved_mode_while_deploying_for_the_first_time() -> anyhow::Re
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rimes_candidates_stand_in_a_column_when_set_so() -> anyhow::Result<()> {
-    let Some(engine) = rime() else {
+    let Some(engine) = rime()? else {
         return Ok(());
     };
     let mut env = TestEnv::prepare(&[engine])?;
@@ -512,7 +509,7 @@ fn open_settings(env: &TestEnv) -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rimes_settings_save_restart_and_recover_from_write_errors() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let env = settings_env(engine)?;
     open_settings(&env)?;
     // At 560 x 660: increment the page size, select a column, increase the font size.
@@ -565,7 +562,7 @@ fn rimes_settings_save_restart_and_recover_from_write_errors() -> anyhow::Result
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn rimes_settings_cancel_and_require_a_schema() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let env = settings_env(engine)?;
     let custom_path = env.dir().join("data/oh-my-ime/rime/default.custom.yaml");
     let original = std::fs::read_to_string(&custom_path)?;
@@ -612,7 +609,7 @@ fn rimes_settings_cancel_and_require_a_schema() -> anyhow::Result<()> {
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn reselecting_the_active_rime_schema_keeps_its_mode_and_composition() -> anyhow::Result<()> {
-    let Some(engine) = rime() else { return Ok(()) };
+    let Some(engine) = rime()? else { return Ok(()) };
     let env = TestEnv::start(&[engine], Some("rime"))?;
     wait_for_rime(&env)?;
     env.omime(&["switch", "rime/luna_pinyin"])?;

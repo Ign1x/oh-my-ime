@@ -52,11 +52,11 @@ cargo test -p omime-e2e -- --ignored
 
 测试失败时会打印 `omimed.log` 与 `sway.log` 的末尾。设置 `OMIME_E2E_KEEP=1` 可以保留每个测试的运行时目录及完整日志。
 
-把 `OMIME_E2E_INSTALL_DIR` 指向已安装版本的 `bin` 目录时，同一批测试会针对该安装运行。此时 omimed 不在开发 shell 的 `LD_LIBRARY_PATH` 下启动，因此构建找不到的库会让测试失败。CI 用 Nix 包做这件事：
+把 `OMIME_E2E_INSTALL_DIR` 指向已安装版本的 `bin` 目录时，同一批测试会针对该安装运行。此时 omimed 不在开发 shell 的 `LD_LIBRARY_PATH` 下启动，因此构建找不到的库会让测试失败。Rime 与平台分开打包，因此测试也在本地构建 Rime，在安装目录没有 Rime 可执行文件时使用它。CI 用 Nix 平台包做这件事：
 
 ```sh
 nix build
-cargo build -p omime-e2e
+cargo build -p omime-e2e -p omime-rime --locked
 OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e -- --ignored
 ```
 

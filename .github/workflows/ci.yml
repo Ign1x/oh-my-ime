@@ -67,7 +67,7 @@ jobs:
         run: |
           # shellcheck disable=SC2016 # Expanded inside the Nix development shell.
           nix develop .#e2e --command bash -c \
-            'cargo build -p omime-e2e --locked && OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e --locked --no-fail-fast -- --ignored' \
+            'cargo build -p omime-e2e -p omime-rime --locked && OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e --locked --no-fail-fast -- --ignored' \
             2>&1 | tee e2e.log
       - name: Annotate failed end-to-end tests
         if: failure()

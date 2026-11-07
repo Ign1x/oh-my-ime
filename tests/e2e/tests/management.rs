@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_e2e::harness::{
-    TIMEOUT, TestEngine, TestEnv, dummy_engine, echo_engine, program_dir, sparkle_engine,
+    TIMEOUT, TestEnv, dummy_engine, echo_engine, program_dir, rime_engine, sparkle_engine,
     wait_until, wait_until_within,
 };
 
@@ -743,14 +743,7 @@ fn rime_learned_text_is_private() -> anyhow::Result<()> {
     under_umask_022("rime_learned_text_is_private", || {
         std::env::var_os("OMIME_RIME_SHARED_DATA").context("requires OMIME_RIME_SHARED_DATA")?;
         for existing in [false, true] {
-            let engine = TestEngine {
-                id: "rime",
-                program: program_dir().join("omime-rime"),
-                args: Vec::new(),
-                env: Vec::new(),
-                hosted: false,
-            };
-            let mut env = TestEnv::prepare(&[engine])?;
+            let mut env = TestEnv::prepare(&[rime_engine()?])?;
             let path = env.dir().join("data/oh-my-ime/rime");
             if existing {
                 std::fs::create_dir_all(&path)?;
@@ -807,14 +800,7 @@ fn sparkle_commit_history_is_private() -> anyhow::Result<()> {
 fn rime_uses_linked_private_data_directory() -> anyhow::Result<()> {
     under_umask_022("rime_uses_linked_private_data_directory", || {
         std::env::var_os("OMIME_RIME_SHARED_DATA").context("requires OMIME_RIME_SHARED_DATA")?;
-        let engine = TestEngine {
-            id: "rime",
-            program: program_dir().join("omime-rime"),
-            args: Vec::new(),
-            env: Vec::new(),
-            hosted: false,
-        };
-        let mut env = TestEnv::prepare(&[engine])?;
+        let mut env = TestEnv::prepare(&[rime_engine()?])?;
         let target = env.dir().join("rime-storage");
         std::fs::create_dir(&target)?;
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;

@@ -275,6 +275,26 @@ while True:
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
+    let programs = program_dir();
+    let wrapped = programs.join(".omimed-wrapped");
+    // This fault-injection test must substitute dbus-daemon. Nix's launch wrapper
+    // deliberately puts the real bus first, so exercise its exact installed
+    // daemon here with the package's data directory preserved. Ordinary installed
+    // tests still enter through the launch wrapper and validate that packaging.
+    let mut command = if wrapped.is_file() {
+        let mut command = env.command(&wrapped);
+        let data = env.command("printenv").arg("XDG_DATA_DIRS").output()?;
+        let data = String::from_utf8(data.stdout)?;
+        let mut data_dirs: Vec<_> = std::env::split_paths(data.trim()).collect();
+        data_dirs.push(programs.parent().expect("bin has a parent").join("share"));
+        command.env("XDG_DATA_DIRS", std::env::join_paths(data_dirs)?);
+        command
+    } else {
+        env.command(programs.join("omimed"))
+    };
+    if std::env::var_os("OMIME_E2E_INSTALL_DIR").is_some() {
+        command.env_remove("LD_LIBRARY_PATH");
+    }
     // This custom launch keeps the PATH override out of every other test. Reap
     // the daemon on failures too; its private bus has the normal TERM disposition.
     struct Daemon(Child);
@@ -285,7 +305,7 @@ while True:
         }
     }
     let mut daemon = Daemon(
-        env.command(program_dir().join("omimed"))
+        command
             .args(["--engine", "hosted"])
             .env("OMIME_LOG", "debug")
             .env("PATH", std::env::join_paths(paths)?)
