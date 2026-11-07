@@ -1103,15 +1103,18 @@ impl EngineManager {
     }
 
     /// Stops a running engine and starts it again right away, so that it reads its
-    /// settings again. Not a crash.
-    pub fn reload(&mut self, id: &str) {
+    /// settings again. Returns whether a stop was initiated; this is not a crash.
+    pub fn reload(&mut self, id: &str) -> bool {
         if let Some(slot) = self.slots.get_mut(id)
             && slot.kill.is_some()
         {
             info!(engine = id, "restarting the engine to read its settings");
             slot.reloading = true;
+            slot.state = EngineState::Stopping;
             Self::request_stop(slot, Stop::Politely);
+            return true;
         }
+        false
     }
 
     /// Opens the settings program of `id`: an ordinary window on the user's desktop,

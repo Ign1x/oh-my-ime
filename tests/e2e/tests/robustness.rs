@@ -38,6 +38,173 @@ fn assert_saved(env: &TestEnv, pid: u32) {
     );
 }
 
+fn enable_saver_settings(env: &TestEnv) -> anyhow::Result<()> {
+    let manifest = env.dir().join("engines/saver/engine.toml");
+    let mut text = std::fs::read_to_string(&manifest)?;
+    text += "\n[engine.settings]\nexec = [\"true\"]\nrestart = true\n";
+    std::fs::write(manifest, text)?;
+    env.omime(&["reload"])?;
+    Ok(())
+}
+
+fn wait_for_saved(env: &TestEnv, pid: u32) -> anyhow::Result<()> {
+    wait_until("the old engine to enter its finalizer", || {
+        std::fs::read_to_string(env.dir().join("state/engine-saved"))
+            .ok()?
+            .lines()
+            .any(|line| line == pid.to_string())
+            .then_some(())
+    })
+}
+
+fn wait_for_replacement(env: &TestEnv, old: u32) -> anyhow::Result<()> {
+    wait_until_within(
+        Duration::from_secs(6),
+        "the replacement engine to register",
+        || (env.engine_pid("saver")? != old && env.count_in_log("engine ready") >= 2).then_some(()),
+    )
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn typing_during_settings_reload_is_delivered_before_the_engine_exits() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[saving_engine(&["--hang"])], Some("saver"))?;
+    env.wait_for_log("engine ready")?;
+    enable_saver_settings(&env)?;
+    let old = env.engine_pid("saver").expect("the saving engine");
+    let editor = env.editor(&[])?;
+    env.type_on_seat("seat0", "before")?;
+    editor.wait_for_text("before")?;
+    env.omime(&["settings", "saver"])?;
+    env.wait_for_log("restarting the engine to read its settings")?;
+    wait_for_saved(&env, old)?;
+    env.type_on_seat("seat0", "during")?;
+    wait_until_within(
+        Duration::from_millis(500),
+        "direct typing while the engine saves",
+        || (editor.text() == "beforeduring").then_some(()),
+    )?;
+    assert_eq!(
+        env.engine_pid("saver"),
+        Some(old),
+        "the finalizer must still be running"
+    );
+    let engines = env.omime(&["engines"])?;
+    assert!(
+        engines
+            .lines()
+            .any(|line| line.contains("saver") && line.ends_with("stopping")),
+        "{engines}"
+    );
+    wait_for_replacement(&env, old)?;
+    env.type_on_seat("seat0", "after")?;
+    editor.wait_for_text("beforeduringafter")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn settings_reload_releases_pending_fcitx_keys_and_ignores_late_commits() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[saving_engine(&["--hang", "--hold-key"])], Some("saver"))?;
+    env.wait_for_log("engine ready")?;
+    enable_saver_settings(&env)?;
+    // Give this deliberately blocked RPC its own budget. The assertion below is
+    // much earlier, so the ordinary key watchdog cannot make it pass.
+    env.configure("[engine]\nkey_timeout_ms = 3000\n")?;
+    let old = env.engine_pid("saver").expect("the saving engine");
+    let client = env.fcitx_client(&[])?;
+    client.send("focus-in")?;
+    client.wait_for("the field to focus", |line| line == "ok")?;
+    std::fs::write(env.dir().join("state/hold-next-key"), b"hold")?;
+    let from = client.lines().len();
+    client.send("key 0x61 38 0 press")?;
+    wait_until("the engine to hold the key", || {
+        env.dir().join("state/key-in-flight").exists().then_some(())
+    })?;
+    env.omime(&["settings", "saver"])?;
+    env.wait_for_log("restarting the engine to read its settings")?;
+    wait_until_within(
+        Duration::from_millis(500),
+        "the outstanding Fcitx reply",
+        || {
+            client.lines()[from..]
+                .iter()
+                .any(|line| line == "reply false")
+                .then_some(())
+        },
+    )?;
+    std::fs::write(env.dir().join("state/release-key"), b"release")?;
+    env.wait_for_log("discarding a late answer")?;
+    wait_for_saved(&env, old)?;
+    client.send("key 0x62 56 0 press")?;
+    wait_until_within(
+        Duration::from_millis(500),
+        "a Fcitx key during the stop",
+        || {
+            (client.lines()[from..]
+                .iter()
+                .filter(|line| line.as_str() == "reply false")
+                .count()
+                == 2)
+                .then_some(())
+        },
+    )?;
+    assert_eq!(
+        &client.lines()[from..],
+        ["reply false", "reply false"],
+        "the stale handled reply must not commit or finish a key twice"
+    );
+    assert!(
+        !env.daemon_log().contains("did not answer in time"),
+        "the transition, not the watchdog, must release pending keys"
+    );
+    wait_for_replacement(&env, old)?;
+    client.send("key 0x63 54 0 press")?;
+    client.wait_for("the replacement engine's commit", |line| {
+        line == "commit \"c\""
+    })?;
+    client.wait_for("the replacement engine's key reply", |line| {
+        line == "reply true"
+    })?;
+    assert_eq!(
+        &client.lines()[from..],
+        ["reply false", "reply false", "commit \"c\"", "reply true"]
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn settings_reload_releases_queued_keys_before_a_late_reply() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[saving_engine(&["--hang", "--hold-key"])], Some("saver"))?;
+    env.wait_for_log("engine ready")?;
+    enable_saver_settings(&env)?;
+    env.configure("[engine]\nkey_timeout_ms = 3000\n")?;
+    let old = env.engine_pid("saver").expect("the saving engine");
+    let editor = env.editor(&[])?;
+    std::fs::write(env.dir().join("state/hold-next-key"), b"hold")?;
+    env.type_on_seat("seat0", "ab")?;
+    wait_until("the engine to hold the first key", || {
+        env.dir().join("state/key-in-flight").exists().then_some(())
+    })?;
+    assert_eq!(editor.text(), "");
+    env.omime(&["settings", "saver"])?;
+    env.wait_for_log("restarting the engine to read its settings")?;
+    wait_until_within(
+        Duration::from_millis(500),
+        "the outstanding and queued keys",
+        || (editor.text() == "ab").then_some(()),
+    )?;
+    std::fs::write(env.dir().join("state/release-key"), b"release")?;
+    env.wait_for_log("discarding a late answer")?;
+    wait_for_saved(&env, old)?;
+    wait_for_replacement(&env, old)?;
+    env.type_on_seat("seat0", "c")?;
+    editor.wait_for_text("abc")?;
+    assert!(!env.daemon_log().contains("did not answer in time"));
+    Ok(())
+}
+
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
 fn native_engine_can_finish_shutdown() -> anyhow::Result<()> {

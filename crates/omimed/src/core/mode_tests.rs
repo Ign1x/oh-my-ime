@@ -156,6 +156,38 @@ fn mode_core() -> Core {
     core
 }
 
+#[tokio::test]
+async fn settings_closed_without_a_running_process_keeps_pending_work() {
+    for state in [
+        EngineState::Stopped,
+        EngineState::Stopping,
+        EngineState::Failed,
+    ] {
+        let mut core = mode_core();
+        let mut out = TestFrontends::default();
+        core.engines.get_mut("rime").unwrap().state = state;
+        let context = core.contexts.get_mut(&1).unwrap();
+        context.in_flight = Some(flight("ProcessKey", None));
+        context.mode = Some(("pinyin".into(), "latin".into()));
+        context.queue.push_back(Request::Reset);
+        core.on_event(
+            CoreEvent::SettingsClosed {
+                engine: "rime".into(),
+            },
+            &mut out,
+        )
+        .await;
+        let context = &core.contexts[&1];
+        assert!(context.in_flight.is_some());
+        assert!(context.activated && context.mode_ready);
+        assert_eq!(context.mode, Some(("pinyin".into(), "latin".into())));
+        assert_eq!(context.queue.len(), 1);
+        assert!(out.finished.is_empty());
+        assert!(core.stale_tokens.is_empty());
+        assert_eq!(core.engines.get("rime").unwrap().state, state);
+    }
+}
+
 #[test]
 fn mode_reports_require_the_live_application_method_and_capability() {
     let mut core = mode_core();

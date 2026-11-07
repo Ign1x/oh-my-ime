@@ -43,7 +43,9 @@ All notable changes to this project are documented here. The format follows
 - Rime's initial Chinese/Latin mode remains available when a newly focused field's
   application identity arrives before activation finishes, without needing a first key.
 - Native engines get time to save state on shutdown, restart, settings reload and
-  uninstall, with bounded SIGTERM/SIGKILL fallback for hung processes. Rime now
+  uninstall, with bounded SIGTERM/SIGKILL fallback for hung processes. Keys pass
+  through while a settings reload stops the engine, including pending keys;
+  replies from the old process cannot duplicate them. Rime now
   finalizes its dictionary on SIGTERM and window failures, preserving the last
   learned phrase and exiting cleanly.
 - Rime and Sparkle support symlinked data directories while restricting their target

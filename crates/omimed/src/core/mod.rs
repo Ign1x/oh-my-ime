@@ -1448,7 +1448,11 @@ impl Core {
             }
             CoreEvent::Reply { ctx, token, reply } => self.on_reply(ctx, token, reply, out),
             // It reads what was changed when it starts again.
-            CoreEvent::SettingsClosed { engine } => self.engines.reload(&engine),
+            CoreEvent::SettingsClosed { engine } => {
+                if self.engines.reload(&engine) {
+                    self.engine_unavailable(&engine, out);
+                }
+            }
         }
     }
 
