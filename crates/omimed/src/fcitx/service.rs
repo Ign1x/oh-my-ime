@@ -4,14 +4,16 @@
 //! What the frontend sends back goes through one queue per connection, so signals
 //! reach an application in order and before the reply to the key that caused them.
 
+use std::collections::BTreeMap;
 use std::hash::{BuildHasher as _, Hasher as _};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use std::pin::pin;
 
 use futures_core::Stream;
+use omime_proto::tr;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 use zbus::fdo::RequestNameReply;
@@ -19,7 +21,9 @@ use zbus::message::Header;
 use zbus::object_server::ObjectServer;
 use zbus::{OwnedObjectPath, OwnedVariant, Variant};
 
-use super::{Batched, Bus, IcId, KeyAnswer, Outgoing, Request, Signal};
+use super::{
+    Batched, Bus, IcId, KeyAnswer, MAX_CONTEXTS, MAX_CONTEXTS_PER_OWNER, Outgoing, Request, Signal,
+};
 
 const INPUT_CONTEXT_INTERFACE: &str = "org.fcitx.Fcitx.InputContext1";
 /// Where both bus names serve `org.fcitx.Fcitx.InputMethod1`.
@@ -33,6 +37,50 @@ const WINDOW_MAX_AGE: Duration = Duration::from_secs(1);
 /// The names fcitx5 owns, by [`Bus`].
 const BUS_NAMES: [&str; 2] = ["org.fcitx.Fcitx5", "org.freedesktop.portal.Fcitx"];
 
+#[derive(Default)]
+struct ContextCounts {
+    owners: BTreeMap<String, usize>,
+    total: usize,
+}
+
+/// Holds a quota slot until the object is removed, including failed exports.
+struct ContextSlot {
+    counts: Arc<Mutex<ContextCounts>>,
+    owner: String,
+}
+
+impl ContextSlot {
+    fn reserve(counts: &Arc<Mutex<ContextCounts>>, owner: &str) -> zbus::fdo::Result<Self> {
+        let mut state = counts.lock().unwrap_or_else(|e| e.into_inner());
+        if state.owners.get(owner).copied().unwrap_or_default() >= MAX_CONTEXTS_PER_OWNER
+            || state.total >= MAX_CONTEXTS
+        {
+            return Err(zbus::fdo::Error::LimitsExceeded(tr!(
+                "too many Fcitx input contexts"
+            )));
+        }
+        *state.owners.entry(owner.to_owned()).or_default() += 1;
+        state.total += 1;
+        Ok(Self {
+            counts: counts.clone(),
+            owner: owner.to_owned(),
+        })
+    }
+}
+
+impl Drop for ContextSlot {
+    fn drop(&mut self) {
+        let mut state = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = state.owners.get_mut(&self.owner) {
+            *count -= 1;
+            if *count == 0 {
+                state.owners.remove(&self.owner);
+            }
+            state.total -= 1;
+        }
+    }
+}
+
 /// Takes the Fcitx5 names on the session bus and serves the protocol. Returns the
 /// queues of the two connections (by [`Bus`]); a connection that could not be set up
 /// has none.
@@ -40,9 +88,10 @@ pub async fn start(
     requests: mpsc::UnboundedSender<Request>,
 ) -> [Option<mpsc::UnboundedSender<Outgoing>>; 2] {
     let next_ic = Arc::new(AtomicU64::new(0));
+    let counts = Arc::new(Mutex::new(ContextCounts::default()));
     let mut queues = [None, None];
     for bus in [Bus::Main, Bus::Portal] {
-        match connect(bus, requests.clone(), next_ic.clone()).await {
+        match connect(bus, requests.clone(), next_ic.clone(), counts.clone()).await {
             Ok(queue) => queues[bus as usize] = Some(queue),
             Err(e) => warn!(
                 name = BUS_NAMES[bus as usize],
@@ -57,10 +106,12 @@ async fn connect(
     bus: Bus,
     requests: mpsc::UnboundedSender<Request>,
     next_ic: Arc<AtomicU64>,
+    counts: Arc<Mutex<ContextCounts>>,
 ) -> zbus::Result<mpsc::UnboundedSender<Outgoing>> {
     let input_method = || InputMethodObject {
         bus,
         next_ic: next_ic.clone(),
+        counts: counts.clone(),
         requests: requests.clone(),
     };
     let mut builder =
@@ -69,6 +120,7 @@ async fn connect(
         builder = builder.serve_at(INPUT_METHOD_COMPAT_PATH, input_method());
     }
     let conn = builder.build().await?;
+    watch_clients(conn.clone(), requests).await?;
 
     // Queue for the name rather than giving up: when fcitx5 runs, X11 applications keep
     // using it until it exits, and then this connection takes over.
@@ -89,7 +141,6 @@ async fn connect(
 
     let (queue, outgoing) = mpsc::unbounded_channel();
     tokio::task::spawn_local(send_outgoing(conn.clone(), outgoing));
-    tokio::task::spawn_local(watch_clients(conn, requests));
     Ok(queue)
 }
 
@@ -144,20 +195,24 @@ async fn emit(
 }
 
 /// Tells the frontend when an application leaves the bus, so its contexts go too.
-async fn watch_clients(conn: zbus::Connection, requests: mpsc::UnboundedSender<Request>) {
-    let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await else {
-        return;
-    };
-    let Ok(changes) = dbus.receive_name_owner_changed().await else {
-        return;
-    };
-    let mut changes = pin!(changes);
-    while let Some(change) = next(changes.as_mut()).await {
-        let Ok(args) = change.args() else { continue };
-        if args.name().starts_with(':') && args.new_owner().is_none() {
-            let _ = requests.send(Request::ClientGone(args.name().to_string()));
+async fn watch_clients(
+    conn: zbus::Connection,
+    requests: mpsc::UnboundedSender<Request>,
+) -> zbus::Result<()> {
+    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
+    let changes = dbus.receive_name_owner_changed().await?;
+    // Install the subscription before advertising the service, so even the first
+    // client cannot disappear before disconnect monitoring is ready.
+    tokio::task::spawn_local(async move {
+        let mut changes = pin!(changes);
+        while let Some(change) = next(changes.as_mut()).await {
+            let Ok(args) = change.args() else { continue };
+            if args.name().starts_with(':') && args.new_owner().is_none() {
+                let _ = requests.send(Request::ClientGone(args.name().to_string()));
+            }
         }
-    }
+    });
+    Ok(())
 }
 
 /// Waits for the next item of `stream`.
@@ -169,6 +224,7 @@ async fn next<S: Stream>(mut stream: std::pin::Pin<&mut S>) -> Option<S::Item> {
 struct InputMethodObject {
     bus: Bus,
     next_ic: Arc<AtomicU64>,
+    counts: Arc<Mutex<ContextCounts>>,
     requests: mpsc::UnboundedSender<Request>,
 }
 
@@ -180,12 +236,15 @@ impl InputMethodObject {
         &self,
         args: Vec<(String, String)>,
         #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<(OwnedObjectPath, Vec<u8>)> {
         let owner = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?
-            .to_string();
+            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?;
+        let owner_name = owner.to_owned();
+        let owner = owner.to_string();
+        let slot = ContextSlot::reserve(&self.counts, &owner)?;
         let ic = self.next_ic.fetch_add(1, Ordering::Relaxed) + 1;
         let path = OwnedObjectPath::try_from(format!("/org/freedesktop/portal/inputcontext/{ic}"))
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
@@ -193,6 +252,7 @@ impl InputMethodObject {
             .iter()
             .any(|(key, value)| key == "display" && value.starts_with("wayland:"));
         let object = InputContextObject {
+            _slot: slot,
             ic,
             owner: owner.clone(),
             requests: self.requests.clone(),
@@ -200,13 +260,37 @@ impl InputMethodObject {
             window_asked: std::sync::Mutex::new(None),
         };
         server.at(&path, object).await?;
-        let _ = self.requests.send(Request::Created {
-            ic,
-            bus: self.bus,
-            owner,
-            path: path.clone(),
-            args,
-        });
+        if self
+            .requests
+            .send(Request::Created {
+                ic,
+                bus: self.bus,
+                owner,
+                path: path.clone(),
+                args,
+            })
+            .is_err()
+        {
+            let _ = server.remove::<InputContextObject, _>(&path).await;
+            return Err(zbus::fdo::Error::Failed(tr!("the daemon is shutting down")));
+        }
+        // ClientGone can precede Created while exporting the object yields. Check
+        // after queuing Created: a departed owner needs a later Destroy; an owner
+        // still present here is covered by the installed disconnect subscription.
+        let connected: zbus::fdo::Result<bool> = async {
+            zbus::fdo::DBusProxy::new(conn)
+                .await?
+                .name_has_owner(owner_name.into())
+                .await
+        }
+        .await;
+        if !matches!(connected, Ok(true)) {
+            let _ = self.requests.send(Request::Destroy(ic));
+            connected?;
+            return Err(zbus::fdo::Error::NameHasNoOwner(tr!(
+                "the Fcitx client disconnected"
+            )));
+        }
         Ok((path, uuid(ic)))
     }
 
@@ -231,6 +315,7 @@ fn uuid(ic: IcId) -> Vec<u8> {
 
 /// `org.fcitx.Fcitx.InputContext1`: one text field of one application.
 struct InputContextObject {
+    _slot: ContextSlot,
     ic: IcId,
     /// The unique bus name of the application; only it may use this context.
     owner: String,

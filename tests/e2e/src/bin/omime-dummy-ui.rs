@@ -17,6 +17,8 @@
 //! When started by omimed (`OMIME_ENGINE_ADDRESS` is set) it also registers as an
 //! engine that passes every key through, after `--slow-ms` milliseconds if given. It
 //! asks for its window to be shown when a text field is focused, unless `--hidden`.
+//! With `--surrounding`, keys report the surrounding length and offsets as preedit;
+//! Backspace also requests deletion of three bytes before the cursor.
 
 use std::time::{Duration, Instant};
 
@@ -33,7 +35,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 const USAGE: &str = "\
 Usage: omime-dummy-ui [--color RRGGBB] [--size WxH] [--misbehave shm|viewport|subsurface]
                       [--misbehave-once FILE] [--slow-ms N] [--slow-activate-ms N] [--hidden]
-                      [--input-methods ID,ID...] [--properties]";
+                      [--input-methods ID,ID...] [--properties] [--surrounding]";
 
 /// An engine that consumes nothing, optionally slowly.
 struct PassThrough {
@@ -48,6 +50,7 @@ struct PassThrough {
     /// A menu (`--properties`): a switch, which clicks flip, a choice in a submenu and
     /// an action.
     properties: Vec<omime_sdk::Property>,
+    surrounding: bool,
 }
 
 impl omime_sdk::Engine for PassThrough {
@@ -100,11 +103,18 @@ impl omime_sdk::Engine for PassThrough {
         }
     }
 
-    fn process_key(
-        &mut self,
-        _ctx: &mut omime_sdk::Context<'_>,
-        _key: &omime_sdk::KeyEvent,
-    ) -> bool {
+    fn process_key(&mut self, ctx: &mut omime_sdk::Context<'_>, key: &omime_sdk::KeyEvent) -> bool {
+        if self.surrounding && !key.released {
+            let report = ctx.info().surrounding.as_ref().map_or_else(
+                || "none".to_owned(),
+                |(text, cursor, anchor)| format!("{}:{cursor}:{anchor}", text.len()),
+            );
+            ctx.set_preedit(omime_sdk::Preedit::with_cursor_at_end(report));
+            if key.keysym == 0xff08 {
+                ctx.delete_surrounding(3, 0);
+            }
+            return true;
+        }
         if !self.slow_activate.is_zero() {
             // Count requests without logging their contents.
             println!("processed key");
@@ -342,6 +352,7 @@ fn main() -> anyhow::Result<()> {
     // Input methods of its own, as a Rime engine has schemas; the first is in use.
     let mut input_methods: Vec<omime_sdk::InputMethodInfo> = Vec::new();
     let mut properties = Vec::new();
+    let mut surrounding = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(USAGE);
@@ -366,6 +377,7 @@ fn main() -> anyhow::Result<()> {
                 slow_activate = Duration::from_millis(value()?.parse()?);
             }
             "--hidden" => show = false,
+            "--surrounding" => surrounding = true,
             "--properties" => {
                 properties = vec![
                     omime_sdk::Property {
@@ -436,6 +448,7 @@ fn main() -> anyhow::Result<()> {
             input_methods,
             current,
             properties,
+            surrounding,
         })?)
     } else {
         None

@@ -9,6 +9,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+msgid "too many Fcitx input contexts"
+msgstr "Fcitx 输入上下文数量过多"
+
+msgid "the Fcitx client disconnected"
+msgstr "Fcitx 客户端已断开连接"
+
 msgid "oh-my-ime Settings"
 msgstr "oh-my-ime 设置"
 

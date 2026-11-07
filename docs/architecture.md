@@ -187,6 +187,17 @@ know which frontend a key came from.
   reply. With the `KeyEventOrderFix` capability, a key the engine did not consume but that
   produced text is answered as handled and sent back after the text. Password fields
   bypass the engines, as everywhere else.
+  Each owner (a unique client bus connection) may hold at most 1,024 contexts across
+  both names, with 8,192 contexts in total. `CreateInputContext` returns
+  `org.freedesktop.DBus.Error.LimitsExceeded` before exporting an object when either
+  quota is full; destroying a context or disconnecting releases its slot, including
+  creations still in flight when the owner disconnects. Each context
+  retains at most 4,000 bytes of surrounding text in a UTF-8 window around the cursor,
+  matching the hosted-engine bound. Cursor and anchor are adjusted in characters before
+  conversion to engine byte offsets; an anchor outside the window is clamped to its
+  edge. Position-only updates keep their original character offsets. If the cursor
+  leaves the retained window, engines receive an empty buffer with zero cursor and
+  anchor offsets, and deletion requests are ignored until a full-text update arrives.
 - **Engine windows.** Compositors show input popups only for Wayland text fields. While an
   X11 application has focus and no Wayland text field does, the bridge shows the active
   engine's window on a layer surface of its own, a *mirror*: layer `overlay`, namespace
@@ -205,6 +216,10 @@ know which frontend a key came from.
   `GET_TREE`) when the field gets focus, and again at most once a second as the cursor
   moves, and shows the window on a mirror at the window's position plus the cursor
   (`SetCursorRectV2` divided by its scale).
+  Incoming Fcitx rectangles and XIM cursor rectangles are clamped to coordinates within
+  ±(1 << 24) and dimensions from 0 through (1 << 16). A non-finite, zero or negative
+  cursor scale is treated as 1. Placement uses 64-bit integer arithmetic and saturates
+  results back to 32-bit coordinates.
 
 ## Engine protocol (v1)
 

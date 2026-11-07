@@ -19,8 +19,13 @@ use xkbcommon::xkb;
 use zbus::OwnedObjectPath;
 
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
-use crate::placement::Rect;
+use crate::placement::{self, Rect};
 pub use service::start;
+
+/// Fcitx frontend resource limits, shared by both bus names.
+const MAX_CONTEXTS_PER_OWNER: usize = 1_024;
+const MAX_CONTEXTS: usize = 8_192;
+const MAX_SURROUNDING_BYTES: usize = 4_000;
 
 /// Identifies an input context of the protocol.
 pub type IcId = u64;
@@ -153,11 +158,62 @@ struct Ic {
     focused: bool,
     /// The core's context while the field has focus and is not sensitive.
     ctx: Option<ContextId>,
-    /// Text, cursor and anchor in characters.
-    surrounding: Option<(String, u32, u32)>,
+    surrounding: Option<Surrounding>,
     preedit_shown: bool,
     /// The modifiers of the last key, which keys engines send back carry too.
     last_mods: u32,
+}
+
+#[derive(Debug, Default)]
+struct Surrounding {
+    text: String,
+    /// Cursor and anchor in characters within the retained window.
+    cursor: u32,
+    anchor: u32,
+    /// Characters discarded before the window; position-only updates use the original text.
+    offset: u32,
+    /// False after the cursor leaves the window, until the client sends fresh text.
+    valid: bool,
+}
+
+impl Surrounding {
+    fn new(text: String, cursor: u32, anchor: u32) -> Self {
+        let cursor_byte = convert::byte_offset(&text, cursor) as usize;
+        let mut start = cursor_byte
+            .saturating_sub(MAX_SURROUNDING_BYTES / 2)
+            .min(text.len().saturating_sub(MAX_SURROUNDING_BYTES));
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let mut end = (start + MAX_SURROUNDING_BYTES).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let offset = text[..start].chars().count() as u32;
+        // Copy the slice so a large input allocation is not retained by the window.
+        let text = text[start..end].to_owned();
+        let chars = text.chars().count() as u32;
+        Self {
+            text,
+            cursor: cursor.saturating_sub(offset).min(chars),
+            anchor: anchor.saturating_sub(offset).min(chars),
+            offset,
+            valid: true,
+        }
+    }
+
+    /// A cursor outside the retained text needs a fresh full-text update.
+    fn set_position(&mut self, cursor: u32, anchor: u32) {
+        let chars = self.text.chars().count() as u32;
+        if !self.valid || cursor < self.offset || cursor - self.offset > chars {
+            // Absent fields in UpdateContext preserve the engine's old values. Keep
+            // an explicit empty buffer so the engine forgets the discarded window.
+            *self = Self::default();
+            return;
+        }
+        self.cursor = cursor - self.offset;
+        self.anchor = anchor.saturating_sub(self.offset).min(chars);
+    }
 }
 
 /// A key the engine has not answered yet.
@@ -284,13 +340,13 @@ impl FcitxFrontend {
             Request::Reset(ic) => self.updated(ic, true),
             Request::CursorRect { ic, rect, scale } => {
                 if let Some(state) = self.ics.get_mut(&ic) {
-                    state.cursor_rect = Some(rect);
-                    state.cursor_scale = scale;
+                    state.cursor_rect = Some(placement::clamp_rect(rect));
+                    state.cursor_scale = cursor_scale(scale);
                 }
             }
             Request::Window { ic, window } => {
                 if let Some(state) = self.ics.get_mut(&ic) {
-                    state.window = window;
+                    state.window = window.map(placement::clamp_rect);
                 }
             }
             Request::Capability { ic, capability } => {
@@ -319,12 +375,14 @@ impl FcitxFrontend {
                 let Some(state) = self.ics.get_mut(&ic) else {
                     return;
                 };
-                let text = match (text, state.surrounding.take()) {
-                    (Some(text), _) => text,
-                    (None, Some((text, ..))) => text,
+                state.surrounding = match (text, state.surrounding.take()) {
+                    (Some(text), _) => Some(Surrounding::new(text, cursor, anchor)),
+                    (None, Some(mut surrounding)) => {
+                        surrounding.set_position(cursor, anchor);
+                        Some(surrounding)
+                    }
                     (None, None) => return,
                 };
-                state.surrounding = Some((text, cursor, anchor));
                 self.updated(ic, false);
             }
             Request::Destroy(ic) => self.destroy(ic),
@@ -538,10 +596,13 @@ impl FcitxFrontend {
                     clear_preedit = false;
                 }
                 Action::DeleteSurrounding { before, after } => {
+                    if state.surrounding.as_ref().is_some_and(|s| !s.valid) {
+                        continue;
+                    }
                     let surrounding = state
                         .surrounding
                         .as_ref()
-                        .map(|(text, cursor, _)| (text.as_str(), *cursor));
+                        .map(|s| (s.text.as_str(), s.cursor));
                     let (offset, size) = convert::delete_surrounding(surrounding, *before, *after);
                     signals.push(Signal::Delete(offset, size));
                 }
@@ -622,11 +683,11 @@ fn info(state: &Ic) -> ContextInfo {
     ContextInfo {
         app_id: state.program.clone(),
         content_type: convert::content_type(state.capability),
-        surrounding: state.surrounding.as_ref().map(|(text, cursor, anchor)| {
+        surrounding: state.surrounding.as_ref().map(|s| {
             (
-                text.clone(),
-                convert::byte_offset(text, *cursor),
-                convert::byte_offset(text, *anchor),
+                s.text.clone(),
+                convert::byte_offset(&s.text, s.cursor),
+                convert::byte_offset(&s.text, s.anchor),
             )
         }),
         cursor_rect: None,
@@ -654,25 +715,199 @@ fn default_keymap() -> Option<xkb::State> {
 /// The text cursor of a Wayland application's field on the screen: its window's
 /// position plus the cursor in logical pixels.
 fn on_screen(ic: &Ic) -> Option<Rect> {
-    let (wx, wy, _, _) = ic.window?;
-    let (x, y, width, height) = ic.cursor_rect?;
-    let scale = if ic.cursor_scale > 0.0 {
-        ic.cursor_scale
+    let (wx, wy, _, _) = placement::clamp_rect(ic.window?);
+    let (x, y, width, height) = placement::clamp_rect(ic.cursor_rect?);
+    let scale = cursor_scale(ic.cursor_scale);
+    let logical = |v: i32| (f64::from(v) / scale).round() as i64;
+    Some(placement::clamp_rect((
+        placement::saturate_i32(i64::from(wx).saturating_add(logical(x))),
+        placement::saturate_i32(i64::from(wy).saturating_add(logical(y))),
+        placement::saturate_i32(logical(width)),
+        placement::saturate_i32(logical(height)),
+    )))
+}
+
+fn cursor_scale(scale: f64) -> f64 {
+    if scale.is_finite() && scale > 0.0 {
+        scale
     } else {
         1.0
-    };
-    let logical = |v: i32| (f64::from(v) / scale).round() as i32;
-    Some((
-        wx + logical(x),
-        wy + logical(y),
-        logical(width),
-        logical(height),
-    ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frontend() -> (FcitxFrontend, mpsc::UnboundedReceiver<Outgoing>) {
+        let (queue, outgoing) = mpsc::unbounded_channel();
+        let mut frontend = FcitxFrontend::new([Some(queue), None], ContextIds::default());
+        frontend.handle(Request::Created {
+            ic: 1,
+            bus: Bus::Main,
+            owner: ":1.1".into(),
+            path: OwnedObjectPath::try_from("/ic/1").expect("test path"),
+            args: vec![("display".into(), "wayland:".into())],
+        });
+        (frontend, outgoing)
+    }
+
+    #[test]
+    fn on_screen_clamps_extreme_rectangles_and_sanitizes_scale() {
+        let (mut frontend, _) = frontend();
+        for scale in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0, 1.0] {
+            frontend.handle(Request::Window {
+                ic: 1,
+                window: Some((i32::MAX, i32::MIN, 1, 1)),
+            });
+            frontend.handle(Request::CursorRect {
+                ic: 1,
+                rect: (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
+                scale,
+            });
+            let ic = &frontend.ics[&1];
+            assert_eq!(ic.cursor_rect, Some((1 << 24, -(1 << 24), 1 << 16, 0)));
+            assert_eq!(on_screen(ic), Some((1 << 24, -(1 << 24), 1 << 16, 0)));
+        }
+        frontend.handle(Request::CursorRect {
+            ic: 1,
+            rect: (i32::MAX, i32::MIN, i32::MAX, i32::MAX),
+            scale: f64::MIN_POSITIVE,
+        });
+        assert_eq!(
+            on_screen(&frontend.ics[&1]),
+            Some((1 << 24, -(1 << 24), 1 << 16, 1 << 16))
+        );
+        frontend.handle(Request::Window {
+            ic: 1,
+            window: Some((100, -100, 1, 1)),
+        });
+        frontend.handle(Request::CursorRect {
+            ic: 1,
+            rect: (20, 40, 2, 30),
+            scale: 2.0,
+        });
+        assert_eq!(on_screen(&frontend.ics[&1]), Some((110, -80, 1, 15)));
+    }
+
+    #[test]
+    fn surrounding_window_keeps_cursor_and_anchor_consistent() {
+        let (mut frontend, _) = frontend();
+        let text = "a中🙂é".repeat(2_000);
+        for cursor in [0, 1, 3_999, 4_000, 7_999, 8_000, u32::MAX] {
+            for anchor in [0, cursor.saturating_sub(1), cursor, u32::MAX] {
+                frontend.handle(Request::Surrounding {
+                    ic: 1,
+                    text: Some(text.clone()),
+                    cursor,
+                    anchor,
+                });
+                let s = frontend.ics[&1].surrounding.as_ref().expect("surrounding");
+                assert!(s.text.len() <= 4_000);
+                assert!(
+                    s.text.capacity() <= 4_000,
+                    "retained the original allocation"
+                );
+                let start = convert::byte_offset(&text, s.offset) as usize;
+                assert_eq!(s.text, text[start..start + s.text.len()]);
+                assert_eq!(s.offset + s.cursor, cursor.min(8_000));
+                let chars = s.text.chars().count() as u32;
+                assert_eq!(s.anchor, anchor.saturating_sub(s.offset).min(chars));
+                let (_, byte_cursor, byte_anchor) = info(&frontend.ics[&1])
+                    .surrounding
+                    .expect("engine surrounding");
+                assert_eq!(byte_cursor, convert::byte_offset(&s.text, s.cursor));
+                assert_eq!(byte_anchor, convert::byte_offset(&s.text, s.anchor));
+            }
+        }
+    }
+
+    #[test]
+    fn surrounding_position_updates_use_the_original_offsets() {
+        let (mut frontend, _) = frontend();
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("a中🙂é".repeat(2_000)),
+            cursor: 4_000,
+            anchor: 4_001,
+        });
+        let offset = frontend.ics[&1]
+            .surrounding
+            .as_ref()
+            .expect("surrounding")
+            .offset;
+        assert!(offset > 0);
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: None,
+            cursor: 4_002,
+            anchor: 4_001,
+        });
+        let s = frontend.ics[&1].surrounding.as_ref().expect("surrounding");
+        assert_eq!(s.offset + s.cursor, 4_002);
+        assert_eq!(s.offset + s.anchor, 4_001);
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: None,
+            cursor: 0,
+            anchor: 0,
+        });
+        assert_eq!(
+            info(&frontend.ics[&1]).surrounding,
+            Some((String::new(), 0, 0))
+        );
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("a中b".into()),
+            cursor: 2,
+            anchor: 1,
+        });
+        assert_eq!(
+            info(&frontend.ics[&1]).surrounding,
+            Some(("a中b".into(), 4, 1))
+        );
+    }
+
+    #[test]
+    fn delete_surrounding_on_a_windowed_text_counts_characters() {
+        let (mut frontend, mut outgoing) = frontend();
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("a中🙂é".repeat(2_000)),
+            cursor: 4_002,
+            anchor: 4_002,
+        });
+        frontend.handle(Request::FocusIn(1));
+        let ctx = frontend.ics[&1].ctx.expect("focused context");
+        let s = frontend.ics[&1].surrounding.as_ref().expect("surrounding");
+        assert!(s.text.len() <= 4_000);
+        let chars = s.text.chars().count() as u32;
+        let cursor = s.cursor;
+        frontend.apply_actions(
+            ctx,
+            &[Action::DeleteSurrounding {
+                before: 3,
+                after: 4,
+            }],
+        );
+        assert!(matches!(
+            outgoing.try_recv(),
+            Ok(Outgoing::Signal {
+                signal: Signal::Delete(-1, 2),
+                ..
+            })
+        ));
+        frontend.apply_actions(
+            ctx,
+            &[Action::DeleteSurrounding {
+                before: u32::MAX,
+                after: u32::MAX,
+            }],
+        );
+        assert!(
+            matches!(outgoing.try_recv(), Ok(Outgoing::Signal { signal: Signal::Delete(offset, size), .. }) if offset == -(cursor as i32) && size == chars)
+        );
+    }
 
     #[test]
     fn keys_sent_back_get_the_keysym_of_their_modifiers() {

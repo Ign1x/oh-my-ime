@@ -597,7 +597,19 @@ impl XimFrontend {
             .values()
             .filter_map(|ic| Some((ic.ctx?, ic.spot)))
             .max_by_key(|(ctx, _)| *ctx)
-            .map(|(ctx, spot)| (ctx, spot.map(|(x, y)| (x, y - ASCENT, 1, LINE_HEIGHT))))
+            .map(|(ctx, spot)| {
+                (
+                    ctx,
+                    spot.map(|(x, y)| {
+                        placement::clamp_rect((
+                            x,
+                            placement::saturate_i32(i64::from(y) - i64::from(ASCENT)),
+                            1,
+                            LINE_HEIGHT,
+                        ))
+                    }),
+                )
+            })
     }
 
     /// Ends every context, before the connection goes away.

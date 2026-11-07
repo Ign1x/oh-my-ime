@@ -8,6 +8,25 @@
 /// `(x, y, width, height)`
 pub type Rect = (i32, i32, i32, i32);
 
+/// The largest coordinates and dimensions accepted from a client protocol.
+pub(crate) const COORDINATE_LIMIT: i32 = 1 << 24;
+pub(crate) const SIZE_LIMIT: i32 = 1 << 16;
+
+/// Clamps a protocol rectangle before it can reach placement arithmetic.
+pub(crate) fn clamp_rect((x, y, w, h): Rect) -> Rect {
+    (
+        x.clamp(-COORDINATE_LIMIT, COORDINATE_LIMIT),
+        y.clamp(-COORDINATE_LIMIT, COORDINATE_LIMIT),
+        w.clamp(0, SIZE_LIMIT),
+        h.clamp(0, SIZE_LIMIT),
+    )
+}
+
+/// Converts an integer calculation back to the protocol's coordinate type.
+pub(crate) fn saturate_i32(value: i64) -> i32 {
+    value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
 /// A monitor: of the X screen (in X11 pixels) or of the compositor (in its logical
 /// coordinates).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,10 +37,19 @@ pub struct Monitor {
 
 /// The squared distance from `point` to the nearest pixel of `rect` (0 inside).
 fn distance((x, y, w, h): Rect, (px, py): (i32, i32)) -> i64 {
+    let (x, y, w, h) = (i64::from(x), i64::from(y), i64::from(w), i64::from(h));
+    let (px, py) = (i64::from(px), i64::from(py));
     let (right, bottom) = (x + w.max(1) - 1, y + h.max(1) - 1);
-    let dx = i64::from((x - px).max(px - right).max(0));
-    let dy = i64::from((y - py).max(py - bottom).max(0));
-    dx * dx + dy * dy
+    let dx = (x - px).max(px - right).max(0);
+    let dy = (y - py).max(py - bottom).max(0);
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+}
+
+/// Maps one coordinate between two monitor rectangles without integer overflow.
+fn map(value: i32, from: i32, to: i32, scale: f64) -> i32 {
+    let delta = i64::from(value) - i64::from(from);
+    let scaled = (delta as f64 * scale).round() as i64;
+    saturate_i32(i64::from(to).saturating_add(scaled))
 }
 
 /// Maps the X11 rectangle `rect` to compositor coordinates, by the X11 monitor nearest
@@ -30,7 +58,10 @@ fn distance((x, y, w, h): Rect, (px, py): (i32, i32)) -> i64 {
 /// same.
 pub fn x11_to_layout(rect: Rect, x11: &[Monitor], outputs: &[Monitor]) -> Rect {
     let (x, y, w, h) = rect;
-    let centre = (x + w / 2, y + h / 2);
+    let centre = (
+        saturate_i32(i64::from(x) + i64::from(w) / 2),
+        saturate_i32(i64::from(y) + i64::from(h) / 2),
+    );
     let pair = x11
         .iter()
         .filter_map(|m| outputs.iter().find(|o| o.name == m.name).map(|o| (m, o)))
@@ -45,13 +76,11 @@ pub fn x11_to_layout(rect: Rect, x11: &[Monitor], outputs: &[Monitor]) -> Rect {
     }
     let scale_x = f64::from(tw) / f64::from(fw);
     let scale_y = f64::from(th) / f64::from(fh);
-    let map =
-        |v: i32, from: i32, to: i32, scale: f64| to + (f64::from(v - from) * scale).round() as i32;
     (
         map(x, fx, tx, scale_x),
         map(y, fy, ty, scale_y),
-        (f64::from(w) * scale_x).round() as i32,
-        (f64::from(h) * scale_y).round() as i32,
+        saturate_i32((f64::from(w) * scale_x).round() as i64),
+        saturate_i32((f64::from(h) * scale_y).round() as i64),
     )
 }
 
@@ -67,6 +96,9 @@ pub fn place(cursor: Rect, size: (i32, i32), output: Rect) -> (i32, i32) {
     let (cx, cy, _, ch) = cursor;
     let (w, h) = size;
     let (ox, oy, ow, oh) = output;
+    let (cx, cy, ch) = (i64::from(cx), i64::from(cy), i64::from(ch));
+    let (w, h) = (i64::from(w), i64::from(h));
+    let (ox, oy, ow, oh) = (i64::from(ox), i64::from(oy), i64::from(ow), i64::from(oh));
     let mut x = cx;
     let mut y = cy + ch;
     if y + h > oy + oh {
@@ -75,7 +107,7 @@ pub fn place(cursor: Rect, size: (i32, i32), output: Rect) -> (i32, i32) {
     if x + w > ox + ow {
         x = ox + ow - w;
     }
-    (x.max(ox), y.max(oy))
+    (saturate_i32(x.max(ox)), saturate_i32(y.max(oy)))
 }
 
 #[cfg(test)]
@@ -87,6 +119,77 @@ mod tests {
             name: name.into(),
             rect,
         }
+    }
+
+    #[test]
+    fn extreme_rectangles_map_without_overflow() {
+        let x11 = [monitor("A", (0, 0, 100, 100))];
+        let outputs = [monitor("A", (0, 0, 200, 200))];
+        for value in [i32::MIN, i32::MAX] {
+            let rect = (value, value, value, value);
+            assert_eq!(x11_to_layout(rect, &[], &[]), rect);
+            assert_eq!(x11_to_layout(rect, &x11, &outputs), rect);
+        }
+        let x11 = [monitor("A", (i32::MIN, i32::MIN, 1, 1))];
+        let outputs = [monitor("A", (i32::MAX, i32::MAX, 1, 1))];
+        assert_eq!(
+            x11_to_layout((i32::MIN, i32::MIN, 1, 1), &x11, &outputs),
+            (i32::MAX, i32::MAX, 1, 1)
+        );
+    }
+
+    #[test]
+    fn extreme_distances_saturate_without_overflow() {
+        assert_eq!(
+            distance(
+                (i32::MAX, i32::MAX, i32::MAX, i32::MAX),
+                (i32::MAX, i32::MAX)
+            ),
+            0
+        );
+        assert_eq!(
+            distance((i32::MIN, i32::MIN, 0, 0), (i32::MIN, i32::MIN)),
+            0
+        );
+        assert_eq!(
+            distance((i32::MIN, i32::MIN, 1, 1), (i32::MAX, i32::MAX)),
+            i64::MAX
+        );
+        assert_eq!(
+            distance((i32::MAX, i32::MAX, 1, 1), (i32::MIN, i32::MIN)),
+            i64::MAX
+        );
+        assert_eq!(distance((i32::MIN, 0, i32::MAX, 1), (0, 0)), 4);
+    }
+
+    #[test]
+    fn extreme_coordinate_maps_saturate_after_translation() {
+        assert_eq!(map(i32::MAX, i32::MIN, 0, 1.0), i32::MAX);
+        assert_eq!(map(i32::MIN, i32::MAX, 0, 1.0), i32::MIN);
+        assert_eq!(map(i32::MAX, i32::MIN, i32::MIN, 1.0), i32::MAX);
+        assert_eq!(map(i32::MIN, i32::MAX, i32::MAX, 1.0), i32::MIN);
+        assert_eq!(map(i32::MAX, 0, i32::MAX, 2.0), i32::MAX);
+        assert_eq!(map(i32::MIN, 0, i32::MIN, 2.0), i32::MIN);
+    }
+
+    #[test]
+    fn extreme_placement_saturates_without_overflow() {
+        assert_eq!(
+            place(
+                (i32::MAX, i32::MAX, 1, i32::MAX),
+                (1, 1),
+                (0, 0, i32::MAX, i32::MAX)
+            ),
+            (i32::MAX - 1, i32::MAX - 1)
+        );
+        assert_eq!(
+            place(
+                (i32::MIN, i32::MIN, 0, 0),
+                (i32::MAX, i32::MAX),
+                (i32::MIN, i32::MIN, 1, 1)
+            ),
+            (i32::MIN, i32::MIN)
+        );
     }
 
     #[test]

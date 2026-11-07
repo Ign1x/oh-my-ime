@@ -39,6 +39,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Fcitx5-module clients are limited to 1,024 input contexts per connection across both
+  bus names, with 8,192 in total, and 4,000 bytes of surrounding text per context.
+  Destroying contexts or disconnecting releases their quota, including creations still
+  in flight when the client disconnects. Moving outside the retained text clears it in
+  engines and blocks deletion until fresh text arrives. Extreme cursor rectangles and
+  invalid scales no longer overflow popup placement or stop the daemon.
 - Long engine commits reach Wayland applications in ordered chunks of at most
   4,000 UTF-8 bytes before following keys, including commits from hosted input
   methods. Oversized preedits are truncated with valid cursor offsets, and engine
