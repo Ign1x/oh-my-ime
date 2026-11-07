@@ -51,13 +51,8 @@ impl State {
     pub fn save(&self) {
         let Some(path) = path() else { return };
         let result = (|| -> std::io::Result<()> {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
             let text = toml::to_string(self).map_err(std::io::Error::other)?;
-            let tmp = path.with_extension("toml.tmp");
-            std::fs::write(&tmp, text)?;
-            std::fs::rename(&tmp, &path)
+            omime_proto::paths::atomic_write(&path, text.as_bytes(), None, false)
         })();
         if let Err(e) = result {
             warn!("cannot save {}: {e}", path.display());

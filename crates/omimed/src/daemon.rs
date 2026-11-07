@@ -873,12 +873,7 @@ impl Daemon {
 /// Writes `text` to `path` through a temporary file, so that a reader never sees half of
 /// it.
 fn write_atomically(path: &std::path::Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    omime_proto::paths::atomic_write(path, text.as_bytes(), None, true)
 }
 
 /// Shows the tray item; `None` if it cannot be shown.

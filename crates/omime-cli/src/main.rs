@@ -441,11 +441,7 @@ fn edit_config_engines(engine: &str, enable: bool) -> anyhow::Result<()> {
     let updated = edit_engines(&text, engine, enable)
         .with_context(|| tr!("cannot update {arg0}", arg0 = path.display()))?;
     if updated != text {
-        // Through a temporary file: omimed may be reading it.
-        let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, updated)
-            .with_context(|| tr!("cannot write {arg0}", arg0 = tmp.display()))?;
-        std::fs::rename(&tmp, &path)
+        omime_proto::paths::atomic_write(&path, updated.as_bytes(), None, true)
             .with_context(|| tr!("cannot write {arg0}", arg0 = path.display()))?;
     }
     Ok(())

@@ -48,7 +48,7 @@ pub fn user_dir() -> Option<PathBuf> {
 /// Writes oh-my-ime's first-time customizations into `user` (see the module docs),
 /// for the schemas `shared` has. Leaves files that exist alone.
 pub fn customize(shared: &Path, user: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(user)?;
+    omime_proto::paths::ensure_private_dir(user)?;
     let schemas: Vec<&str> = SCHEMAS
         .into_iter()
         .filter(|id| shared.join(format!("{id}.schema.yaml")).is_file())

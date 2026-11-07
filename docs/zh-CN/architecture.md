@@ -132,6 +132,7 @@ undo 恢复受管理的文件，恢复后的环境在重新登录时生效。
 - **列表。** `Engines` 和 `InputMethods` 返回面向设置程序的字典：每个已安装的引擎及其描述、语言、类型和状态，以及所有可供选择的输入法，不论是否已启用。框架在已配置的输入法之外还拥有的那些（Fcitx 5 的 `AvailableInputMethods`、IBus 的 `Engines`，均不含键盘布局）保存在 `$XDG_CACHE_HOME/oh-my-ime/catalog.toml` 中，因此框架再次运行之前也能列出它们。从未运行过的框架，则由它安装的文件说明它有哪些输入法：Fcitx 5 的 `share/fcitx5/inputmethod/*.conf`，以及 IBus 的 `share/ibus/component/*.xml` 中的引擎（对于用程序列出引擎的组件，像 IBus 那样运行该程序）；这些文件在清单所运行和所需程序的安装前缀中查找。`InputMethodsChanged` 表示需要重新读取。
 - **配置。** omimed 的 `Configure` 按点分名称（`apps.remember`、`engines`）设置 `config.toml` 的选项，检查文件仍然有效，保留注释和其它所有内容，经临时文件写入后重新加载。`omime enable`、`disable` 和 `config` 都用它；不需要 omimed 也能运行的 `omime install`、`uninstall` 和 `setup` 会自己写文件。`setup` 还管理 Hyprland 的 include 与自启动行，记录原内容和写入内容，撤销前检查冲突。`initial_input_method` 提供首次登录的选择，后续登录以保存的状态为准。每次重新加载之后都会发出 `ConfigChanged`。
 - **应用。** `Apps`、`SetAppInputMethod` 和 `ForgetApp` 读取和修改 `[apps] remember` 为每个应用记住的内容。
+- **文件写入。** 配置、守护进程状态和输入法目录缓存先以排他方式创建名称唯一的同目录临时文件，再重命名替换目标文件。更新时保留原文件权限，新文件使用 `0600`；写入失败则保留原内容并清理临时文件。配置文件在重命名前同步到磁盘。状态、目录缓存和 Sparkle 历史记录不调用 fsync，以免磁盘刷新拖慢输入；原子替换不保证断电后的持久性。Configure 和 CLI 的引擎编辑操作会替换符号链接形式的 `config.toml`，沿用链接目标的权限但不改变目标文件；setup 则拒绝符号链接。
 - **菜单。** `Properties` 返回正在使用的引擎的菜单，`ActivateProperty` 激活其中一项，`PropertiesChanged` 表示菜单有了变化；`omime properties` 和 `omime activate` 用的就是它们。
 
 ## 托盘项
@@ -181,4 +182,5 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 - Wayland 明确标记的敏感字段不抓取键盘；Fcitx5 模块明确标记的敏感字段绕过引擎。XIM 不提供字段用途，无法据此识别敏感字段。
 - 默认不记录按键内容。
 - socket 位于 `0700` 目录中，对端用 `SO_PEERCRED` 校验。
+- Rime 在启动 librime 前将用户数据目录创建为或收紧为 `0700`；若失败，则将按键直接交给应用。已有用户词库文件由该目录保护。Sparkle 以 `0600` 原子保存最近使用的表情，下次保存时会收紧旧历史文件的宽松权限，并将其父状态目录创建为或收紧为 `0700`。
 - 以同一用户身份运行的进程不构成安全边界。对引擎做沙箱隔离（例如使用 bubblewrap）属于后续工作。

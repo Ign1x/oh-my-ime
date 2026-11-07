@@ -2,7 +2,7 @@
 //!
 //! This crate is used by the daemon (`omimed`), the CLI and the engine SDK. It defines
 //! names, versions, wire types, manifests and configuration so that every component
-//! agrees on them. Apart from reading manifest directories it performs no I/O.
+//! agrees on them. It also shares manifest discovery and atomic file-writing helpers.
 
 pub mod config;
 pub mod content;

@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Configuration, saved state and the input-method catalog retain their file permissions
+  when updated and use `0600` for new files. Atomic saves clean up temporary files after
+  errors and keep the previous contents, including Sparkle's recent emoji. Sparkle's
+  history is restricted to `0600`; its state directory and Rime's user-data directory
+  are restricted to `0700`, including existing directories.
 - Native engine menus consider at most 256 entries per update, keep the first
   occurrence of each ID, and discard cyclic submenus. Malformed menus no longer
   expand into repeated entries or stall the daemon. Tray clicks retain their

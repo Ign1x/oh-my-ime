@@ -824,13 +824,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (notices, noticed) = mpsc::channel();
     match (data::shared_dir(), data::user_dir()) {
         (Some(shared), Some(user)) => {
-            if let Err(e) = data::customize(&shared, &user) {
-                eprintln!(
-                    "omime-rime: cannot write oh-my-ime's defaults into {}: {e}",
-                    user.display()
-                );
-            }
-            match Rime::start(&shared, &user, notices) {
+            let started = omime_proto::paths::ensure_private_dir(&user)
+                .map_err(|e| {
+                    omime_proto::tr!(
+                        "cannot make {arg0} private: {arg1}",
+                        arg0 = user.display(),
+                        arg1 = e
+                    )
+                })
+                .and_then(|()| {
+                    if let Err(e) = data::customize(&shared, &user) {
+                        eprintln!(
+                            "omime-rime: cannot write oh-my-ime's defaults into {}: {e}",
+                            user.display()
+                        );
+                    }
+                    Rime::start(&shared, &user, notices)
+                });
+            match started {
                 Ok(rime) => {
                     eprintln!(
                         "omime-rime: librime {}, data in {} and {}",

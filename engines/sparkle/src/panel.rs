@@ -341,8 +341,10 @@ impl Saved {
         let Some(path) = Self::path() else { return };
         let result = path
             .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, self.text()));
+            .map_or(Ok(()), omime_proto::paths::ensure_private_dir)
+            .and_then(|()| {
+                omime_proto::paths::atomic_write(&path, self.text().as_bytes(), Some(0o600), false)
+            });
         if let Err(e) = result {
             eprintln!("omime-sparkle: cannot save {}: {e}", path.display());
         }

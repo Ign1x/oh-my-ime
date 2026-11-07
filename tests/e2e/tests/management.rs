@@ -4,13 +4,16 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Stdio};
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use omime_e2e::harness::{
-    TIMEOUT, TestEnv, dummy_engine, echo_engine, program_dir, sparkle_engine,
+    TIMEOUT, TestEngine, TestEnv, dummy_engine, echo_engine, program_dir, sparkle_engine,
+    wait_until,
 };
 
 /// A running `omime status --watch --json`, with its lines read in the background.
@@ -571,4 +574,333 @@ fn engines_have_menus_whose_entries_can_be_activated() -> anyhow::Result<()> {
     env.omime(&["switch", "direct"])?;
     assert_eq!(env.omime(&["properties"])?, "");
     Ok(())
+}
+
+/// Permission tests must not inherit the developer's (often 077) umask. Set it in
+/// a fresh child test process so parallel tests cannot race a process-global mask.
+fn under_umask_022(name: &str, test: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    if std::env::var("OMIME_MANAGEMENT_MODE_TEST").as_deref() == Ok(name) {
+        return test();
+    }
+    let output = Command::new("sh")
+        .args(["-c", "umask 022; exec \"$@\"", "omime-mode-test"])
+        .arg(std::env::current_exe()?)
+        .args(["--exact", name, "--include-ignored", "--nocapture"])
+        .env("OMIME_MANAGEMENT_MODE_TEST", name)
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn mode(path: &Path) -> anyhow::Result<u32> {
+    Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+}
+
+fn no_write_temporaries(dir: &Path) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        anyhow::ensure!(
+            path.extension().is_none_or(|ext| ext != "tmp"),
+            "temporary file left behind: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn configure_keeps_private_file_permissions() -> anyhow::Result<()> {
+    under_umask_022("configure_keeps_private_file_permissions", || {
+        let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+        let path = env.dir().join("config/oh-my-ime/config.toml");
+        for permissions in [0o600, 0o640, 0o644] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(permissions))?;
+            env.omime(&["config", "apps.remember", "true"])?;
+            assert_eq!(
+                mode(&path)?,
+                permissions,
+                "Configure changed config.toml's mode"
+            );
+        }
+        std::fs::remove_file(&path)?;
+        env.omime(&["config", "apps.remember", "true"])?;
+        assert_eq!(mode(&path)?, 0o600, "new config.toml is not private");
+        no_write_temporaries(path.parent().context("config directory")?)
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn state_save_keeps_private_file_permissions() -> anyhow::Result<()> {
+    under_umask_022("state_save_keeps_private_file_permissions", || {
+        let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+        let path = env.dir().join("state/oh-my-ime/state.toml");
+        wait_until("initial saved state", || path.exists().then_some(()))?;
+        assert_eq!(mode(&path)?, 0o600, "new state.toml is not private");
+        for (permissions, engine) in [(0o600, "direct"), (0o640, "echo"), (0o644, "direct")] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(permissions))?;
+            env.omime(&["switch", engine])?;
+            assert_eq!(
+                mode(&path)?,
+                permissions,
+                "State::save changed state.toml's mode"
+            );
+        }
+        no_write_temporaries(path.parent().context("state directory")?)
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn catalog_save_keeps_private_file_permissions() -> anyhow::Result<()> {
+    under_umask_022("catalog_save_keeps_private_file_permissions", || {
+        for previous_mode in [None, Some(0o600), Some(0o640), Some(0o644)] {
+            let mut env = TestEnv::prepare(&[])?;
+            // A disabled hosted framework advertises its installed methods without
+            // launching. This exercises Catalog::save through normal daemon discovery.
+            let prefix = env.dir().join("framework");
+            let executable = prefix.join("bin/framework");
+            std::fs::create_dir_all(executable.parent().context("bin directory")?)?;
+            std::fs::write(&executable, "#!/bin/sh\nexit 1\n")?;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+            let methods = prefix.join("share/fcitx5/inputmethod");
+            std::fs::create_dir_all(&methods)?;
+            std::fs::write(
+                methods.join("private-test.conf"),
+                "[InputMethod]\nName=Private test\n",
+            )?;
+            let engine = env.dir().join("engines/framework");
+            std::fs::create_dir_all(&engine)?;
+            std::fs::write(
+                engine.join("engine.toml"),
+                format!(
+                    "[engine]\nid = \"framework\"\nname = \"Framework\"\nexec = [{:?}]\nprotocol = \"input-method-v2\"\nenabled_by_default = false\n",
+                    executable.display().to_string()
+                ),
+            )?;
+            let path = env.dir().join("cache/oh-my-ime/catalog.toml");
+            if let Some(permissions) = previous_mode {
+                std::fs::create_dir_all(path.parent().context("cache directory")?)?;
+                std::fs::write(&path, "")?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(permissions))?;
+            }
+            env.launch_daemon()?;
+            wait_until("saved installed catalog", || {
+                std::fs::read_to_string(&path)
+                    .ok()?
+                    .contains("private-test")
+                    .then_some(())
+            })?;
+            assert_eq!(mode(&path)?, previous_mode.unwrap_or(0o600));
+            no_write_temporaries(path.parent().context("cache directory")?)?;
+        }
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn test_cli_install_keeps_private_config_mode() -> anyhow::Result<()> {
+    under_umask_022("test_cli_install_keeps_private_config_mode", || {
+        let env = TestEnv::prepare(&[])?;
+        let source = env.dir().join("source");
+        std::fs::create_dir(&source)?;
+        std::fs::write(
+            source.join("engine.toml"),
+            "[engine]\nid = \"private-example\"\nname = \"Example\"\nexec = [\"false\"]\napi = \"1.0\"\n",
+        )?;
+        let path = env.dir().join("config/oh-my-ime/config.toml");
+        std::fs::write(&path, "engines = []\n")?;
+        for permissions in [0o600, 0o640, 0o644] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(permissions))?;
+            env.omime(&["install", source.to_str().context("source path")?])?;
+            assert_eq!(
+                mode(&path)?,
+                permissions,
+                "install changed config.toml's mode"
+            );
+            assert!(std::fs::read_to_string(&path)?.contains("private-example"));
+            env.omime(&["uninstall", "private-example"])?;
+            assert_eq!(
+                mode(&path)?,
+                permissions,
+                "uninstall changed config.toml's mode"
+            );
+        }
+        no_write_temporaries(path.parent().context("config directory")?)
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs; requires OMIME_RIME_SHARED_DATA"]
+fn rime_learned_text_is_private() -> anyhow::Result<()> {
+    under_umask_022("rime_learned_text_is_private", || {
+        std::env::var_os("OMIME_RIME_SHARED_DATA").context("requires OMIME_RIME_SHARED_DATA")?;
+        for existing in [false, true] {
+            let engine = TestEngine {
+                id: "rime",
+                program: program_dir().join("omime-rime"),
+                args: Vec::new(),
+                env: Vec::new(),
+                hosted: false,
+            };
+            let mut env = TestEnv::prepare(&[engine])?;
+            let path = env.dir().join("data/oh-my-ime/rime");
+            if existing {
+                std::fs::create_dir_all(&path)?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            }
+            env.launch_daemon()?;
+            env.omime(&["switch", "rime"])?;
+            env.wait_for_log("omime-rime: librime")?;
+            assert_eq!(mode(&path)?, 0o700, "Rime's user directory is not private");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn sparkle_commit_history_is_private() -> anyhow::Result<()> {
+    under_umask_022("sparkle_commit_history_is_private", || {
+        for existing in [false, true] {
+            let mut env = TestEnv::prepare(&[sparkle_engine()])?;
+            let path = env.dir().join("state/oh-my-ime/sparkle");
+            let dir = path.parent().context("state directory")?;
+            std::fs::create_dir_all(dir)?;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+            if existing {
+                std::fs::write(&path, "panel = false\nrecent = 🦀 ✨\n")?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+            }
+            env.launch_daemon()?;
+            env.omime(&["switch", "sparkle"])?;
+            let editor = env.editor(&[])?;
+            env.type_text(":rocket ")?;
+            editor.wait_for_text("🚀")?;
+            wait_until("committed emoji saved", || {
+                std::fs::read_to_string(&path)
+                    .ok()?
+                    .contains("recent = 🚀")
+                    .then_some(())
+            })?;
+            assert_eq!(mode(&path)?, 0o600, "Sparkle's history is not private");
+            assert_eq!(
+                mode(dir)?,
+                0o700,
+                "Sparkle's state directory is not private"
+            );
+            no_write_temporaries(dir)?;
+        }
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs; requires OMIME_RIME_SHARED_DATA"]
+fn rime_refuses_nonprivate_user_directory() -> anyhow::Result<()> {
+    under_umask_022("rime_refuses_nonprivate_user_directory", || {
+        std::env::var_os("OMIME_RIME_SHARED_DATA").context("requires OMIME_RIME_SHARED_DATA")?;
+        let engine = TestEngine {
+            id: "rime",
+            program: program_dir().join("omime-rime"),
+            args: Vec::new(),
+            env: Vec::new(),
+            hosted: false,
+        };
+        let mut env = TestEnv::prepare(&[engine])?;
+        let target = env.dir().join("public-data");
+        std::fs::create_dir(&target)?;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+        let path = env.dir().join("data/oh-my-ime/rime");
+        std::fs::create_dir_all(path.parent().context("data directory")?)?;
+        std::os::unix::fs::symlink(&target, &path)?;
+        env.launch_daemon()?;
+        env.omime(&["switch", "rime"])?;
+        env.wait_for_log("engine ready")?;
+        let log = env.daemon_log();
+        assert!(!log.contains("omime-rime: librime"), "{log}");
+        assert!(
+            log.contains("cannot make") && log.contains("private data path is not a directory"),
+            "{log}"
+        );
+        assert_eq!(
+            mode(&target)?,
+            0o755,
+            "changed a symlink's target permissions"
+        );
+        assert_eq!(
+            std::fs::read_dir(&target)?.count(),
+            0,
+            "Rime wrote through the symlink"
+        );
+        let editor = env.editor(&[])?;
+        env.type_text("hello")?;
+        editor.wait_for_text("hello")?;
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn failed_state_write_preserves_previous_sparkle_state() -> anyhow::Result<()> {
+    under_umask_022(
+        "failed_state_write_preserves_previous_sparkle_state",
+        || {
+            let mut engine = sparkle_engine();
+            let executable = engine.program.display().to_string();
+            engine.program = PathBuf::from("sh");
+            // Ignore SIGXFSZ so a zero file-size limit yields a write error. Set the
+            // limit after the UI starts so it can first allocate its shared buffers.
+            engine.args = vec![
+                "-c".into(),
+                "trap '' XFSZ; exec \"$1\"".into(),
+                "omime-sparkle-test".into(),
+                executable,
+            ];
+            let mut env = TestEnv::prepare(&[engine])?;
+            let path = env.dir().join("state/oh-my-ime/sparkle");
+            let dir = path.parent().context("state directory")?;
+            std::fs::create_dir_all(dir)?;
+            let previous = "panel = false\nrecent = 🦀 🚀 ✨\n";
+            std::fs::write(&path, previous)?;
+            env.launch_daemon()?;
+            env.omime(&["switch", "sparkle"])?;
+            env.wait_for_log("engine window created")?;
+            let editor = env.editor(&[])?;
+            env.type_text(":unicorn")?;
+            editor.wait_for("unicorn preedit", |line| {
+                line.starts_with("preedit \":unicorn\"")
+            })?;
+            let pid = rustix::process::Pid::from_raw(
+                env.engine_pid("sparkle")
+                    .context("Sparkle PID")?
+                    .try_into()?,
+            )
+            .context("valid Sparkle PID")?;
+            rustix::process::prlimit(
+                Some(pid),
+                rustix::process::Resource::Fsize,
+                rustix::process::Rlimit {
+                    current: Some(0),
+                    maximum: None,
+                },
+            )?;
+            env.key(&[], "space")?;
+            editor.wait_for_text("🦄")?;
+            env.wait_for_log("cannot save")?;
+            assert_eq!(
+                std::fs::read_to_string(&path)?,
+                previous,
+                "a failed save destroyed the prior state"
+            );
+            no_write_temporaries(dir)
+        },
+    )
 }

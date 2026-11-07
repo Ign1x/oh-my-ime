@@ -1139,3 +1139,9 @@ msgstr "尚不支持此桌面"
 
 msgid "oh-my-ime cannot provide input on this desktop yet. See the omimed log for details."
 msgstr "oh-my-ime 目前无法在此桌面上提供输入服务。详情请查看 omimed 日志。"
+
+msgid "cannot make {arg0} private: {arg1}"
+msgstr "无法将 {arg0} 设为私有：{arg1}"
+
+msgid "private data path is not a directory"
+msgstr "私有数据路径不是目录"

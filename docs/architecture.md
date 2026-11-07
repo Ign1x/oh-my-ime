@@ -418,6 +418,15 @@ omimed: the `omime` command line tool, status bars, and settings programs. The X
   installed contents for conflict-aware undo. `initial_input_method` supplies a
   first-login choice; saved state takes precedence on later logins.
   `ConfigChanged` follows every reload.
+- **File writes.** Configuration, daemon state and the input-method catalog use an
+  exclusively created, uniquely named sibling file, then rename it over the destination.
+  They keep the destination's mode and create new files with `0600`; failures preserve
+  the previous file and remove the temporary. Configuration writes sync the file before
+  renaming. State, catalog and Sparkle history writes skip fsync to avoid adding disk
+  flush delays to input handling; atomic replacement does not guarantee persistence
+  through power loss. Configure and CLI engine edits replace a symlinked `config.toml`,
+  preserving its target's mode without changing the target; setup instead refuses
+  symlinks.
 - **Applications.** `Apps`, `SetAppInputMethod` and `ForgetApp` read and edit what
   `[apps] remember` keeps for each application.
 - **Menus.** `Properties` returns the menu of the engine in use, `ActivateProperty`
@@ -504,5 +513,10 @@ and IBus frameworks; a separate Fcitx5 addon host is outside the plan.
   bypass engines. XIM does not report field purpose, so it cannot provide this bypass.
 - Key contents are never logged by default.
 - Sockets live in a `0700` directory and peers are checked with `SO_PEERCRED`.
+- Rime's user-data directory is created or restricted to `0700` before librime starts;
+  if this fails, Rime leaves keys to applications. Its existing user database files
+  are protected by this directory. Sparkle saves its recent emoji atomically as `0600`,
+  restricting an older, more permissive history file on the next save, and creates or
+  restricts its parent state directory to `0700`.
 - Processes running as the same user are not a security boundary. Sandboxing engines (for
   example with bubblewrap) is future work.
