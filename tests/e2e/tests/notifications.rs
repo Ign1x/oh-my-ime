@@ -180,6 +180,85 @@ fn a_live_click_before_notification_closed_opens_the_settings_once() -> anyhow::
 
 #[test]
 #[ignore = "end-to-end test; see typing.rs"]
+fn a_closure_burst_before_notify_reply_does_not_stall_later_notifications() -> anyhow::Result<()> {
+    closure_burst_recovery("notify")
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_closure_burst_before_close_reply_does_not_stall_later_notifications() -> anyhow::Result<()> {
+    closure_burst_recovery("close")
+}
+
+fn closure_burst_recovery(method: &str) -> anyhow::Result<()> {
+    let missing = TestEngine {
+        id: "missing",
+        program: target_dir().join("omime-e2e-nonexistent-engine"),
+        args: Vec::new(),
+        env: Vec::new(),
+        hosted: false,
+    };
+    let env = TestEnv::start(&[missing], None)?;
+    let server = env.notifications()?;
+    // Keep an unrelated notification live. Its later click proves the ordered
+    // stream has drained the burst before another notification is requested.
+    let (status, _) = env.omime_status(&["switch", "missing"])?;
+    assert!(!status.success());
+    let told = server.wait_for("the engine notification", |l| l.starts_with("notify "))?;
+    let (live, _, _) = shown(&[told]).pop().context("the engine notification")?;
+    env.wait_for_log("told the user")?;
+
+    let break_config = || -> anyhow::Result<()> {
+        write_config(&env, "[apps]\nremember = 'bad'\n")?;
+        let (status, _) = env.omime_status(&["reload"])?;
+        assert!(!status.success());
+        Ok(())
+    };
+    if method == "close" {
+        break_config()?;
+        wait_until("both notifications to arrive", || {
+            (env.count_in_log("told the user") == 2).then_some(())
+        })?;
+    }
+    // zbus's signal queue holds 64 messages. All 65 closures precede the method
+    // reply on the same connection, so waiting without a timeout cannot finish.
+    server.send(&format!("burst {method} 65"))?;
+    server.wait_for("the closure burst to be armed", |l| {
+        l == format!("burst {method} 65 armed")
+    })?;
+    if method == "notify" {
+        break_config()?;
+    } else {
+        env.configure("")?;
+    }
+    server.wait_for("the closure burst before the reply", |l| {
+        l == format!("burst {method} 65 sent")
+    })?;
+    assert!(env.omime_status(&["status"])?.0.success());
+    server.send(&format!("click {live}"))?;
+    env.wait_for_log("opened the settings")
+        .with_context(|| format!("notifier stalled after closure burst before {method} reply"))?;
+
+    // A timed-out Notify may already be displayed with an unknown ID. Resolve
+    // that trouble and require a fresh notification whose live action works.
+    env.configure("")?;
+    break_config()?;
+    let notifications = wait_until("a fresh notification after the closure burst", || {
+        let notifications = shown(&server.lines());
+        (notifications.len() == 3).then_some(notifications)
+    })?;
+    let (fresh, replaces, _) = &notifications[2];
+    assert_eq!(*replaces, 0, "{notifications:?}");
+    assert_ne!(*fresh, notifications[1].0, "{notifications:?}");
+    server.send(&format!("click {fresh}"))?;
+    wait_until("the fresh notification's live action", || {
+        (env.count_in_log("opened the settings") == 2).then_some(())
+    })?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
 fn an_engine_that_does_not_start_is_told_and_the_click_opens_the_settings() -> anyhow::Result<()> {
     // It never registers.
     let sleepy = TestEngine {

@@ -15,9 +15,13 @@
 //! notification, as a click on it would; `closed <id> <reason>` emits
 //! `NotificationClosed`, as when it expired (1) or was dismissed (2). Clicks are
 //! deliberately allowed for closed and unknown IDs to test stale actions.
+//! `burst notify <count>` or `burst close <count>` arms that many unrelated
+//! `NotificationClosed` signals before the next matching method reply; it prints
+//! `burst <method> <count> armed` and then `burst <method> <count> sent`.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, Write as _};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::Context as _;
@@ -34,12 +38,34 @@ fn say(line: &str) {
 
 struct Server {
     last: AtomicU32,
+    bursts: Arc<ClosureBursts>,
+}
+
+#[derive(Default)]
+struct ClosureBursts {
+    notify: AtomicU32,
+    close: AtomicU32,
+}
+
+async fn closure_burst(
+    emitter: &SignalEmitter<'_>,
+    method: &str,
+    pending: &AtomicU32,
+) -> zbus::Result<()> {
+    let count = pending.swap(0, Ordering::Relaxed);
+    for offset in 0..count {
+        Server::notification_closed(emitter, 10_000 + offset, 2).await?;
+    }
+    if count != 0 {
+        say(&format!("burst {method} {count} sent"));
+    }
+    Ok(())
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
 impl Server {
     #[allow(clippy::too_many_arguments)]
-    fn notify(
+    async fn notify(
         &self,
         _app_name: String,
         replaces_id: u32,
@@ -49,17 +75,19 @@ impl Server {
         _actions: Vec<String>,
         _hints: HashMap<String, OwnedVariant>,
         _expire_timeout: i32,
-    ) -> u32 {
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<u32> {
         let id = if replaces_id == 0 {
             self.last.fetch_add(1, Ordering::Relaxed) + 1
         } else {
             replaces_id
         };
+        closure_burst(&emitter, "notify", &self.bursts.notify).await?;
         say(&format!(
             "notify {id} {replaces_id} {summary}|{}",
             body.replace('\n', " ")
         ));
-        id
+        Ok(id)
     }
 
     async fn close_notification(
@@ -67,6 +95,7 @@ impl Server {
         id: u32,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
+        closure_burst(&emitter, "close", &self.bursts.close).await?;
         Self::notification_closed(&emitter, id, 3).await?;
         say(&format!("close {id}"));
         Ok(())
@@ -102,11 +131,13 @@ impl Server {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    let bursts = Arc::new(ClosureBursts::default());
     let conn = zbus::connection::Builder::session()
         .serve_at(
             PATH,
             Server {
                 last: AtomicU32::new(0),
+                bursts: bursts.clone(),
             },
         )
         .name("org.freedesktop.Notifications")
@@ -138,6 +169,16 @@ async fn main() -> anyhow::Result<()> {
             let reason: u32 = reason.trim().parse().context("a close reason")?;
             Server::notification_closed(&emitter, id, reason).await?;
             say(&format!("closed {id} {reason}"));
+        } else if let Some(args) = command.strip_prefix("burst ") {
+            let (method, count) = args.split_once(' ').context("a method and signal count")?;
+            let count: u32 = count.parse().context("a signal count")?;
+            let pending = match method {
+                "notify" => &bursts.notify,
+                "close" => &bursts.close,
+                _ => anyhow::bail!("unknown notification method: {method}"),
+            };
+            pending.store(count, Ordering::Relaxed);
+            say(&format!("burst {method} {count} armed"));
         }
     }
     Ok(())

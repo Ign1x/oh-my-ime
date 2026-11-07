@@ -377,7 +377,12 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
 
 /// The notification server on the session bus, and its signals in arrival order.
 async fn connect() -> zbus::Result<(NotificationsProxy<'static>, Option<SignalStream<'static>>)> {
-    let conn = zbus::Connection::session().await?;
+    // A full signal queue can block a method reply. Bound Notify and
+    // CloseNotification so the loop can resume draining signals afterwards.
+    let conn = zbus::connection::Builder::session()
+        .method_timeout(Duration::from_secs(2))
+        .build()
+        .await?;
     let proxy = NotificationsProxy::new(&conn).await?;
     // A click can be followed immediately by NotificationClosed. Separate streams
     // could reorder them, losing a live click or accepting one after closure.
