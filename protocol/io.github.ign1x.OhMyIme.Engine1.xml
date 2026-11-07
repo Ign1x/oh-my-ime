@@ -132,6 +132,9 @@
       Since 1.1. The user activated an entry of the menu the engine announced with
       SetProperties: an action, a toggle or a radio entry. Act on it, and announce the
       menu again if that changed it (a toggle flipped, another radio entry chosen).
+      Tray clicks retain the supplying engine's identity: the daemon ignores the
+      click if that engine is no longer current when it handles the click. Control
+      API activations continue to target whichever engine is current.
     -->
     <method name="ActivateProperty">
       <arg name="id" type="s" direction="in"/>
@@ -244,6 +247,12 @@
       chosen), "enabled" (b, true when missing). Entries come in menu order; radio
       entries with the same parent are one choice. Call it again with the whole menu
       whenever anything in it changes. The menu is forgotten when the engine exits.
+      Only the first 256 wire entries are considered, counting invalid entries and
+      duplicates toward that limit; exceeding it logs one warning per call. Within
+      that prefix, the first entry for each id wins. Menu entries with a cyclic
+      parent chain, including self-parenting menus, are discarded. Entries whose
+      parent is absent or not a menu are not displayed; children of discarded menus
+      are not promoted to the top level. Each property renders at most once.
     -->
     <method name="SetProperties">
       <arg name="properties" type="aa{sv}" direction="in"/>

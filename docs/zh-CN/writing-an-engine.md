@@ -238,6 +238,10 @@ impl omime_sdk::Engine for MyEngine {
 
 菜单是一个按菜单顺序排列的扁平列表。每一项可以是动作（默认）、开关（`checked` 表示是否打开）、单选项（与 `parent` 相同的各项构成一组选择）、子菜单（其中各项的 `parent`）或分隔线。开发时，`omime properties` 显示正在使用的引擎的菜单，`omime activate <id>` 激活其中一项。
 
+`SetProperties` 每次更新只处理通过协议发送的前 **256 项**，无效项和重复项也计入这个数量；超出时记录一次警告。在这 256 项中，每个 `id` 只保留首次出现的一项。父级链中存在环（包括引用自身）的子菜单会被丢弃。父级不存在或不是子菜单的条目不会显示，被丢弃子菜单的子项也不会移到顶层。每个属性最多生成一个托盘菜单条目。
+
+托盘点击绑定到提供该条目的引擎；守护进程处理点击时，如果当前已经切换到另一引擎或直接输入，就会忽略它。控制 API 和 `omime activate <id>` 仍然操作当前引擎。
+
 ## 其他语言
 
 引擎协议是点对点 D-Bus，规范见 [`protocol/io.github.ign1x.OhMyIme.Engine1.xml`](../../protocol/io.github.ign1x.OhMyIme.Engine1.xml)。一个引擎需要：

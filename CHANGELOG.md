@@ -39,6 +39,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Native engine menus consider at most 256 entries per update, keep the first
+  occurrence of each ID, and discard cyclic submenus. Malformed menus no longer
+  expand into repeated entries or stall the daemon. Tray clicks retain their
+  engine identity, so a delayed click after switching engines is ignored.
 - Editing a malformed configuration section through settings or `omime config`
   reports an error and leaves the file unchanged without stopping omimed. Inline
   and dotted tables remain editable with comments preserved. Hotkeys containing

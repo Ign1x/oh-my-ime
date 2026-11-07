@@ -15,6 +15,12 @@ msgstr "Fcitx 输入上下文数量过多"
 msgid "the Fcitx client disconnected"
 msgstr "Fcitx 客户端已断开连接"
 
+msgid "engine property list exceeds the limit; ignoring excess entries"
+msgstr "引擎属性列表超出上限；忽略超出部分"
+
+msgid "ignored stale engine menu click"
+msgstr "已忽略原引擎菜单的过期点击"
+
 msgid "oh-my-ime Settings"
 msgstr "oh-my-ime 设置"
 

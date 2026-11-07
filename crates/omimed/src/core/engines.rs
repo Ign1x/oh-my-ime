@@ -11,7 +11,7 @@
 
 use omime_proto::tr;
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, Property, WireAction};
+use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, Property, PropertyKind, WireAction};
 use omime_proto::manifest::{InstalledEngine, SettingsBus};
 use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
@@ -53,6 +53,53 @@ const RESTART_MAX: Duration = Duration::from_secs(30);
 /// More crashes than this within [`CRASH_WINDOW`] and we stop restarting.
 pub const MAX_CRASHES: usize = 5;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
+
+/// Maximum number of wire entries considered in one native `SetProperties` call.
+pub(crate) const MAX_ENGINE_PROPERTIES: usize = 256;
+
+/// Decode and validate one complete menu before it reaches the core or any UI.
+/// Apply the wire-entry cap first so duplicates and invalid entries cannot make
+/// validation unbounded. Within that prefix, the first entry for each ID wins.
+pub(crate) fn sanitize_properties(engine: &str, properties: &[Dict]) -> Vec<Property> {
+    if properties.len() > MAX_ENGINE_PROPERTIES {
+        warn!(
+            engine,
+            count = properties.len(),
+            limit = MAX_ENGINE_PROPERTIES,
+            "{}",
+            tr!("engine property list exceeds the limit; ignoring excess entries")
+        );
+    }
+    let mut ids = HashSet::new();
+    let mut properties: Vec<_> = properties
+        .iter()
+        .take(MAX_ENGINE_PROPERTIES)
+        .filter_map(Property::from_dict)
+        .filter(|property| ids.insert(property.id.clone()))
+        .collect();
+    let parents: HashMap<_, _> = properties
+        .iter()
+        .map(|property| (property.id.as_str(), property.parent.as_str()))
+        .collect();
+    let cyclic: HashSet<_> = properties
+        .iter()
+        .filter(|property| property.kind == PropertyKind::Menu)
+        .filter(|property| {
+            let mut seen = HashSet::new();
+            let mut id = property.id.as_str();
+            while let Some(parent) = parents.get(id) {
+                if !seen.insert(id) {
+                    return true;
+                }
+                id = parent;
+            }
+            false
+        })
+        .map(|property| property.id.clone())
+        .collect();
+    properties.retain(|property| !cyclic.contains(&property.id));
+    properties
+}
 
 #[zbus::proxy(
     interface = "io.github.ign1x.OhMyIme.Engine1",
@@ -256,7 +303,7 @@ impl HostObject {
     }
 
     fn set_properties(&self, properties: Vec<Dict>) {
-        let properties = properties.iter().filter_map(Property::from_dict).collect();
+        let properties = sanitize_properties(&self.engine, &properties);
         self.send(HostCall::SetProperties(properties));
     }
 }

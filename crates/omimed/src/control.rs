@@ -52,6 +52,12 @@ pub enum ControlRequest {
     /// The menu of the current engine.
     Properties(oneshot::Sender<Vec<omime_proto::engine::Property>>),
     ActivateProperty(String, oneshot::Sender<Result<(), String>>),
+    /// Activates a saved tray entry only while its engine is still current.
+    ActivateEngineProperty {
+        engine: String,
+        property: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// Sets options of config.toml, by dotted name, and reloads.
     Configure(
         Vec<(String, omime_proto::config::Value)>,

@@ -347,6 +347,18 @@ same `parent`), a menu (the `parent` of the entries in it) or a separator. While
 developing, `omime properties` shows the menu of the engine in use and
 `omime activate <id>` activates an entry.
 
+`SetProperties` considers only the first **256 wire entries** of each update,
+including invalid entries and duplicates in that count, and logs one warning if
+the update exceeds the limit. Within that prefix, the first entry for each `id`
+wins. Menus whose parent chain contains a cycle (including their own ID) are
+discarded. Entries with missing or non-menu parents are not displayed, and
+children of a discarded menu are not moved to the top level. Each property can
+produce at most one tray entry.
+
+A tray click is bound to the engine that supplied the entry and is ignored if
+another engine or direct input is current when the daemon handles it. The control
+API and `omime activate <id>` continue to target the current engine.
+
 ## Other languages
 
 The engine protocol is peer-to-peer D-Bus and is specified in

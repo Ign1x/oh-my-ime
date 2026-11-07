@@ -13,7 +13,7 @@
 //! The item keeps no state of its own: every property is read from the daemon loop, and
 //! the daemon tells the item when something changed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -26,6 +26,7 @@ use zbus::{ObjectPath, OwnedObjectPath, Structure};
 use zbus::{OwnedVariant, Variant};
 
 use crate::control::ControlRequest;
+use crate::core::engines::MAX_ENGINE_PROPERTIES;
 use crate::core::sni_watcher::{HostedTray, Pixmap};
 use crate::core::{EngineSummary, InputMethod, SwitchReason};
 
@@ -194,7 +195,11 @@ impl TrayInfo {
                 self.engine.is_none(),
             )
         });
-        let own = MenuEntry::from_properties(&self.properties, "", 0);
+        let own = self
+            .engine
+            .as_deref()
+            .map(|engine| MenuEntry::from_properties(engine, &self.properties))
+            .unwrap_or_default();
         if !own.is_empty() {
             entries.push(MenuEntry::separator());
             entries.extend(own);
@@ -286,8 +291,8 @@ enum MenuAction {
     Settings(String),
     /// Opens oh-my-ime's settings.
     OwnSettings,
-    /// Activates an entry of the current engine's menu.
-    Property(String),
+    /// Activates an entry only while the engine that supplied it is current.
+    Property { engine: String, id: String },
 }
 
 /// An entry of the tray menu.
@@ -310,6 +315,7 @@ enum EntryKind {
     },
     /// The submenu of the engine's menu entry `id`.
     Submenu {
+        engine: String,
         id: String,
         entries: Vec<MenuEntry>,
     },
@@ -356,39 +362,69 @@ impl MenuEntry {
         }
     }
 
-    /// The entries of an engine's menu that are in its entry `parent` (`""`: at the
-    /// top). Entries whose parent is not a menu entry are left out.
-    fn from_properties(properties: &[Property], parent: &str, depth: usize) -> Vec<Self> {
-        // Engines that give two entries the same id could nest menus forever.
-        if depth > 8 {
-            return Vec::new();
-        }
-        properties
-            .iter()
-            .filter(|p| p.parent == parent)
-            .map(|p| {
+    /// Build the engine's tree. Missing/non-menu parents stay invisible. The
+    /// visited IDs and shared budget also bound unsanitized lists, such as those
+    /// obtained from a hosted menu, independently of the native protocol parser.
+    fn from_properties(engine: &str, properties: &[Property]) -> Vec<Self> {
+        fn children<'a>(
+            engine: &str,
+            properties: &'a [Property],
+            parent: &str,
+            depth: usize,
+            visited: &mut HashSet<&'a str>,
+            remaining: &mut usize,
+        ) -> Vec<MenuEntry> {
+            // Keep the existing nesting limit as well as the total node budget.
+            if depth > 8 {
+                return Vec::new();
+            }
+            let mut entries = Vec::new();
+            for p in properties.iter().filter(|p| p.parent == parent) {
+                if *remaining == 0 {
+                    break;
+                }
+                if !visited.insert(&p.id) {
+                    continue;
+                }
+                *remaining -= 1;
                 let item = |toggle| EntryKind::Item {
-                    action: MenuAction::Property(p.id.clone()),
+                    action: MenuAction::Property {
+                        engine: engine.to_owned(),
+                        id: p.id.clone(),
+                    },
                     toggle,
                 };
                 let kind = match p.kind {
-                    PropertyKind::Separator => return Self::separator(),
+                    PropertyKind::Separator => {
+                        entries.push(MenuEntry::separator());
+                        continue;
+                    }
                     PropertyKind::Action => item(None),
                     PropertyKind::Toggle => item(Some(Toggle::Checkmark(p.checked))),
                     PropertyKind::Radio => item(Some(Toggle::Radio(p.checked))),
                     PropertyKind::Menu => EntryKind::Submenu {
+                        engine: engine.to_owned(),
                         id: p.id.clone(),
-                        entries: Self::from_properties(properties, &p.id, depth + 1),
+                        entries: children(engine, properties, &p.id, depth + 1, visited, remaining),
                     },
                 };
-                Self {
+                entries.push(MenuEntry {
                     kind,
                     label: p.label.clone(),
                     icon: p.icon.clone(),
                     enabled: p.enabled,
-                }
-            })
-            .collect()
+                });
+            }
+            entries
+        }
+        children(
+            engine,
+            properties,
+            "",
+            0,
+            &mut HashSet::new(),
+            &mut properties.len().min(MAX_ENGINE_PROPERTIES),
+        )
     }
 
     /// Its properties in `com.canonical.dbusmenu`.
@@ -631,7 +667,10 @@ const ROOT: i32 = 0;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum EntryKey {
     Action(MenuAction),
-    Submenu(String),
+    Submenu {
+        engine: String,
+        id: String,
+    },
     /// The n-th separator.
     Separator(usize),
 }
@@ -671,8 +710,15 @@ impl Ids {
                     EntryKind::Item { action, .. } => {
                         (EntryKey::Action(action.clone()), Vec::new())
                     }
-                    EntryKind::Submenu { id, entries } => (
-                        EntryKey::Submenu(id.clone()),
+                    EntryKind::Submenu {
+                        engine,
+                        id,
+                        entries,
+                    } => (
+                        EntryKey::Submenu {
+                            engine: engine.clone(),
+                            id: id.clone(),
+                        },
                         self.nodes(entries, separators),
                     ),
                 };
@@ -779,9 +825,13 @@ impl Menu {
             Some(MenuAction::OwnSettings) => {
                 tell(&self.requests, ControlRequest::OpenOwnSettings);
             }
-            Some(MenuAction::Property(property)) => {
-                tell(&self.requests, |tx| {
-                    ControlRequest::ActivateProperty(property, tx)
+            Some(MenuAction::Property { engine, id }) => {
+                tell(&self.requests, |reply| {
+                    ControlRequest::ActivateEngineProperty {
+                        engine,
+                        property: id,
+                        reply,
+                    }
                 });
             }
             None => {}
@@ -1231,6 +1281,155 @@ mod tests {
         ]
     }
 
+    fn sanitize(properties: &[Property]) -> Vec<Property> {
+        crate::core::engines::sanitize_properties(
+            "test",
+            &properties.iter().map(Property::to_dict).collect::<Vec<_>>(),
+        )
+    }
+
+    fn entry_count(entries: &[MenuEntry]) -> usize {
+        entries
+            .iter()
+            .map(|entry| {
+                1 + match &entry.kind {
+                    EntryKind::Submenu { entries, .. } => entry_count(entries),
+                    _ => 0,
+                }
+            })
+            .sum()
+    }
+
+    #[test]
+    fn duplicate_property_ids_keep_the_first_entry() {
+        let first = property("same", "", PropertyKind::Toggle, true);
+        let properties = [
+            first.clone(),
+            property("same", "", PropertyKind::Menu, false),
+            property("same", "same", PropertyKind::Menu, false),
+        ];
+        assert_eq!(sanitize(&properties), [first]);
+        let entries = MenuEntry::from_properties("test", &properties);
+        assert_eq!(entry_count(&entries), 1);
+        assert!(matches!(
+            entries[0].kind,
+            EntryKind::Item {
+                toggle: Some(Toggle::Checkmark(true)),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn self_parent_and_dependent_menus_are_dropped() {
+        let ordinary = property("ordinary", "", PropertyKind::Action, false);
+        let properties = [
+            property("self", "self", PropertyKind::Menu, false),
+            property("child", "self", PropertyKind::Menu, false),
+            ordinary.clone(),
+        ];
+        assert_eq!(sanitize(&properties), [ordinary]);
+    }
+
+    #[test]
+    fn two_entry_cycles_and_their_dependent_menus_are_dropped() {
+        let ordinary = property("ordinary", "", PropertyKind::Menu, false);
+        let properties = [
+            property("child", "a", PropertyKind::Menu, false),
+            property("a", "b", PropertyKind::Menu, false),
+            property("b", "a", PropertyKind::Menu, false),
+            ordinary.clone(),
+        ];
+        assert_eq!(sanitize(&properties), [ordinary]);
+    }
+
+    #[test]
+    fn property_lists_and_rendered_menus_have_a_node_budget() {
+        let properties: Vec<_> = (0..MAX_ENGINE_PROPERTIES + 20)
+            .map(|i| property(&i.to_string(), "", PropertyKind::Action, false))
+            .collect();
+        assert_eq!(sanitize(&properties), properties[..MAX_ENGINE_PROPERTIES]);
+        assert_eq!(
+            entry_count(&MenuEntry::from_properties("test", &properties)),
+            MAX_ENGINE_PROPERTIES
+        );
+
+        // The cap counts wire entries before invalid IDs and duplicates are removed.
+        let mut wire = vec![Property::default().to_dict()];
+        wire.extend(
+            std::iter::repeat_with(|| properties[0].to_dict()).take(MAX_ENGINE_PROPERTIES - 1),
+        );
+        wire.push(properties[1].to_dict());
+        assert_eq!(
+            crate::core::engines::sanitize_properties("test", &wire),
+            properties[..1]
+        );
+    }
+
+    #[test]
+    fn unsanitized_submenus_never_expand_beyond_their_wire_entries() {
+        let properties = [
+            property("loop", "", PropertyKind::Menu, false),
+            property("loop", "loop", PropertyKind::Menu, false),
+            property("loop", "loop", PropertyKind::Menu, false),
+        ];
+        assert_eq!(
+            entry_count(&MenuEntry::from_properties("test", &properties)),
+            1
+        );
+    }
+
+    #[test]
+    fn ordinary_nested_properties_keep_their_order_and_state() {
+        let properties = [
+            property("outer", "", PropertyKind::Menu, false),
+            property("inner", "outer", PropertyKind::Menu, false),
+            property("toggle", "inner", PropertyKind::Toggle, true),
+            property("separator", "inner", PropertyKind::Separator, false),
+            property("action", "", PropertyKind::Action, false),
+            property("lost", "missing", PropertyKind::Action, false),
+        ];
+        assert_eq!(sanitize(&properties), properties);
+        let entries = MenuEntry::from_properties("test", &properties);
+        assert_eq!(entry_count(&entries), 5);
+        assert_eq!(entries[0].label, "OUTER");
+        assert_eq!(entries[1].label, "ACTION");
+        let EntryKind::Submenu { entries, .. } = &entries[0].kind else {
+            panic!("the outer submenu was lost");
+        };
+        assert_eq!(entries[0].label, "INNER");
+        let EntryKind::Submenu { entries, .. } = &entries[0].kind else {
+            panic!("the inner submenu was lost");
+        };
+        assert_eq!(entries[0].label, "TOGGLE");
+        assert!(matches!(
+            entries[0].kind,
+            EntryKind::Item {
+                toggle: Some(Toggle::Checkmark(true)),
+                ..
+            }
+        ));
+        assert_eq!(entries[1], MenuEntry::separator());
+    }
+
+    #[test]
+    fn property_and_submenu_ids_belong_to_their_engine() {
+        let properties = engine_menu();
+        let mut ids = Ids::default();
+        let first = ids.nodes(&MenuEntry::from_properties("first", &properties), &mut 0);
+        let second = ids.nodes(&MenuEntry::from_properties("second", &properties), &mut 0);
+        assert_ne!(first[0].id, second[0].id, "properties have distinct IDs");
+        assert_ne!(first[1].id, second[1].id, "submenus have distinct IDs");
+        assert_ne!(first[1].children[0].id, second[1].children[0].id);
+        assert_eq!(
+            ids.actions.get(&first[0].id),
+            Some(&MenuAction::Property {
+                engine: "first".to_owned(),
+                id: "punct".to_owned(),
+            })
+        );
+    }
+
     #[test]
     fn the_menu_has_the_engines_own_menu() {
         let mut info = info(Some("sparkle"), Some("sparkle"));
@@ -1239,7 +1438,10 @@ mod tests {
         let own = &menu[5..];
         let property = |id: &str, toggle| MenuEntry {
             kind: EntryKind::Item {
-                action: MenuAction::Property(id.to_owned()),
+                action: MenuAction::Property {
+                    engine: "sparkle".to_owned(),
+                    id: id.to_owned(),
+                },
                 toggle,
             },
             label: id.to_uppercase(),
@@ -1252,6 +1454,7 @@ mod tests {
             own[2],
             MenuEntry {
                 kind: EntryKind::Submenu {
+                    engine: "sparkle".to_owned(),
                     id: "width".to_owned(),
                     entries: vec![
                         property("full", Some(Toggle::Radio(false))),
@@ -1313,7 +1516,10 @@ mod tests {
         let half = after[8].children[1].id;
         assert_eq!(
             ids.actions.get(&half),
-            Some(&MenuAction::Property("half".to_owned()))
+            Some(&MenuAction::Property {
+                engine: "sparkle".to_owned(),
+                id: "half".to_owned(),
+            })
         );
         assert!(!after.iter().any(|node| node.id == ROOT));
 

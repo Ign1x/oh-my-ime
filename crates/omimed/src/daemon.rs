@@ -750,6 +750,15 @@ impl Daemon {
             ControlRequest::ActivateProperty(id, reply) => {
                 let _ = reply.send(result(self.core.activate_property(&id)));
             }
+            ControlRequest::ActivateEngineProperty {
+                engine,
+                property,
+                reply,
+            } => {
+                let _ = reply.send(result(
+                    self.core.activate_engine_property(&engine, &property),
+                ));
+            }
             ControlRequest::Config(reply) => {
                 let _ = reply.send(self.config.clone());
             }

@@ -475,6 +475,16 @@ impl Core {
         self.engines.activate_property(engine, id)
     }
 
+    /// A tray click belongs to the engine whose menu the tray host displayed.
+    /// Check it here, in the same actor turn that dispatches the activation.
+    pub fn activate_engine_property(&self, engine: &str, id: &str) -> anyhow::Result<()> {
+        if self.current.as_deref() != Some(engine) {
+            debug!(engine, "{}", tr!("ignored stale engine menu click"));
+            return Ok(());
+        }
+        self.engines.activate_property(engine, id)
+    }
+
     /// What the frameworks had when omimed last saw them.
     pub fn restore_catalog(&mut self, catalog: &Catalog) {
         for (engine, available) in &catalog.available {
