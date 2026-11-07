@@ -2,7 +2,7 @@
 
 # oh-my-ime
 
-**现代化、Wayland 优先、与 UI 无关的 Linux 输入法平台。**
+**让每个输入法都成为自带界面的应用：Linux 上的输入法平台。**
 
 *平台负责连接与送达，输入法负责创造与表达。*
 
@@ -11,265 +11,115 @@
 [![CI](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml/badge.svg)](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#许可证)
 [![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](rust-toolchain.toml)
-[![Wayland first](https://img.shields.io/badge/wayland-first-ffbc00.svg)](#合成器支持)
+[![Wayland first](https://img.shields.io/badge/wayland-first-ffbc00.svg)](#桌面支持)
 
 </div>
 
 <p align="center">
   <img src="docs/images/sparkle-in-foot.png" alt="示例引擎 Sparkle：用 Slint 自绘的 emoji 卡片跟随文本光标（Hyprland 上的 foot 终端）" width="760">
   <br>
-  <sub>示例引擎 <a href="engines/sparkle">Sparkle</a>：界面完全由它自己用 Slint 绘制，oh-my-ime 将其变成输入法弹窗（Hyprland 上的 foot 终端）。</sub>
+  <sub>示例引擎 <a href="engines/sparkle">Sparkle</a>：界面由它自己用 Slint 绘制，oh-my-ime 把它变成输入法弹窗（Hyprland 上的 foot 终端）。</sub>
 </p>
 
-> [!WARNING]
-> **oh-my-ime 仍处于早期开发阶段，目前面向单 seat 的 Hyprland 与 sway 会话。**
-> 安装后仍需配置桌面会话和应用输入模块。[开发状态](#开发状态)表格列出已实现的功能；
-> 协议测试通过不代表所有真实应用都已验证兼容。
+## 用途
 
-## 为什么还要一个输入法框架？
+在 Windows 和 macOS 上，输入法是一个应用：候选窗、设置界面和动画都由它自己绘制，用什么 UI
+技术由作者决定，系统只负责传递按键、送达文字。Linux 上的 Fcitx 5 和 IBus 是框架，界面归框架
+所有：引擎把候选词交给统一的列表，由框架绘制。Wayland 还多了几条硬性限制：每个 seat 只能有
+一个输入法，输入法弹窗必须属于输入法自己的连接。
 
-在 Windows（TSF）和 macOS（IMKit）上，输入法是一个**应用**。它自己绘制候选窗口和动画，
-提供设置面板，也可以渲染 emoji 网格、手写板，UI 技术由作者自由选择。
-操作系统只负责路由按键、送达文字。
+oh-my-ime 把 Windows 和 macOS 的这种模式带到 Linux。它是一个平台，而不是又一个输入法：它负责
+把输入法接到应用上，输入体验交给输入法自己。
 
-Linux 上的 Fcitx5 和 IBus 都很优秀，但它们是**框架**，UI 归框架所有。
-引擎把候选词交给统一的查找表，再由框架用同一个候选窗口统一绘制。
-引擎想做出不一样的界面，就得和框架对着干。
+> [!NOTE]
+> oh-my-ime 仍处于早期开发阶段，目前支持 Hyprland 和 sway，尚不支持 KDE Plasma 和 GNOME
+> （见[桌面支持](#桌面支持)）。
 
-Wayland 让这件事更难：
-
-- 一个 seat 只接受**一个**输入法（`zwp_input_method_v2`），其余的都会收到 `unavailable`。
-- 候选弹窗所用的 surface 必须与该输入法属于**同一个客户端连接**。
-  别的进程无法自己创建一个跟随文本光标的窗口。
-- XWayland 应用根本不支持 `text-input`。
-
-**oh-my-ime** 正是围绕这些约束设计的平台：
-
-- 🧩 **输入法是独立进程**：可以用 Rust、C++、Python 或任何语言编写。
-- 🎨 **UI 完全归输入法所有**：Slint、Qt、GTK、OpenGL、Vulkan 均可，
-  不强制使用候选列表、查找表或主题引擎。
-- 🪄 **无需修改 UI 工具包**：工具包创建的普通无边框窗口，会直接成为跟随文本光标的输入法弹窗。
-  Wayland 层面的繁琐工作由平台完成。
-- 🔌 **由一个守护进程持有合成器协议**：焦点、键盘抓取、按键回送、切换、每个 seat 的状态都由它处理，
-  引擎无需关心。
-- 🛡️ **恢复**：原生引擎超时会将按键交还应用，持续崩溃会停用该引擎。
-  可归因的 UI 协议错误会在重连前停用故障引擎。
-  首次加载方案有额外等待时间；引擎卡死时，排队的按键仍会交还应用。
-- 🔁 **兼容层**：IBus 与 Fcitx5 生态的兼容宿主已列入路线图，并会明确标注为兼容运行。
-
-## 工作原理
+## 设计
 
 ```mermaid
 flowchart LR
-    subgraph Apps["应用"]
-      A1["Wayland 应用<br/>text-input-v3"]
-      A2["X11 应用<br/>XIM · Fcitx5 模块"]
-    end
-    C["合成器<br/>（优先 Hyprland）"]
-    subgraph D["omimed — oh-my-ime 守护进程"]
-      direction TB
-      W["Wayland 前端<br/>input-method-v2 · 键盘抓取 · 虚拟键盘"]
-      X["X11 前端<br/>XIM · Fcitx5 模块"]
-      R["核心<br/>上下文 · 按键路由 · 切换"]
-      B["UI Bridge<br/>多路复用 Wayland 代理"]
-    end
-    subgraph E["引擎（独立进程）"]
-      E1["引擎 A<br/>Slint UI"]
-      E2["引擎 B<br/>Qt / GTK / GL UI"]
-    end
-    A1 <--> C
-    A2 <-->|"XIM · Fcitx5 模块"| X
-    C <-->|"同一个客户端连接"| W
-    W --- R
-    X --- R
-    R <-->|"D-Bus 点对点<br/>按键 · 上屏 · 预编辑"| E1
-    R <-->|"D-Bus 点对点"| E2
-    E1 -.->|"Wayland（UI）"| B
-    E2 -.->|"Wayland（UI）"| B
-    B -.->|"surface 成为输入法弹窗"| W
+    W["Wayland 应用"] <-->|"text-input-v3"| C["合成器"]
+    C <-->|"input-method-v2<br/>一条连接"| D["omimed<br/>焦点 · 按键 · 切换<br/>UI Bridge"]
+    X["X11 应用"] <-->|"XIM · Fcitx 5 模块"| D
+    D <-->|"D-Bus：按键与动作"| E["引擎<br/>独立进程"]
+    E -.->|"它们自己的窗口"| D
 ```
 
-### UI Bridge
-
-守护进程与合成器之间只保持**一条**连接，并在这条连接上持有 `zwp_input_method_v2`。
-
-每个引擎都会得到一个由守护进程提供的私有 Wayland socket。
-引擎的 UI 工具包连接到这个 socket，就像连接到真正的合成器一样。
-守护进程基于 [`wl-proxy`](https://crates.io/crates/wl-proxy)，把所有引擎的流量复用到自己的那条连接上。
-因此在合成器看来，引擎的 surface 属于输入法客户端，守护进程可以合法地把它们设为输入法弹窗。
-
-引擎只需创建一个普通的无边框 `xdg_toplevel`，其余工作由 Bridge 完成：
-
-- 自行应答 `xdg_shell` 协议；
-- 在真实合成器上为该 surface 设置输入法弹窗角色；
-- 只显示当前激活引擎的弹窗；
-- 把指针事件路由给正确的引擎；
-- 引擎崩溃后负责清理现场。
-
-### 引擎协议
-
-引擎逻辑与守护进程之间通过 **点对点 D-Bus** 通信，接口为 `io.github.ign1x.OhMyIme.Engine1` 和 `EngineHost1`。
-
-- GLib、Qt、sd-bus、zbus 都原生支持 D-Bus，引擎不依赖我们的 SDK 也能实现（我们同时提供 Rust SDK）。
-- 引擎对每个按键的回复中，按顺序附带要执行的动作：上屏、预编辑、删除周边文本、回送按键。
-  这样文本与按键的顺序始终一致。
-- 平台从不规定候选词模型。
+- **一个守护进程 `omimed`**，持有 Wayland 规定每个 seat 只能有一份的东西：合成器的
+  `input-method-v2`、键盘抓取和虚拟键盘。它跟踪焦点，把每个按键交给当前的输入法，负责在输入法
+  之间切换，并把文字送达应用。
+- **输入法（引擎）是独立进程。** 它的逻辑通过点对点 D-Bus 与 omimed 通信，对每个按键回复一串
+  有序的动作：上屏、预编辑、删除周围文本、回送按键。平台不规定候选模型。
+- **UI Bridge** 给每个引擎一个私有的 Wayland socket，并把它复用到 omimed 自己的合成器连接上。
+  任何工具包创建的普通无边框窗口，都能成为跟随文本光标的弹窗，无需修改工具包。
+- **应用**通过合成器（`text-input-v3`）连到 omimed；X11 应用通过 XIM 或 Fcitx 5 的 GTK/Qt 模块。
+- **Fcitx 5 和 IBus 在 oh-my-ime 内部运行**，作为引擎，无需修改，因为一个 seat 不能同时有两个
+  输入法。🧩
 
 完整设计见 [docs/zh-CN/architecture.md](docs/zh-CN/architecture.md)。
 
-## 开发状态
+## 特点
 
-| 模块 | 状态 |
+- 🎨 **界面和语言都不受限。** 引擎用 Slint、GTK、Qt 或 OpenGL 绘制自己的窗口，可以用任何语言
+  编写：协议就是普通的 D-Bus 和 Wayland。附带 Rust SDK 和一个
+  [Python/GTK 4 示例](examples/python-gtk4)。
+- 🀄 **Rime 引擎。** [omime-rime](engines/rime) 提供小鹤双拼和拼音、横排或竖排候选、浅色和深色
+  主题，以及设置窗口。
+- 🧩 **Fcitx 5 和 IBus 作为引擎。** 它们里面的每个输入法都能单独选择，与原生引擎并列，菜单也在
+  托盘里。
+- 🛡️ **稳健。** 引擎响应慢时按键交还应用，崩溃的引擎会重启，行为异常的引擎会被停用，应用报告
+  的密码框绕过引擎。
+- 🧭 **平台界面。** 设置程序、托盘菜单、切换浮层、桌面通知、`omime` 命令行和 D-Bus API，还能按
+  应用记住输入法。
+- 🌐 **英文和简体中文。**
+
+## 桌面支持
+
+| 桌面 | 支持情况 |
 |---|---|
-| Wayland 前端：`input-method-v2`、键盘抓取、虚拟键盘、按键重复 | ✅ |
-| Wayland 文字按顺序交付，限时等待应用回报输入状态 | ✅ |
-| 引擎宿主：发现、启动、监护、崩溃重启、协议 v1 | ✅ |
-| Rust SDK（`omime-sdk`）与 `echo` 测试引擎 | ✅ |
-| 切换：热键、`omime` 命令行、D-Bus 控制接口，记住上次使用的引擎 | ✅ |
-| 配置：启用的引擎、热键、超时；`omime enable/disable/reload` | ✅ |
-| Wayland/Fcitx5 明确标记的密码与 PIN 输入框绕过引擎 | ✅；XIM 不提供字段用途 |
-| UI Bridge：引擎窗口成为输入法弹窗（GPU 与 shm 缓冲、点击、切换、HiDPI、崩溃清理） | ✅ sway 与 Hyprland |
-| 拥有独立动画 UI 的示例输入法（[Sparkle](engines/sparkle)，Slint） | ✅ |
-| [Rime](engines/rime) 引擎：小鹤双拼、方案设置、横竖排候选窗和外观选项 | ✅ |
-| 每个应用一个引擎（`[apps] remember`） | ✅ sway 与 Hyprland |
-| `omime install/uninstall/doctor`、`doctor --app PID` 应用诊断、供状态栏使用的 `status --watch` | ✅ |
-| 托盘项：当前使用的输入法，以及用于切换的菜单 | ✅ |
-| 引擎菜单（中文标点、全角等）出现在托盘和命令行中，包括 Fcitx 5 与 IBus 的 | ✅ |
-| 切换浮层：用热键切换后，在屏幕下方显示输入法 | ✅ sway 与 Hyprland |
-| 设置程序（`omime-settings`）：输入法及其顺序、热键、应用、选项；中英双语，浅色与深色 | ✅ |
-| 出现问题时发出通知：引擎停止、另一个输入法占用座位、config.toml 有错误 | ✅ |
-| Fcitx 5 与 IBus 框架内的输入法逐个选择，就像 omimed 自己的引擎一样 | ✅ |
-| 多 seat 分别路由按键、保存组合输入 | 🚧 已在 sway 上测试；引擎选择和候选窗定位仍共享 |
-| Nix/源码安装附带 systemd 用户单元和会话模板 | ✅ |
-| Hyprland、systemd、UWSM 的首次会话配置、预览与撤销（`omime setup`） | ✅ Lua 与 `.conf`；[使用指南](docs/zh-CN/setup.md) |
-| X11 应用：XIM 服务端、Fcitx5 GTK/Qt 模块协议 | ✅ 已在 sway 上测试（XWayland） |
-| X11 应用文本光标处的引擎窗口（图层表面） | ✅ sway 与 Hyprland |
-| 通过虚拟 `input-method-v2` 托管未修改的 Wayland 输入法 | ✅ Fcitx 5 与 IBus（≥ 1.5.32），已在 sway 上测试 · 🧩 兼容 |
-| 逐引擎的 IBus 宿主 | 📅 推迟 · 🧩 兼容 |
+| Hyprland | ✅ |
+| sway ≥ 1.10 及其他支持 `input-method-v2` 的合成器（labwc、river、niri……） | ✅ sway 已测试，其他预计可用 |
+| KDE Plasma | 📅 计划中，通过 `input-method-v1` |
+| GNOME | 📅 计划中，通过 IBus 协议 |
 
-✅ 原生支持 · 🧩 兼容层 · 🚧 进行中 · 📅 计划中
-
-## 合成器支持
-
-oh-my-ime 面向同时实现了以下协议的合成器：
-支持输入法弹窗的 `zwp_input_method_v2`，以及 `zwp_virtual_keyboard_v1`。
-
-| 合成器 | 协议 | 计划 |
-|---|---|---|
-| **Hyprland** | IM v2 + 弹窗 + 虚拟键盘 | 首要目标 |
-| sway ≥ 1.10、labwc、river、niri、COSMIC | IM v2 + 弹窗 | 预计可用；自动化测试使用 sway |
-| KDE Plasma（KWin） | 仅 IM v1 | 尚未支持；setup 会拒绝执行，保留正在运行的输入法 |
-| GNOME（Mutter） | IBus 集成 | 尚未支持；setup 会拒绝执行，保留正在运行的输入法 |
-
-setup 会在修改文件或停止输入法之前检查两种必需的管理器协议。请在 Hyprland
-会话中运行；不支持的桌面仍可用 `--dry-run` 预览。`omime doctor` 会说明缺少的
-协议，omimed 则以状态码 69 退出，即使会话总线卡住也一样，systemd 不会循环重启它。
-setup 也会拒绝无法安全验证的继承 `WAYLAND_SOCKET` 连接；请使用未继承 Wayland
-套接字的 Hyprland 终端。
+在不支持的桌面上，`omime setup` 会在改动任何东西之前拒绝执行，omimed 也会直接退出，不影响正在
+使用的输入法。已验证的应用见 [docs/zh-CN/compatibility.md](docs/zh-CN/compatibility.md)。
 
 ## 快速开始
 
-使用 Nix 安装预编译的平台和 Rime（NixOS 或其他发行版均可）：
+在 NixOS 或其他任何发行版上，用 Nix 安装预编译的平台和 Rime，然后在 Hyprland 会话的终端里配置
+Hyprland：
 
 ```sh
 nix profile install 'https://github.com/Ign1x/oh-my-ime/releases/latest/download/oh-my-ime-nix.tar.gz#full'
+omime setup --engine rime --take-over --start
 ```
 
-从 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0) 起提供二进制包。
-NixOS/Home Manager 配置和更新方式见[二进制发布指南](docs/zh-CN/releases.md)；
-`github:Ign1x/oh-my-ime` 仍用于源码构建。
+注销并重新登录，让应用继承输入环境，然后用 `omime doctor` 检查。`Ctrl+Space` 开关输入法，
+`Ctrl+Shift+Space` 切换到下一个，`omime settings` 打开设置。
 
-也可以从源码编译并安装到 `~/.local`（需要 Rust 工具链，以及 wayland、libxkbcommon、dbus、fontconfig 的开发文件）：
+从源码安装、NixOS 和 Home Manager 模块、撤销配置，见[配置指南](docs/zh-CN/setup.md)、
+[发布版本](docs/zh-CN/releases.md)、[Nix](docs/zh-CN/nix.md)和
+[Hyprland 指南](docs/zh-CN/hyprland.md)。
 
-```sh
-git clone https://github.com/Ign1x/oh-my-ime
-cd oh-my-ime
-scripts/install.sh
-```
+## 文档
 
-NixOS 系统配置的写法见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md#1-安装)；也可以导入 flake 提供的 [NixOS 与 Home Manager 模块](docs/zh-CN/nix.md)。Release 的 `full` 包已经包含 [Rime 引擎](engines/rime)。
-
-`omime settings rime` 打开 Rime 设置，可选择方案、每页候选数、单按 Shift 的行为、
-候选窗横竖排、深浅色和字号。关闭窗口后 Rime 会重启，读取保存的修改。
-Rime 的选项保存在 `~/.local/share/oh-my-ime/rime/default.custom.yaml`，保留其他自定义项；
-候选窗外观保存在 `~/.config/oh-my-ime/rime.toml`。保存失败时窗口会显示错误并允许重试。
-勾选新方案后，在 oh-my-ime 设置中把它加入切换顺序。方案自身的 YAML 配置可能覆盖
-全局页大小和 Shift 选项，可通过“打开用户文件夹”进一步调整。
-
-每次安装都包含 Echo 和 Sparkle，但默认不启用。运行 `omime enable echo` / `omime enable sparkle`，或在设置应用中选择“添加输入法…”，即可将它们加入切换顺序。以下命令配置 Hyprland，并显式启用 Sparkle 以供试用：
-
-```sh
-omime setup --engine sparkle --take-over --dry-run
-omime setup --engine sparkle --take-over --start
-```
-
-注销并重新登录，让应用继承输入环境，再运行 `omime doctor`。在 foot 等支持 text-input-v3 的应用中输入 `:rocket`，从 Sparkle 的卡片中挑选。中文输入可先安装 Fcitx5 及拼音插件，再改用 `--engine fcitx5/pinyin`；Qt 应用还需要 Fcitx5 Qt 输入模块。
-
-支持 Lua 和旧版 `.conf`，保留其他配置，可通过 `omime setup --undo` 撤销。选项与恢复方式见[首次配置指南](docs/zh-CN/setup.md)；使用 Nix/Home Manager 或 systemd 管理会话时，参照[手动配置](docs/zh-CN/hyprland.md)。
-
-| 操作 | 方式 |
-|---|---|
-| 在直接输入与上一个引擎之间切换 | `Ctrl+Space` |
-| 下一个输入法 | `Ctrl+Shift+Space` 或 `omime next` |
-| 指定输入法 | `omime list`，然后 `omime switch fcitx5/shuangpin`、`omime switch sparkle`、`omime switch direct`；或使用托盘菜单 |
-| 设置 | `omime settings`、托盘菜单里的“设置…”，或启动器里的“oh-my-ime 设置” |
-| 交互式选择器（开发版本） | `omime choose`：方向键浏览，Enter/点击确认，Esc 取消 |
-| 管理引擎 | `omime engines`、`omime enable echo`、`omime disable echo`、`omime reload`、`omime install ~/src/my-engine`、`omime uninstall my-engine` |
-| 状态栏 | 托盘项（StatusNotifierItem）；`omime status --json`；`omime status --watch --json` 持续输出每次变化（可直接用作 waybar 模块） |
-
-omimed 会记住上次使用的引擎；在 `config.toml` 的 `[apps]` 中设置 `remember = true` 后，则会记住每个应用各自的引擎。完整配置、waybar 示例和故障排查见 [docs/zh-CN/hyprland.md](docs/zh-CN/hyprland.md)。
-
-v0.4.0 之后的开发版本还可通过 `apps.remember_mode = true`，按应用和方案恢复 Rime 中英模式，
-需同时开启 `apps.remember`，也可在设置的“应用”页开启。
-已验证的应用版本、场景和桌面边界见[真实应用验收记录](docs/zh-CN/compatibility.md)。
-
-- 编写自己的引擎：[docs/zh-CN/writing-an-engine.md](docs/zh-CN/writing-an-engine.md)
-- 参与开发：[docs/zh-CN/development.md](docs/zh-CN/development.md)
-
-## 路线图
-
-1. **阶段 0**：工程基础 ✅
-2. **阶段 1：Hyprland MVP**（`v0.1.0`）
-   - M1：Wayland 前端 + UI Bridge 验证 ✅
-   - M2：引擎宿主、协议 v1、Rust SDK、基础切换 ✅
-   - M3：完整 UI Bridge + Slint 示例输入法 ✅
-   - M4：管理功能与健壮性 ✅ → `v0.1.0`
-3. **v0.2**：按应用记忆输入法；安装/卸载/诊断命令；多 seat 按键路由测试；Nix 包；中文文档 ✅ → `v0.2.0`
-4. **阶段 2**：X11/XWayland：XIM 服务端与 Fcitx5 输入法模块 D-Bus 协议 ✅ → `v0.3.0`
-5. **阶段 3**：通过虚拟 `input-method-v2` 托管未修改的 Fcitx5 / IBus ✅ → `v0.4.0`
-6. **平台界面与引擎**：设置、切换浮层、托盘菜单、通知、浮动面板、Python 示例和可配置候选窗的原生 Rime ✅ → `v0.4.0`
-7. **日常使用完善**：已有 NixOS/Home Manager 打包、统一会话配置和应用诊断；继续推进真实应用矩阵、文档和连续日用验证。
-8. **桌面扩展**：KWin/input-method-v1，以及通过系统 IBus 接入 GNOME，初期允许使用系统候选界面。[隔离探针](docs/zh-CN/compatibility.md)记录了待完成的后端工作；这两个桌面尚未支持。逐引擎 IBus 宿主推迟；Fcitx5 插件宿主和 C ABI SDK 不在当前计划内。
-
-## 常见问题
-
-**能和 Fcitx5 或 IBus 同时运行吗？**
-同一个 seat 上不行：Wayland 每个 seat 只允许一个输入法。改为把未修改的 Fcitx 5 或 IBus 作为 oh-my-ime **内部**的一个可切换引擎运行；见 [Fcitx 5 作为引擎](docs/zh-CN/hyprland.md#fcitx-5-作为引擎) 与 [IBus 作为引擎](docs/zh-CN/hyprland.md#ibus-作为引擎)。
-
-**引擎必须用 Rust 写吗？**
-不必。引擎协议就是普通的 D-Bus，UI 就是普通的 Wayland，Rust SDK 只是为了方便。
-
-**和 Fcitx5/IBus 引擎 100% 兼容吗？**
-不是，我们也不会这样宣称。兼容层都标注为 🧩，并在文档中写明已知的差距。
-
-## 参与贡献
-
-非常欢迎贡献！提交前请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-平台设置、托盘、通知、切换浮层和命令行支持英文与简体中文，跟随桌面语言。
-可运行 `LC_ALL=zh_CN.UTF-8 omime help` 预览中文帮助；语言设置和添加翻译的方法见
-[本地化指南](docs/zh-CN/localization.md)。
+- [架构](docs/zh-CN/architecture.md)
+- [编写引擎](docs/zh-CN/writing-an-engine.md)
+- [应用兼容性](docs/zh-CN/compatibility.md)
+- [开发](docs/zh-CN/development.md)与[贡献指南](CONTRIBUTING.md)
+- [本地化](docs/zh-CN/localization.md)
+- [更新日志](CHANGELOG.md)
 
 ## 许可证
 
-本项目采用以下任一许可证，由你自行选择：
+本项目可任选以下任一许可证使用：[Apache License, Version 2.0](LICENSE-APACHE) 或
+[MIT 许可证](LICENSE-MIT)。除非你明确声明，否则你有意提交并纳入本项目的任何贡献（按
+Apache-2.0 许可证的定义），都将按上述方式双重许可，不附加任何其他条款或条件。
 
-- Apache License 2.0（[LICENSE-APACHE](LICENSE-APACHE)）
-- MIT 许可证（[LICENSE-MIT](LICENSE-MIT)）
-
-除非你另有明确声明，你有意提交并被本项目收录的任何贡献（依 Apache-2.0 许可证的定义），
-均按上述双许可证授权，不附加任何其他条款或条件。
-
-示例引擎 [Sparkle](engines/sparkle)、切换浮层（`omime-panel`，以及 `omime-overlay`）和设置程序（`omime-settings`）依据 Slint 免版税许可证使用 [Slint](https://slint.dev)；守护进程、`omime` 命令行工具、协议 crate 和 SDK 不依赖 Slint。
+Sparkle 和 Rime 引擎、切换浮层（`omime-panel`，使用 `omime-overlay`）和设置程序
+（`omime-settings`）按 Slint Royalty-free License 使用 [Slint](https://slint.dev)；守护进程、
+`omime` 命令行工具、协议 crate 和 SDK 不依赖 Slint。
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

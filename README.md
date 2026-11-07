@@ -2,7 +2,7 @@
 
 # oh-my-ime
 
-**A modern, Wayland-first, UI-agnostic input method platform for Linux.**
+**A Linux input method platform where every input method is an app with its own UI.**
 
 *The platform connects and delivers. The input method creates and expresses.*
 
@@ -11,7 +11,7 @@ English · [简体中文](README.zh-CN.md)
 [![CI](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml/badge.svg)](https://github.com/Ign1x/oh-my-ime/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](rust-toolchain.toml)
-[![Wayland first](https://img.shields.io/badge/wayland-first-ffbc00.svg)](#compositor-support)
+[![Wayland first](https://img.shields.io/badge/wayland-first-ffbc00.svg)](#desktop-support)
 
 </div>
 
@@ -21,289 +21,114 @@ English · [简体中文](README.zh-CN.md)
   <sub><a href="engines/sparkle">Sparkle</a>, a demo engine: its own Slint UI, turned into an input-method popup by oh-my-ime (foot on Hyprland).</sub>
 </p>
 
-> [!WARNING]
-> **oh-my-ime is in early development, targeting single-seat Hyprland and sway sessions.**
-> Installation still requires session configuration and application input modules.
-> The [status table](#status) describes implemented features; protocol tests do not
-> establish compatibility with every real application.
+## Purpose
 
-## Why another input method framework?
+On Windows and macOS, an input method is an application. It draws its own candidate window,
+settings and animations with whatever UI technology its authors like; the system only routes
+keys and delivers text. On Linux, Fcitx 5 and IBus are frameworks that own the UI: engines fill
+a shared candidate list and the framework draws it. Wayland adds hard limits on top: one input
+method per seat, and an input popup must belong to the input method's own connection.
 
-On Windows (TSF) and macOS (IMKit), an input method is an **application**: it draws its own
-candidate window, animates it, adds a settings panel, renders emoji grids or handwriting pads,
-using whatever UI technology its authors like. The operating system only routes keys and
-delivers text.
+oh-my-ime brings the Windows and macOS model to Linux. It is a platform, not another input
+method: it connects input methods to applications and leaves the input experience to them.
 
-On Linux, Fcitx5 and IBus are excellent, but they are **frameworks**. They own the UI. Engines
-publish candidates into a shared lookup table, and the framework renders one common candidate
-window. If an engine wants something different, it has to fight the framework.
+> [!NOTE]
+> oh-my-ime is in early development. It works on Hyprland and sway; KDE Plasma and GNOME are
+> not supported yet ([desktop support](#desktop-support)).
 
-Wayland makes this harder:
-
-- A seat accepts **one** input method (`zwp_input_method_v2`); every other one gets `unavailable`.
-- A candidate popup must be a surface that belongs to **the same client connection** as that
-  input method. Another process cannot simply create a window that follows the text cursor.
-- XWayland apps don't speak `text-input` at all.
-
-**oh-my-ime** is a platform built around these constraints:
-
-- 🧩 **Input methods are independent processes.** Write them in Rust, C++, Python, anything.
-- 🎨 **Their UI is theirs.** Use Slint, Qt, GTK, raw OpenGL or Vulkan. No mandatory candidate
-  list, lookup table or theme engine.
-- 🪄 **No toolkit patches.** A normal frameless window from your toolkit becomes the IME popup
-  that follows the text cursor. The platform takes care of the Wayland plumbing.
-- 🔌 **One daemon owns the compositor protocols.** It handles focus, keyboard grabs, key
-  forwarding, switching and per-seat state, so engines don't have to.
-- 🛡️ **Recovery.** Native engine timeouts return keys to the application; repeated crashes
-  stop the engine. An attributed UI protocol fault quarantines its engine before reconnecting.
-  Initial schema loading gets extra time; a stuck engine still releases queued keys.
-- 🔁 **Compatibility hosts** for the existing IBus and Fcitx5 ecosystems are on the roadmap,
-  clearly labelled as such.
-
-## How it works
+## Design
 
 ```mermaid
 flowchart LR
-    subgraph Apps
-      A1["Wayland app<br/>text-input-v3"]
-      A2["X11 app<br/>XIM · Fcitx5 module"]
-    end
-    C["Compositor<br/>(Hyprland first)"]
-    subgraph D["omimed — oh-my-ime daemon"]
-      direction TB
-      W["Wayland frontend<br/>input-method-v2 · keyboard grab · virtual keyboard"]
-      X["X11 frontends<br/>XIM · Fcitx5 modules"]
-      R["Core<br/>contexts · key routing · switching"]
-      B["UI Bridge<br/>multiplexing Wayland proxy"]
-    end
-    subgraph E["Engines (separate processes)"]
-      E1["Engine A<br/>Slint UI"]
-      E2["Engine B<br/>Qt / GTK / GL UI"]
-    end
-    A1 <--> C
-    A2 <-->|"XIM · Fcitx5 module"| X
-    C <-->|"one client connection"| W
-    W --- R
-    X --- R
-    R <-->|"D-Bus peer-to-peer<br/>keys · commit · preedit"| E1
-    R <-->|"D-Bus peer-to-peer"| E2
-    E1 -.->|"Wayland (UI)"| B
-    E2 -.->|"Wayland (UI)"| B
-    B -.->|"surfaces become IME popups"| W
+    W["Wayland apps"] <-->|"text-input-v3"| C["Compositor"]
+    C <-->|"input-method-v2<br/>one connection"| D["omimed<br/>focus · keys · switching<br/>UI Bridge"]
+    X["X11 apps"] <-->|"XIM · Fcitx 5 modules"| D
+    D <-->|"D-Bus: keys and actions"| E["Engines<br/>separate processes"]
+    E -.->|"their own windows"| D
 ```
 
-### The UI Bridge
+- **One daemon, `omimed`,** owns what Wayland allows only once per seat: the compositor's
+  `input-method-v2`, the keyboard grab and the virtual keyboard. It tracks focus, routes each key
+  to the active input method, switches between input methods and delivers the text.
+- **Input methods ("engines") are separate processes.** Their logic talks to omimed over
+  peer-to-peer D-Bus, and each key is answered with an ordered list of actions: commit, preedit,
+  delete surrounding text, forward the key. The platform defines no candidate model.
+- **The UI Bridge** gives every engine a private Wayland socket and multiplexes it onto omimed's
+  own compositor connection. An ordinary frameless window from any toolkit becomes the popup at
+  the text cursor, without toolkit patches.
+- **Applications** reach omimed through the compositor (`text-input-v3`); X11 applications
+  through XIM or the Fcitx 5 GTK/Qt modules.
+- **Fcitx 5 and IBus run inside oh-my-ime** as engines, unmodified, since a seat cannot have two
+  input methods. 🧩
 
-The daemon keeps **one** connection to the compositor and owns `zwp_input_method_v2` on it.
-Every engine gets a private Wayland socket served by the daemon, and the engine's toolkit
-connects there as if it were the compositor. The daemon multiplexes all engine traffic onto its
-own connection, built on [`wl-proxy`](https://crates.io/crates/wl-proxy). From the compositor's
-point of view, the engine's surfaces belong to the input method, so the daemon may legally turn
-them into input-method popups.
+The full design is in [docs/architecture.md](docs/architecture.md).
 
-Engines create an ordinary frameless `xdg_toplevel`. The bridge answers the `xdg_shell`
-protocol itself, assigns the input-popup role on the real compositor, keeps only the active
-engine's popup visible, routes pointer input to the right engine, and cleans up after crashes.
+## Features
 
-### Engine protocol
+- 🎨 **Any UI, any language.** Engines draw their own windows with Slint, GTK, Qt or OpenGL, in
+  any language: the protocol is plain D-Bus and Wayland. A Rust SDK and a
+  [Python/GTK 4 example](examples/python-gtk4) are included.
+- 🀄 **A Rime engine.** [omime-rime](engines/rime) offers Xiaohe shuangpin and pinyin, horizontal
+  or vertical candidates, light and dark themes, and a settings window.
+- 🧩 **Fcitx 5 and IBus as engines.** Every input method inside them can be chosen on its own,
+  next to the native engines, with their menus in the tray.
+- 🛡️ **Resilient.** Keys go back to the application when an engine is slow, crashed engines
+  restart, a misbehaving engine is stopped, and password fields that applications report
+  bypass engines.
+- 🧭 **A platform UI.** A settings app, a tray menu, a switcher, desktop notifications, the
+  `omime` command line and a D-Bus API. The input method can be remembered per application.
+- 🌐 **English and Simplified Chinese.**
 
-Engine logic talks to the daemon over **peer-to-peer D-Bus**
-(`io.github.ign1x.OhMyIme.Engine1` / `EngineHost1`). GLib, Qt, sd-bus and zbus speak it
-natively, so engines don't need our SDK, though a Rust SDK is provided. Key events are answered
-with an ordered list of actions (commit, preedit, delete-surrounding, forward), which keeps text
-in sync with keystrokes. The platform never defines a candidate model.
+## Desktop support
 
-See [docs/architecture.md](docs/architecture.md) for the full design.
-
-## Status
-
-| Area | State |
+| Desktop | Support |
 |---|---|
-| Wayland frontend: `input-method-v2`, keyboard grab, virtual keyboard, key repeat | ✅ |
-| Ordered Wayland text delivery with bounded waits for application state updates | ✅ |
-| Engine host: discovery, launch, supervision, crash restart, protocol v1 | ✅ |
-| Rust SDK (`omime-sdk`) and the `echo` test engine | ✅ |
-| Switching: hotkeys, `omime` CLI, D-Bus control API, last engine remembered | ✅ |
-| Configuration: enabled engines, hotkeys, timeouts; `omime enable/disable/reload` | ✅ |
-| Password and PIN fields reported by Wayland/Fcitx5 bypass engines | ✅; XIM does not report field purpose |
-| UI Bridge: engine windows become IME popups (GPU and shm buffers, clicks, switching, HiDPI, crash cleanup) | ✅ sway and Hyprland |
-| Demo engine with its own animated UI ([Sparkle](engines/sparkle), Slint) | ✅ |
-| [Rime](engines/rime) engine: Xiaohe shuangpin, schema settings, horizontal/vertical candidates and appearance options | ✅ |
-| One engine per application (`[apps] remember`) | ✅ sway and Hyprland |
-| `omime install/uninstall/doctor`, application checks with `doctor --app PID`, `status --watch` for status bars | ✅ |
-| Tray item: the input method in use and a menu to switch | ✅ |
-| Engine menus (Chinese punctuation, full width, …) in the tray and the CLI, also Fcitx 5's and IBus's | ✅ |
-| Switcher: the input methods at the bottom of the screen after a switch with the hotkeys | ✅ sway and Hyprland |
-| Settings (`omime-settings`): input methods and their order, hotkeys, applications, options; English and Chinese, light and dark | ✅ |
-| Notifications about trouble: an engine that stopped, another input method on a seat, a mistake in config.toml | ✅ |
-| The input methods inside Fcitx 5 and IBus are chosen one by one, like omimed's own engines | ✅ |
-| Separate key routing and compositions on several seats | 🚧 tested on sway; engine selection and popup placement are still shared |
-| Nix/source installation with a systemd user unit and session templates | ✅ |
-| First-run setup for Hyprland, systemd and UWSM application launches, preview and undo (`omime setup`) | ✅ Lua and `.conf`; [guide](docs/setup.md) |
-| X11 applications: XIM server, Fcitx5 GTK/Qt module protocol | ✅ tested on sway (XWayland) |
-| Engine windows at the text cursor of X11 applications (layer surface) | ✅ sway and Hyprland |
-| Hosting unmodified Wayland input methods via a virtual `input-method-v2` | ✅ Fcitx 5 and IBus (≥ 1.5.32), tested on sway · 🧩 compat |
-| Per-engine IBus hosting | 📅 Deferred · 🧩 compat |
+| Hyprland | ✅ |
+| sway ≥ 1.10 and other compositors with `input-method-v2` (labwc, river, niri, …) | ✅ sway is tested; the others are expected to work |
+| KDE Plasma | 📅 planned, through `input-method-v1` |
+| GNOME | 📅 planned, through the IBus protocol |
 
-✅ native support · 🧩 compatibility layer · 🚧 in progress · 📅 planned
-
-## Compositor support
-
-oh-my-ime targets compositors that implement `zwp_input_method_v2`, with input-popup support,
-and `zwp_virtual_keyboard_v1`.
-
-| Compositor | Protocols | Plan |
-|---|---|---|
-| **Hyprland** | IM v2 + popups + virtual keyboard | first target |
-| sway ≥ 1.10, labwc, river, niri, COSMIC | IM v2 + popups | expected to work; sway is used for automated tests |
-| KDE Plasma (KWin) | IM v1 only | not supported yet; setup refuses and preserves the running input method |
-| GNOME (Mutter) | IBus integration | not supported yet; setup refuses and preserves the running input method |
-
-Setup checks both required manager protocols before changing files or stopping an
-input method. Run it from Hyprland; `--dry-run` can still preview on unsupported
-desktops. There, `omime doctor` explains the missing protocols and omimed exits
-with status 69, without a systemd restart loop, even if the session bus stalls.
-Setup also refuses inherited `WAYLAND_SOCKET` connections that it cannot safely
-verify; use a Hyprland terminal without an inherited Wayland socket.
+On unsupported desktops, `omime setup` refuses before changing anything, and omimed exits
+without disturbing the input method in use. Tested applications are recorded in
+[docs/compatibility.md](docs/compatibility.md).
 
 ## Getting started
 
-Install the prebuilt platform and Rime with Nix, on NixOS or any other distribution:
+Install the prebuilt platform with Rime through Nix, on NixOS or any other distribution, then
+configure Hyprland from a terminal in your Hyprland session:
 
 ```sh
 nix profile install 'https://github.com/Ign1x/oh-my-ime/releases/latest/download/oh-my-ime-nix.tar.gz#full'
+omime setup --engine rime --take-over --start
 ```
 
-Binary packages are available from [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0).
-The [binary release guide](docs/releases.md) covers NixOS/Home Manager configuration
-and updates. `github:Ign1x/oh-my-ime` remains the source-build input.
+Log out and back in so applications inherit the input environment, then check with
+`omime doctor`. `Ctrl+Space` toggles the input method, `Ctrl+Shift+Space` switches to the next
+one, and `omime settings` opens the settings.
 
-Or build from source and install into `~/.local` (needs a Rust toolchain plus the
-wayland, libxkbcommon, dbus and fontconfig development files):
+Installing from source, the NixOS and Home Manager modules, and undoing setup are covered in
+the [setup guide](docs/setup.md), [releases](docs/releases.md), [Nix](docs/nix.md) and the
+[Hyprland guide](docs/hyprland.md).
 
-```sh
-git clone https://github.com/Ign1x/oh-my-ime
-cd oh-my-ime
-scripts/install.sh
-```
+## Documentation
 
-NixOS and Home Manager users can import the flake's modules instead
-([docs/nix.md](docs/nix.md)); the release's `full` package includes
-the [Rime engine](engines/rime).
-
-`omime settings rime` opens Rime's settings: choose schemas, candidates per page,
-Shift behavior, horizontal or vertical candidates, colors and font size. Closing the
-window restarts Rime to read the saved changes.
-
-Echo and Sparkle ship with every installation but are disabled by default. Enable
-them with `omime enable echo` / `omime enable sparkle`, or **Add input method…** in
-the settings app, to include them in the switching cycle. To configure Hyprland and
-try Sparkle, setup enables it explicitly:
-
-```sh
-omime setup --engine sparkle --take-over --dry-run
-omime setup --engine sparkle --take-over --start
-```
-
-Log out and back in so applications inherit the input environment, then run
-`omime doctor`. In a text-input-v3 application such as foot, type `:rocket` and
-pick from Sparkle's deck. For Chinese input, install Fcitx5 with its Pinyin addon
-and use `--engine fcitx5/pinyin` instead; Qt applications also need the Fcitx5 Qt
-input module.
-
-Setup supports Lua and legacy `.conf`, preserves unrelated settings and can be
-undone with `omime setup --undo`. See the [setup guide](docs/setup.md) for options
-and recovery, or [manual configuration](docs/hyprland.md) for Nix/Home Manager
-and systemd session management.
-
-| What | How |
-|---|---|
-| Toggle direct input ↔ last engine | `Ctrl+Space` |
-| Next input method | `Ctrl+Shift+Space` or `omime next` |
-| Pick an input method | `omime list`, then `omime switch fcitx5/shuangpin`, `omime switch sparkle`, `omime switch direct`; or the tray menu |
-| Settings | `omime settings`, "Settings…" in the tray menu, or "oh-my-ime Settings" in your launcher |
-| Interactive chooser (development) | `omime choose`: arrows to browse, Enter/click to select, Esc to cancel |
-| Manage engines | `omime engines`, `omime enable echo`, `omime disable echo`, `omime reload`, `omime install ~/src/my-engine`, `omime uninstall my-engine` |
-| Status bars | the tray item (StatusNotifierItem); `omime status --json`; `omime status --watch --json` streams every change (works as a waybar module) |
-
-omimed remembers the engine you used last, or with `remember = true` under `[apps]` in
-`config.toml`, the engine of every application. The full setup, a waybar snippet and
-troubleshooting are in [docs/hyprland.md](docs/hyprland.md).
-
-On the development branch after v0.4.0, `apps.remember_mode = true` also restores
-Rime's Chinese/Latin mode per application and schema when `apps.remember` is on.
-Enable it in Settings → Applications. See the [application acceptance records](docs/compatibility.md)
-for tested versions, scenarios and desktop limitations.
-
-- Writing your own engine: [docs/writing-an-engine.md](docs/writing-an-engine.md)
-- Hacking on oh-my-ime: [docs/development.md](docs/development.md)
-
-## Roadmap
-
-1. **Phase 0** — foundation ✅
-2. **Phase 1 — Hyprland MVP** (`v0.1.0`)
-   - M1: Wayland frontend + UI Bridge spike ✅
-   - M2: engine host, protocol v1, Rust SDK, basic switching ✅
-   - M3: complete UI Bridge + Slint demo engine ✅
-   - M4: management and robustness ✅ → `v0.1.0`
-3. **v0.2** — per-app input method memory, install/uninstall/doctor CLI, multi-seat
-   key-routing tests, Nix package, Chinese guides ✅ → `v0.2.0`
-4. **Phase 2** — X11/XWayland: XIM server and the Fcitx5 IM-module D-Bus protocol ✅ →
-   `v0.3.0`
-5. **Phase 3** — host unmodified Fcitx5 / IBus through a virtual `input-method-v2` ✅
-   → `v0.4.0`
-6. **Platform interface and engines** — settings, switcher, tray menus, notifications,
-   floating panels, Python example and native Rime with configurable candidates ✅
-   → `v0.4.0`
-7. **Daily-use readiness** — NixOS/Home Manager packaging, session setup and application
-   diagnostics; broader application testing, documentation and sustained daily use are
-   in progress.
-8. **Desktop expansion** — KWin/input-method-v1 and GNOME through system IBus, initially
-   with optional system-rendered candidates. [Isolated probes](docs/compatibility.md)
-   establish the remaining backend work; these desktops are not yet supported. Per-engine IBus
-   hosting is deferred; a Fcitx5 addon host and a C ABI SDK are outside the current plan.
-
-## FAQ
-
-**Can I run oh-my-ime next to Fcitx5 or IBus?**
-Not on the same seat: Wayland allows a single input method per seat. Run Fcitx 5 or IBus
-*inside* oh-my-ime instead, unmodified, as one switchable engine; see
-[Fcitx 5 as an engine](docs/hyprland.md#fcitx-5-as-an-engine) and
-[IBus as an engine](docs/hyprland.md#ibus-as-an-engine).
-
-**Does my engine have to be written in Rust?**
-No. The engine protocol is plain D-Bus and the UI is plain Wayland. The Rust SDK is a
-convenience.
-
-**Is everything 100% compatible with Fcitx5/IBus engines?**
-No, and we won't claim that. Compatibility layers are labelled 🧩 and documented with their
-known gaps.
-
-## Contributing
-
-Contributions are very welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
-
-Settings, tray menus, notifications, the switcher and command-line tools follow the
-desktop language, with English and Simplified Chinese available. See the
-[localization guide](docs/localization.md) to choose a language or contribute translations.
+- [Architecture](docs/architecture.md)
+- [Writing an engine](docs/writing-an-engine.md)
+- [Application compatibility](docs/compatibility.md)
+- [Development](docs/development.md) and [contributing](CONTRIBUTING.md)
+- [Localization](docs/localization.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
-oh-my-ime is licensed under either of
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in this project by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
-in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
-without any additional terms or conditions.
-
-The [Sparkle](engines/sparkle) demo engine, the switcher (`omime-panel`, with
-`omime-overlay`) and the settings (`omime-settings`) use [Slint](https://slint.dev)
-under the Slint Royalty-free License;
-the daemon, the `omime` command line tool, the protocol crate and the SDK do not depend
-on Slint.
+The Sparkle and Rime engines, the switcher (`omime-panel`, with `omime-overlay`) and the
+settings (`omime-settings`) use [Slint](https://slint.dev) under the Slint Royalty-free License;
+the daemon, the `omime` command line tool, the protocol crate and the SDK do not depend on
+Slint.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
