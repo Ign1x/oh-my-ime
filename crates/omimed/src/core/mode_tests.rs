@@ -410,6 +410,98 @@ fn a_newer_menu_mode_during_restoration_is_saved_after_confirmation() {
 }
 
 #[test]
+fn identifying_the_initial_app_preserves_its_pending_activation_mode() {
+    for saved_mode in [None, Some("latin")] {
+        let mut core = mode_core();
+        let mut out = TestFrontends::default();
+        core.engines.get_mut("rime").unwrap().state = EngineState::Ready;
+        if let Some(mode) = saved_mode {
+            core.app_modes.insert(
+                "chat".into(),
+                BTreeMap::from([("rime/pinyin".into(), mode.into())]),
+            );
+        }
+        let context = core.contexts.get_mut(&1).unwrap();
+        context.info.app_id = None;
+        context.mode_ready = false;
+        let mut activation = flight("Activate", None);
+        activation.app = None;
+        context.in_flight = Some(activation);
+        context.queue.push_back(Request::RestoreMode);
+
+        // text-input-v3 can focus a field before foreign-toplevel identifies its app.
+        core.on_frontend_event(
+            FrontendEvent::Updated {
+                ctx: 1,
+                info: ContextInfo {
+                    app_id: Some("chat".into()),
+                    ..Default::default()
+                },
+                reset: false,
+            },
+            &mut out,
+        );
+        core.on_reply(
+            1,
+            1,
+            Reply::Actions(Ok(vec![mode_action("pinyin", "native", 1)])),
+            &mut out,
+        );
+        assert_eq!(
+            core.current_status().unwrap().input_mode.as_deref(),
+            Some("native"),
+            "the live field's initial mode is known before any key"
+        );
+        assert_eq!(
+            core.app_modes["chat"]["rime/pinyin"],
+            saved_mode.unwrap_or("native"),
+            "activation cannot replace a saved mode awaiting restoration"
+        );
+    }
+}
+
+#[test]
+fn identifying_an_app_does_not_relabel_pending_keys_or_later_app_changes() {
+    for (method, apps) in [
+        ("ProcessKey", vec!["chat"]),
+        ("Activate", vec!["chat", "terminal", "chat"]),
+    ] {
+        let mut core = mode_core();
+        let mut out = TestFrontends::default();
+        core.accept_mode("rime", 1, "pinyin".into(), "native".into(), 1);
+        let context = core.contexts.get_mut(&1).unwrap();
+        context.info.app_id = None;
+        let mut pending = flight(method, None);
+        pending.app = None;
+        context.in_flight = Some(pending);
+        for app in apps {
+            core.on_frontend_event(
+                FrontendEvent::Updated {
+                    ctx: 1,
+                    info: ContextInfo {
+                        app_id: Some(app.into()),
+                        ..Default::default()
+                    },
+                    reset: false,
+                },
+                &mut out,
+            );
+        }
+        core.on_reply(
+            1,
+            1,
+            Reply::Actions(Ok(vec![mode_action("pinyin", "latin", 2)])),
+            &mut out,
+        );
+        assert_eq!(
+            core.current_status().unwrap().input_mode.as_deref(),
+            Some("native")
+        );
+        assert_eq!(core.app_modes["chat"]["rime/pinyin"], "native");
+    }
+}
+
+#[test]
 fn a_reply_from_before_an_app_round_trip_cannot_change_its_mode() {
     let mut core = mode_core();
     let mut out = TestFrontends::default();

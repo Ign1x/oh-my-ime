@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Rime's initial Chinese/Latin mode remains available when a newly focused field's
+  application identity arrives before activation finishes, without needing a first key.
 - Native engines get time to save state on shutdown, restart, settings reload and
   uninstall, with bounded SIGTERM/SIGKILL fallback for hung processes. Rime now
   finalizes its dictionary on SIGTERM and window failures, preserving the last

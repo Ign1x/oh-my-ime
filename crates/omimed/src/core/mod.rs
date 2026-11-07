@@ -1071,10 +1071,24 @@ impl Core {
                 // The cursor rectangle comes from the bridge, not from the field.
                 info.cursor_rect = context.info.cursor_rect;
                 let app_changed = info.app_id != context.info.app_id;
+                let identifying_initial_app =
+                    context.epoch == 0 && context.info.app_id.is_none() && info.app_id.is_some();
                 let changes = info.diff(&context.info);
                 context.info = info;
                 if app_changed {
                     context.epoch += 1;
+                    // Foreign-toplevel can identify a newly focused field after
+                    // Activate was sent. Its initial mode still belongs to this
+                    // field; later app changes must continue to stale the reply.
+                    if identifying_initial_app
+                        && let Some(flight) = context.in_flight.as_mut()
+                        && flight.method == "Activate"
+                        && flight.epoch == 0
+                        && flight.app.is_none()
+                    {
+                        flight.app = context.info.app_id.clone();
+                        flight.epoch = context.epoch;
+                    }
                     context.mode_ready = false;
                     context.mode = None;
                     context.pending_mode = None;

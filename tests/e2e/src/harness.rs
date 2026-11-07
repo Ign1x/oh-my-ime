@@ -498,8 +498,6 @@ impl TestEnv {
         }
         let daemon = omimed
             .env("OMIME_LOG", "debug")
-            // Headless sway renders with pixman and has no GPU buffers to offer.
-            .env("SLINT_BACKEND", "winit-software")
             .stderr(std::fs::File::create(&self.daemon_log)?)
             .spawn()
             .context("cannot start omimed (build the workspace first)")?;
@@ -567,6 +565,9 @@ impl TestEnv {
         let mut command = Command::new(program);
         command
             .env("PATH", path)
+            // Headless sway renders with pixman and has no GPU buffers to offer.
+            // Include CLI-launched daemons and settings windows in this policy.
+            .env("SLINT_BACKEND", "winit-software")
             // Most assertions use English messages. Locale-specific tests override
             // this per private session or command, never in the test process.
             .env("LC_ALL", "C.UTF-8")

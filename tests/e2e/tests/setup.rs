@@ -251,7 +251,13 @@ fn setup_updates_the_matching_launch_manager_and_leaves_other_sessions_alone() -
 #[ignore = "end-to-end test; see typing.rs"]
 fn setup_enables_the_bundled_sparkle_demo_from_empty_configuration() -> anyhow::Result<()> {
     let mut env = TestEnv::prepare(&[echo_engine(), sparkle_engine()])?;
-    start(&mut env, &["setup", "--engine", "sparkle", "--start"])?;
+    // Setup starts its own daemon. Exercise that route without EGL vendors, as
+    // on headless CI, so it must inherit the harness's software renderer too.
+    start_with_env(
+        &mut env,
+        &["setup", "--engine", "sparkle", "--start"],
+        &[("__EGL_VENDOR_LIBRARY_FILENAMES", "/dev/null")],
+    )?;
     let config = fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
     assert!(config.contains("engines = [\"sparkle\"]"), "{config}");
     assert!(

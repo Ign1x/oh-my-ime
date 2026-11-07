@@ -34,6 +34,9 @@ and undoing a Chinese setup from an English session. Test processes default to
 `tests/e2e` starts a private headless sway, a private session bus and omimed for every
 test, and types with a virtual keyboard into `omime-ti-client`, a tiny editor that
 prints every text-input event. Nothing touches your desktop session.
+Commands in these private sessions use `SLINT_BACKEND=winit-software`, including
+daemons launched by `setup --start` and engine settings windows. The Sparkle setup
+test disables EGL vendor discovery to exercise startup on runners without OpenGL.
 
 The X11 tests also start XWayland (`TestEnv::start_with_x11`), which the dev shells
 provide. `xim.rs` types into `omime-xim-client`, an X11 client that uses XIM, and
