@@ -842,6 +842,19 @@ impl TestEnv {
     /// Plays `script` on `seat` like a physical keyboard: lines such as `press ctrl`,
     /// `tap c` and `release ctrl` (see `omime-keyboard --script`).
     pub fn keys_on_seat(&self, seat: &str, script: &str) -> anyhow::Result<()> {
+        self.with_keyboard_on_seat(seat, |stdin| {
+            stdin.write_all(script.as_bytes())?;
+            Ok(())
+        })
+    }
+
+    /// Keeps one keyboard alive while a test sends script fragments and waits for
+    /// application feedback between them. Held keys retain their device identity.
+    pub fn with_keyboard_on_seat(
+        &self,
+        seat: &str,
+        play: impl FnOnce(&mut ChildStdin) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         let mut child = self
             .command(target_dir().join("omime-keyboard"))
             .args(["--seat", seat, "--script"])
@@ -849,13 +862,14 @@ impl TestEnv {
             .stdout(Stdio::null())
             .spawn()
             .context("cannot start omime-keyboard")?;
-        // Closing stdin ends the script.
-        child
-            .stdin
-            .take()
-            .context("no stdin")?
-            .write_all(script.as_bytes())?;
+        let result = play(child.stdin.as_mut().context("no stdin")?);
+        // Closing stdin ends the script, including when the test's barrier fails.
+        child.stdin.take();
+        if result.is_err() {
+            let _ = child.kill();
+        }
         let status = child.wait()?;
+        result?;
         if !status.success() {
             bail!("omime-keyboard --script failed with {status}");
         }

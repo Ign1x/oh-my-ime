@@ -1,6 +1,8 @@
 //! Text commits and forwarded keys while an application reports state slowly.
 //! See `typing.rs` for the private headless environment.
 
+use std::io::Write as _;
+
 use omime_e2e::harness::{Editor, TestEngine, TestEnv, echo_engine, hosted_engine, target_dir};
 use omime_e2e::{long_engine_text, parse_json_string};
 
@@ -204,11 +206,27 @@ fn completed_keys_cannot_overflow_a_split_commit_waiting_for_feedback() -> anyho
     )?;
     env.wait_for_log("engine ready")?;
     let editor = env.editor(&["--surrounding-delay-ms", "80", "--print-modifiers"])?;
-    let script = format!(
-        "press 59\nsleep 100\ntap a\n{}release 59\n",
-        "tap 60\n".repeat(400)
-    );
-    env.keys_on_seat("seat0", &script)?;
+    env.with_keyboard_on_seat("seat0", |keyboard| {
+        keyboard.write_all(b"press 59\nsleep 100\ntap a\n")?;
+        // Saturate completed-key output only after the split commit is accepted.
+        // Otherwise this burst can fill the core's request queue before the engine
+        // answers A, retiring that reply without ever accepting its text.
+        editor.wait_for("the first accepted commit chunk", |line| {
+            line.starts_with("commit ")
+        })?;
+        let committed_before_burst = editor
+            .lines()
+            .iter()
+            .filter_map(|line| line.strip_prefix("commit "))
+            .map(|quoted| parse_json_string(quoted).expect("quoted commit").0.len())
+            .sum::<usize>();
+        anyhow::ensure!(
+            (1..65_536).contains(&committed_before_burst),
+            "the burst must overlap an accepted but incomplete split commit"
+        );
+        keyboard.write_all(format!("{}release 59\n", "tap 60\n".repeat(400)).as_bytes())?;
+        Ok(())
+    })?;
     env.wait_for_log("dropping a key: output queue limit exceeded")?;
     editor.wait_for("the F1 release", |line| line == "release \"F1\"")?;
     let lines = editor.lines();
