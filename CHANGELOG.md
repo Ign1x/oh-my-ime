@@ -42,6 +42,14 @@ All notable changes to this project are documented here. The format follows
 
 - Engine request errors log their name at normal levels and keep the remote
   description at debug level, so error bodies cannot copy typed text into normal logs.
+- Repeated Fcitx FocusIn notifications share an owned compositor query per context,
+  with eight concurrent queries across both bus names. Fcitx text output and native
+  text callback admission now have count and byte quotas; adjacent preedits coalesce
+  without crossing text/key ordering barriers, and overflow or stalled delivery
+  settles pending keys instead of retaining an unbounded backlog. Key replies keep
+  their reservation through the actual D-Bus write, and capability updates cannot
+  bypass overload retirement before the field loses and regains focus.
+
 - Fcitx5-module fields discard surrounding text on focus-out, when marked sensitive,
   or when surrounding-text support is removed. Text sent while sensitive is never
   cached, and deletion waits for fresh text so bytes cannot be mistaken for characters.

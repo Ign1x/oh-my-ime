@@ -18,8 +18,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -190,6 +190,156 @@ pub enum HostCall {
     SetProperties(Vec<Property>),
 }
 
+/// Text callbacks may not move a stalled frontend's backlog into CoreEvent.
+/// Admission is synchronous; no task waits for a slot while retaining text.
+#[derive(Debug, Default, Clone, Copy)]
+struct TextUsage {
+    items: usize,
+    bytes: usize,
+}
+
+#[derive(Debug, Default)]
+struct TextBudget {
+    total: TextUsage,
+    engines: HashMap<u64, TextUsage>,
+    contexts: HashMap<(u64, ContextId), TextUsage>,
+}
+
+#[derive(Debug)]
+pub(crate) struct TextAdmission {
+    budget: Arc<Mutex<TextBudget>>,
+    connection_id: u64,
+    ctx: ContextId,
+    bytes: usize,
+}
+
+impl TextAdmission {
+    fn reserve(
+        budget: Arc<Mutex<TextBudget>>,
+        connection_id: u64,
+        ctx: ContextId,
+        bytes: usize,
+    ) -> Option<Self> {
+        let mut state = budget.lock().unwrap_or_else(|e| e.into_inner());
+        let engine = state
+            .engines
+            .get(&connection_id)
+            .copied()
+            .unwrap_or_default();
+        let context = state
+            .contexts
+            .get(&(connection_id, ctx))
+            .copied()
+            .unwrap_or_default();
+        let fits = |usage: TextUsage, items, limit| {
+            usage.items < items && bytes <= limit && usage.bytes <= limit - bytes
+        };
+        if !fits(state.total, 1024, 1024 * 1024)
+            || !fits(engine, 256, 256 * 1024)
+            || !fits(context, 64, 64 * 1024)
+        {
+            return None;
+        }
+        state.total.items += 1;
+        state.total.bytes += bytes;
+        let usage = state.engines.entry(connection_id).or_default();
+        usage.items += 1;
+        usage.bytes += bytes;
+        let usage = state.contexts.entry((connection_id, ctx)).or_default();
+        usage.items += 1;
+        usage.bytes += bytes;
+        drop(state);
+        Some(Self {
+            budget,
+            connection_id,
+            ctx,
+            bytes,
+        })
+    }
+}
+
+impl Drop for TextAdmission {
+    fn drop(&mut self) {
+        let mut state = self.budget.lock().unwrap_or_else(|e| e.into_inner());
+        state.total.items -= 1;
+        state.total.bytes -= self.bytes;
+        if let Some(usage) = state.engines.get_mut(&self.connection_id) {
+            usage.items -= 1;
+            usage.bytes -= self.bytes;
+            if usage.items == 0 {
+                state.engines.remove(&self.connection_id);
+            }
+        }
+        let key = (self.connection_id, self.ctx);
+        if let Some(usage) = state.contexts.get_mut(&key) {
+            usage.items -= 1;
+            usage.bytes -= self.bytes;
+            if usage.items == 0 {
+                state.contexts.remove(&key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_admission_tests {
+    use super::*;
+
+    #[test]
+    fn callback_count_and_bytes_are_bounded_at_each_owner() {
+        let budget = Arc::new(Mutex::new(TextBudget::default()));
+        let mut held = Vec::new();
+        for _ in 0..64 {
+            held.push(TextAdmission::reserve(budget.clone(), 1, 1, 1).unwrap());
+        }
+        assert!(TextAdmission::reserve(budget.clone(), 1, 1, 1).is_none());
+        assert!(TextAdmission::reserve(budget.clone(), 1, 2, 1).is_some());
+        assert!(TextAdmission::reserve(budget.clone(), 2, 1, 1).is_some());
+        held.clear();
+        assert!(TextAdmission::reserve(budget.clone(), 1, 1, 64 * 1024 + 1).is_none());
+        held.push(TextAdmission::reserve(budget.clone(), 1, 1, 64 * 1024).unwrap());
+        assert!(TextAdmission::reserve(budget.clone(), 1, 1, 1).is_none());
+        for ctx in 2..=4 {
+            held.push(TextAdmission::reserve(budget.clone(), 1, ctx, 64 * 1024).unwrap());
+        }
+        assert!(TextAdmission::reserve(budget.clone(), 1, 5, 1).is_none());
+        for engine in 2..=4 {
+            for ctx in 1..=4 {
+                held.push(TextAdmission::reserve(budget.clone(), engine, ctx, 64 * 1024).unwrap());
+            }
+        }
+        assert!(TextAdmission::reserve(budget.clone(), 5, 1, 1).is_none());
+        held.clear();
+        let state = budget.lock().unwrap();
+        assert_eq!(state.total.items, 0);
+        assert_eq!(state.total.bytes, 0);
+        assert!(state.engines.is_empty());
+        assert!(state.contexts.is_empty());
+    }
+
+    #[test]
+    fn core_event_keeps_admission_until_consumed_or_dropped() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let budget = Arc::new(Mutex::new(TextBudget::default()));
+        let admission = TextAdmission::reserve(budget.clone(), 1, 1, 64 * 1024).unwrap();
+        tx.send(CoreEvent::Host {
+            engine: "test".into(),
+            connection_id: 1,
+            call: HostCall::Action {
+                ctx: 1,
+                action: omime_proto::engine::Action::Commit("text".into()),
+            },
+            admission: Some(admission),
+        })
+        .unwrap();
+        assert!(TextAdmission::reserve(budget.clone(), 1, 1, 1).is_none());
+        let event = rx.try_recv().unwrap();
+        assert!(TextAdmission::reserve(budget.clone(), 1, 1, 1).is_none());
+        drop(event);
+        assert!(TextAdmission::reserve(budget, 1, 1, 1).is_some());
+    }
+}
+
 /// `io.github.ign1x.OhMyIme.EngineHost1`, served to one engine.
 struct HostObject {
     engine: String,
@@ -198,13 +348,47 @@ struct HostObject {
 }
 
 impl HostObject {
-    fn send(&self, call: HostCall) {
+    fn send(&self, call: HostCall) -> bool {
+        static TEXT_BUDGET: OnceLock<Arc<Mutex<TextBudget>>> = OnceLock::new();
+        let admission = if let HostCall::Action { ctx, action } = &call {
+            use omime_proto::engine::Action;
+            let bytes = std::mem::size_of::<CoreEvent>()
+                + self.engine.len()
+                + match action {
+                    Action::Commit(text) => text.capacity(),
+                    Action::Preedit(preedit) => preedit.text.capacity(),
+                    _ => 0,
+                };
+            let budget = TEXT_BUDGET.get_or_init(Arc::default).clone();
+            let Some(admission) = TextAdmission::reserve(budget, self.connection_id, *ctx, bytes)
+            else {
+                // A no-reply host call is rejected in full. Subsequent callbacks
+                // retry admission; dropping queued events releases every quota.
+                return false;
+            };
+            Some(admission)
+        } else {
+            None
+        };
         // The receiver only disappears while the daemon shuts down.
-        let _ = self.events.send(CoreEvent::Host {
-            engine: self.engine.clone(),
-            call,
-            connection_id: self.connection_id,
-        });
+        self.events
+            .send(CoreEvent::Host {
+                engine: self.engine.clone(),
+                call,
+                connection_id: self.connection_id,
+                admission,
+            })
+            .is_ok()
+    }
+
+    fn send_action(&self, call: HostCall) -> zbus::fdo::Result<()> {
+        if self.send(call) {
+            Ok(())
+        } else {
+            Err(zbus::fdo::Error::LimitsExceeded(
+                "engine text output queue is full".into(),
+            ))
+        }
     }
 }
 
@@ -264,40 +448,46 @@ impl HostObject {
         Ok(session)
     }
 
-    fn commit(&self, context: u64, text: String) {
+    fn commit(&self, context: u64, text: String) -> zbus::fdo::Result<()> {
         use omime_proto::engine::Action;
-        self.send(HostCall::Action {
+        self.send_action(HostCall::Action {
             ctx: context,
             action: Action::Commit(text),
-        });
+        })
     }
 
-    fn set_preedit(&self, context: u64, text: String, cursor_begin: i32, cursor_end: i32) {
+    fn set_preedit(
+        &self,
+        context: u64,
+        text: String,
+        cursor_begin: i32,
+        cursor_end: i32,
+    ) -> zbus::fdo::Result<()> {
         use omime_proto::engine::{Action, Preedit};
-        self.send(HostCall::Action {
+        self.send_action(HostCall::Action {
             ctx: context,
             action: Action::Preedit(Preedit {
                 text,
                 cursor_begin,
                 cursor_end,
             }),
-        });
+        })
     }
 
-    fn delete_surrounding(&self, context: u64, before: u32, after: u32) {
+    fn delete_surrounding(&self, context: u64, before: u32, after: u32) -> zbus::fdo::Result<()> {
         use omime_proto::engine::Action;
-        self.send(HostCall::Action {
+        self.send_action(HostCall::Action {
             ctx: context,
             action: Action::DeleteSurrounding { before, after },
-        });
+        })
     }
 
-    fn forward_key(&self, context: u64, keycode: u32, pressed: bool) {
+    fn forward_key(&self, context: u64, keycode: u32, pressed: bool) -> zbus::fdo::Result<()> {
         use omime_proto::engine::Action;
-        self.send(HostCall::Action {
+        self.send_action(HostCall::Action {
             ctx: context,
             action: Action::ForwardKey { keycode, pressed },
-        });
+        })
     }
 
     fn set_popup_visible(&self, visible: bool) {

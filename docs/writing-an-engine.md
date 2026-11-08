@@ -102,6 +102,23 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   through once in order. The daemon waits for the old call, resets, refreshes the
   field and restores its remembered mode before sending new composition keys.
   A call that cannot recover is terminated by the existing watchdog.
+- Fcitx output has a separate bounded queue: 64 items / 64 KiB per input context
+  and 256 items / 256 KiB per bus. A transaction is limited to 63 actions / 32 KiB
+  of text. Adjacent replacement preedits coalesce; commit, delete, forward-key and
+  reply ordering is preserved. Overflow or a 300 ms bus stall ends affected
+  compositions and settles pending keys; composition resumes after refocusing,
+  not through capability changes. Accepted keys reserve a compact reply record
+  (64 per context / 256 per bus) until the method return is actually written.
+  Batched text remains within the output byte budget. Once these records fill,
+  one Fcitx dispatcher waits for admission instead of spawning reply-writer tasks;
+  other IC calls on that bus can be delayed, while daemon control stays separate.
+- Native `EngineHost1` text callbacks (`Commit`, `SetPreedit`, `DeleteSurrounding`,
+  `ForwardKey`) reserve count and byte quotas before entering the core event queue:
+  64 calls / 64 KiB per context, 256 calls / 256 KiB per engine connection and
+  1,024 calls / 1 MiB overall, including retained text allocation and event metadata.
+  There are no tasks waiting for quota. An excess callback is rejected in full;
+  ordinary calls get `LimitsExceeded`, while no-reply calls have no response.
+  Consuming or dropping the event releases its quota, so later callbacks can retry.
 - `activate`, `deactivate`, `update` and `reset` tell you about focus and the field
   (`ctx.info()` has its content type, the surrounding text and, while your window is
   shown, the cursor rectangle). Wayland/Fcitx5 fields explicitly marked as sensitive

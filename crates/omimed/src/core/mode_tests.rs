@@ -384,6 +384,7 @@ async fn reports_from_a_previous_engine_connection_are_ignored() {
     core.accept_mode("rime", 1, "pinyin".into(), "native".into(), 1);
     core.on_event(
         CoreEvent::Host {
+            admission: None,
             engine: "rime".into(),
             connection_id: 1,
             call: HostCall::InputMode {
@@ -399,6 +400,7 @@ async fn reports_from_a_previous_engine_connection_are_ignored() {
     assert_eq!(core.app_modes["chat"]["rime/pinyin"], "native");
     core.on_event(
         CoreEvent::Host {
+            admission: None,
             engine: "rime".into(),
             connection_id: 2,
             call: HostCall::InputMode {

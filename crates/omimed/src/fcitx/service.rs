@@ -6,15 +6,17 @@
 
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher as _, Hasher as _};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use std::pin::pin;
 
 use futures_core::Stream;
 use omime_proto::tr;
-use tokio::sync::{mpsc, oneshot};
+#[cfg(test)]
+use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info, warn};
 use zbus::fdo::RequestNameReply;
 use zbus::message::Header;
@@ -23,6 +25,8 @@ use zbus::{OwnedObjectPath, OwnedVariant, Variant};
 
 use super::{
     Batched, Bus, IcId, KeyAnswer, MAX_CONTEXTS, MAX_CONTEXTS_PER_OWNER, Outgoing, Request, Signal,
+    output::{self, OutputQueue},
+    window::{MAX_QUERIES, WindowQuery},
 };
 
 const INPUT_CONTEXT_INTERFACE: &str = "org.fcitx.Fcitx.InputContext1";
@@ -31,8 +35,8 @@ const INPUT_METHOD_PATH: &str = "/org/freedesktop/portal/inputmethod";
 /// Where the portal name also serves it, for older clients.
 const INPUT_METHOD_COMPAT_PATH: &str = "/inputmethod";
 
-/// How long the position of a Wayland application's window is taken as known.
-const WINDOW_MAX_AGE: Duration = Duration::from_secs(1);
+/// Settle pending keys after a stalled write without cancelling a partial D-Bus frame.
+const OUTPUT_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// The names fcitx5 owns, by [`Bus`].
 const BUS_NAMES: [&str; 2] = ["org.fcitx.Fcitx5", "org.freedesktop.portal.Fcitx"];
@@ -84,14 +88,21 @@ impl Drop for ContextSlot {
 /// Takes the Fcitx5 names on the session bus and serves the protocol. Returns the
 /// queues of the two connections (by [`Bus`]); a connection that could not be set up
 /// has none.
-pub async fn start(
-    requests: mpsc::UnboundedSender<Request>,
-) -> [Option<mpsc::UnboundedSender<Outgoing>>; 2] {
+pub async fn start(requests: mpsc::UnboundedSender<Request>) -> [Option<OutputQueue>; 2] {
     let next_ic = Arc::new(AtomicU64::new(0));
     let counts = Arc::new(Mutex::new(ContextCounts::default()));
+    let budget = Arc::new(Semaphore::new(MAX_QUERIES));
     let mut queues = [None, None];
     for bus in [Bus::Main, Bus::Portal] {
-        match connect(bus, requests.clone(), next_ic.clone(), counts.clone()).await {
+        match connect(
+            bus,
+            requests.clone(),
+            next_ic.clone(),
+            counts.clone(),
+            budget.clone(),
+        )
+        .await
+        {
             Ok(queue) => queues[bus as usize] = Some(queue),
             Err(e) => warn!(
                 name = BUS_NAMES[bus as usize],
@@ -107,11 +118,16 @@ async fn connect(
     requests: mpsc::UnboundedSender<Request>,
     next_ic: Arc<AtomicU64>,
     counts: Arc<Mutex<ContextCounts>>,
-) -> zbus::Result<mpsc::UnboundedSender<Outgoing>> {
+    budget: Arc<Semaphore>,
+) -> zbus::Result<OutputQueue> {
+    let (queue, outgoing) = output::channel();
+    let admission = queue.reply_admission();
     let input_method = || InputMethodObject {
+        admission: admission.clone(),
         bus,
         next_ic: next_ic.clone(),
         counts: counts.clone(),
+        budget: budget.clone(),
         requests: requests.clone(),
     };
     let mut builder =
@@ -120,7 +136,7 @@ async fn connect(
         builder = builder.serve_at(INPUT_METHOD_COMPAT_PATH, input_method());
     }
     let conn = builder.build().await?;
-    watch_clients(conn.clone(), requests).await?;
+    watch_clients(conn.clone(), requests.clone()).await?;
 
     // Queue for the name rather than giving up: when fcitx5 runs, X11 applications keep
     // using it until it exits, and then this connection takes over.
@@ -139,29 +155,68 @@ async fn connect(
         ),
     }
 
-    let (queue, outgoing) = mpsc::unbounded_channel();
-    tokio::task::spawn_local(send_outgoing(conn.clone(), outgoing));
+    tokio::task::spawn_local(send_outgoing(conn.clone(), outgoing, requests));
     Ok(queue)
 }
 
 /// Sends what the frontend queued for this connection, in order.
-async fn send_outgoing(conn: zbus::Connection, mut outgoing: mpsc::UnboundedReceiver<Outgoing>) {
-    while let Some(item) = outgoing.recv().await {
-        let result = match item {
-            Outgoing::Signal { dest, path, signal } => emit(&conn, &dest, &path, signal).await,
+async fn send_outgoing(
+    conn: zbus::Connection,
+    mut outgoing: output::Receiver,
+    requests: mpsc::UnboundedSender<Request>,
+) {
+    while let Some(entry) = outgoing.recv().await {
+        let (ic, ctx) = (entry.ic, entry.ctx);
+        let result = match entry.item {
+            Outgoing::Signal { dest, path, signal } => {
+                send_with_deadline(
+                    &outgoing,
+                    &requests,
+                    ic,
+                    ctx,
+                    emit(&conn, &dest, &path, signal),
+                )
+                .await
+            }
             // Everything queued before has been sent now.
             Outgoing::Reply { reply, answer } => {
-                let _ = reply.send(answer);
-                Ok(())
+                send_with_deadline(&outgoing, &requests, ic, ctx, reply.write(&conn, answer)).await
             }
             Outgoing::Remove(path) => conn
                 .object_server()
-                .remove::<InputContextObject, _>(&path)
+                .remove::<InputContextService, _>(&path)
                 .await
                 .map(|_| ()),
         };
         if let Err(e) = result {
+            let _ = requests.send(Request::OutputFailed { ic, ctx });
             debug!("Fcitx5 module protocol: {e}");
+        }
+    }
+}
+
+async fn send_with_deadline(
+    outgoing: &output::Receiver,
+    requests: &mpsc::UnboundedSender<Request>,
+    ic: IcId,
+    ctx: Option<omime_proto::engine::ContextId>,
+    send: impl Future<Output = zbus::Result<()>>,
+) -> zbus::Result<()> {
+    let mut send = pin!(send);
+    let mut first_deadline = true;
+    loop {
+        tokio::select! {
+            result = &mut send => return result,
+            () = tokio::time::sleep(OUTPUT_TIMEOUT) => {
+                let mut failed = outgoing.discard_all();
+                if std::mem::take(&mut first_deadline) && !failed.contains(&(ic, ctx)) { failed.push((ic, ctx)); }
+                for (ic, ctx) in failed {
+                    let _ = requests.send(Request::OutputFailed { ic, ctx });
+                }
+                // The socket may contain half a message. Keep this one write alive;
+                // dropping it and sending a new frame could corrupt the connection.
+                // Pending replies have been settled and subsequent admission is bounded.
+            }
         }
     }
 }
@@ -222,7 +277,9 @@ async fn next<S: Stream>(mut stream: std::pin::Pin<&mut S>) -> Option<S::Item> {
 
 /// `org.fcitx.Fcitx.InputMethod1`: creates input contexts.
 struct InputMethodObject {
+    admission: output::ReplyAdmission,
     bus: Bus,
+    budget: Arc<Semaphore>,
     next_ic: Arc<AtomicU64>,
     counts: Arc<Mutex<ContextCounts>>,
     requests: mpsc::UnboundedSender<Request>,
@@ -257,9 +314,19 @@ impl InputMethodObject {
             owner: owner.clone(),
             requests: self.requests.clone(),
             wayland,
-            window_asked: std::sync::Mutex::new(None),
+            focused: AtomicBool::new(false),
+            window_query: WindowQuery::new(ic, self.requests.clone(), self.budget.clone()),
         };
-        server.at(&path, object).await?;
+        server
+            .at(
+                &path,
+                InputContextService {
+                    inner: object,
+                    admission: self.admission.clone(),
+                    reply_slots: Arc::new(Semaphore::new(output::MAX_IC_ITEMS)),
+                },
+            )
+            .await?;
         if self
             .requests
             .send(Request::Created {
@@ -271,7 +338,7 @@ impl InputMethodObject {
             })
             .is_err()
         {
-            let _ = server.remove::<InputContextObject, _>(&path).await;
+            let _ = server.remove::<InputContextService, _>(&path).await;
             return Err(zbus::fdo::Error::Failed(tr!("the daemon is shutting down")));
         }
         // ClientGone can precede Created while exporting the object yields. Check
@@ -323,8 +390,135 @@ struct InputContextObject {
     /// Whether the application runs on Wayland, where its text cursor is relative to its
     /// window, which only the compositor knows the position of.
     wayland: bool,
-    /// When the compositor was last asked where the window is.
-    window_asked: std::sync::Mutex<Option<Instant>>,
+    focused: AtomicBool,
+    window_query: WindowQuery,
+}
+
+/// Only key methods bypass the generated responder: their reply belongs to the
+/// same ordered worker as text signals, through serialization and the real write.
+/// The locked zbus Interface API is delegated for everything else (including XML).
+struct InputContextService {
+    inner: InputContextObject,
+    admission: output::ReplyAdmission,
+    reply_slots: Arc<Semaphore>,
+}
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for InputContextService {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        InputContextObject::name()
+    }
+
+    fn spawn_tasks_for_methods(&self) -> bool {
+        false
+    }
+
+    async fn get(
+        &self,
+        property: &str,
+        server: &ObjectServer,
+        connection: &zbus::Connection,
+        header: Option<&Header<'_>>,
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+    ) -> Option<Result<OwnedVariant, zbus::BoxDBusError>> {
+        self.inner
+            .get(property, server, connection, header, emitter)
+            .await
+    }
+
+    async fn get_all(
+        &self,
+        server: &ObjectServer,
+        connection: &zbus::Connection,
+        header: Option<&Header<'_>>,
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<std::collections::HashMap<String, OwnedVariant>> {
+        self.inner
+            .get_all(server, connection, header, emitter)
+            .await
+    }
+
+    fn set<'a>(
+        &'a self,
+        property: &'a str,
+        value: &'a Variant<'_>,
+        server: &'a ObjectServer,
+        connection: &'a zbus::Connection,
+        header: Option<&'a Header<'_>>,
+        emitter: &'a zbus::object_server::SignalEmitter<'_>,
+    ) -> zbus::object_server::DispatchResult<'a> {
+        self.inner
+            .set(property, value, server, connection, header, emitter)
+    }
+
+    async fn set_mut(
+        &mut self,
+        property: &str,
+        value: &Variant<'_>,
+        server: &ObjectServer,
+        connection: &zbus::Connection,
+        header: Option<&Header<'_>>,
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+    ) -> Option<Result<(), zbus::BoxDBusError>> {
+        self.inner
+            .set_mut(property, value, server, connection, header, emitter)
+            .await
+    }
+
+    fn call<'a>(
+        &'a self,
+        server: &'a ObjectServer,
+        connection: &'a zbus::Connection,
+        message: &'a zbus::Message,
+        name: zbus::names::MemberName<'a>,
+    ) -> zbus::object_server::DispatchResult<'a> {
+        let batch = match name.as_str() {
+            "ProcessKeyEvent" => false,
+            "ProcessKeyEventBatch" => true,
+            _ => return self.inner.call(server, connection, message, name),
+        };
+        zbus::object_server::DispatchResult::from_handler(async move {
+            let key = message.body().deserialize::<(u32, u32, u32, bool, u32)>()?;
+            let header = message.header();
+            let Some(reply) = self
+                .admission
+                .reserve(self.inner.ic, self.reply_slots.clone(), &header, batch)
+                .await
+            else {
+                return Ok(());
+            };
+            if self.inner.is_owner(&header) {
+                let request = Request::Key {
+                    ic: self.inner.ic,
+                    key,
+                    batch,
+                    reply,
+                };
+                if let Err(error) = self.inner.requests.send(request)
+                    && let Request::Key { reply, .. } = error.0
+                {
+                    let _ = reply.send(KeyAnswer::default());
+                }
+            } else {
+                let _ = reply.send(KeyAnswer::default());
+            }
+            Ok(())
+        })
+    }
+
+    fn call_mut<'a>(
+        &'a mut self,
+        server: &'a ObjectServer,
+        connection: &'a zbus::Connection,
+        message: &'a zbus::Message,
+        name: zbus::names::MemberName<'a>,
+    ) -> zbus::object_server::DispatchResult<'a> {
+        self.inner.call_mut(server, connection, message, name)
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        self.inner.introspect_to_writer(writer, level);
+    }
 }
 
 impl InputContextObject {
@@ -347,42 +541,7 @@ impl InputContextObject {
         if !self.wayland {
             return;
         }
-        {
-            let Ok(mut asked) = self.window_asked.lock() else {
-                return;
-            };
-            if !always && asked.is_some_and(|at| at.elapsed() < WINDOW_MAX_AGE) {
-                return;
-            }
-            *asked = Some(Instant::now());
-        }
-        let (ic, requests) = (self.ic, self.requests.clone());
-        tokio::spawn(async move {
-            let window = crate::compositor_ipc::focused_window().await;
-            let _ = requests.send(Request::Window { ic, window });
-        });
-    }
-
-    async fn key(
-        &self,
-        header: &Header<'_>,
-        key: (u32, u32, u32, bool, u32),
-        batch: bool,
-    ) -> KeyAnswer {
-        if !self.is_owner(header) {
-            return KeyAnswer::default();
-        }
-        let (reply, answer) = oneshot::channel();
-        let request = Request::Key {
-            ic: self.ic,
-            key,
-            batch,
-            reply,
-        };
-        if self.requests.send(request).is_err() {
-            return KeyAnswer::default();
-        }
-        answer.await.unwrap_or_default()
+        self.window_query.ask(always);
     }
 }
 
@@ -391,11 +550,16 @@ impl InputContextObject {
     fn focus_in(&self, #[zbus(header)] header: Header<'_>) {
         if self.is_owner(&header) {
             self.send(&header, Request::FocusIn(self.ic));
-            self.ask_window(true);
+            let was_focused = self.focused.swap(true, Ordering::Relaxed);
+            self.ask_window(!was_focused);
         }
     }
 
     fn focus_out(&self, #[zbus(header)] header: Header<'_>) {
+        if self.is_owner(&header) {
+            self.focused.store(false, Ordering::Relaxed);
+            self.window_query.cancel();
+        }
         self.send(&header, Request::FocusOut(self.ic));
     }
 
@@ -486,6 +650,9 @@ impl InputContextObject {
 
     #[zbus(name = "DestroyIC")]
     fn destroy_ic(&self, #[zbus(header)] header: Header<'_>) {
+        if self.is_owner(&header) {
+            self.window_query.cancel();
+        }
         self.send(&header, Request::Destroy(self.ic));
     }
 
@@ -500,8 +667,8 @@ impl InputContextObject {
         time: u32,
         #[zbus(header)] header: Header<'_>,
     ) -> bool {
-        let key = (keyval, keycode, state, is_release, time);
-        self.key(&header, key, false).await.handled
+        let _ = (keyval, keycode, state, is_release, time, header);
+        unreachable!("key replies are dispatched by InputContextService")
     }
 
     /// Like `ProcessKeyEvent`, but returns what the key produced instead of signalling
@@ -515,10 +682,8 @@ impl InputContextObject {
         time: u32,
         #[zbus(header)] header: Header<'_>,
     ) -> (Vec<(u32, OwnedVariant)>, bool) {
-        let key = (keyval, keycode, state, is_release, time);
-        let answer = self.key(&header, key, true).await;
-        let events = answer.batch.into_iter().filter_map(batched).collect();
-        (events, answer.handled)
+        let _ = (keyval, keycode, state, is_release, time, header);
+        unreachable!("key replies are dispatched by InputContextService")
     }
 
     // Candidate lists and on-screen keyboards are the engines' business; clients that
@@ -541,7 +706,7 @@ impl InputContextObject {
 }
 
 /// Encodes an event of a `ProcessKeyEventBatch` reply.
-fn batched(event: Batched) -> Option<(u32, OwnedVariant)> {
+pub(super) fn batched(event: Batched) -> Option<(u32, OwnedVariant)> {
     let (kind, value) = match event {
         Batched(Signal::Commit(text)) => (0, Variant::from(text)),
         Batched(Signal::Preedit(segments, cursor)) => (1, Variant::from((segments, cursor))),
@@ -554,3 +719,54 @@ fn batched(event: Batched) -> Option<(u32, OwnedVariant)> {
         .ok()
         .map(|value| (kind, value))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stalled_write_settles_current_and_later_keys_without_cancelling_the_frame() {
+        let (queue, receiver) = output::channel();
+        let (requests, mut events) = mpsc::unbounded_channel();
+        let (reply, mut answer) = oneshot::channel();
+        assert!(queue.send(
+            1,
+            Some(1),
+            Outgoing::Reply {
+                reply: reply.into(),
+                answer: KeyAnswer::default()
+            }
+        ));
+        let (complete, completion) = oneshot::channel();
+        let send = send_with_deadline(&receiver, &requests, 1, Some(1), async {
+            completion.await.unwrap();
+            Ok(())
+        });
+        let mut send = pin!(send);
+        tokio::select! {
+            _ = &mut send => panic!("the frame must still be pending"),
+            event = events.recv() => assert!(matches!(event, Some(Request::OutputFailed { ic: 1, ctx: Some(1) }))),
+        }
+        assert!(answer.try_recv().unwrap().handled);
+        let (reply, mut answer) = oneshot::channel();
+        assert!(queue.send(
+            2,
+            Some(2),
+            Outgoing::Reply {
+                reply: reply.into(),
+                answer: KeyAnswer::default()
+            }
+        ));
+        tokio::select! {
+            _ = &mut send => panic!("the frame must still be pending"),
+            event = events.recv() => assert!(matches!(event, Some(Request::OutputFailed { ic: 2, ctx: Some(2) }))),
+        }
+        assert!(answer.try_recv().unwrap().handled);
+        complete.send(()).unwrap();
+        send.await.unwrap();
+    }
+}
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod transport_tests;

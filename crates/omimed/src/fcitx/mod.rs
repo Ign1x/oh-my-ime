@@ -8,24 +8,29 @@
 //! talk to), and queues for them while another program holds them.
 
 mod convert;
+mod output;
 mod service;
+mod window;
 
 use std::collections::{BTreeMap, VecDeque};
 
 use omime_proto::engine::{Action, ContextId, ContextInfo};
-use tokio::sync::{mpsc, oneshot};
+#[cfg(test)]
+use tokio::sync::oneshot;
 use tracing::debug;
 use xkbcommon::xkb;
 use zbus::OwnedObjectPath;
 
 use crate::frontend::{self, ContextIds, FrontendEvent, Origin};
 use crate::placement::{self, Rect};
+pub use output::{KeyReply, OutputQueue};
 pub use service::start;
 
 /// Fcitx frontend resource limits, shared by both bus names.
 const MAX_CONTEXTS_PER_OWNER: usize = 1_024;
 const MAX_CONTEXTS: usize = 8_192;
 const MAX_SURROUNDING_BYTES: usize = 4_000;
+const MAX_PENDING_KEYS: usize = 1_024;
 
 /// Identifies an input context of the protocol.
 pub type IcId = u64;
@@ -91,10 +96,15 @@ pub enum Request {
         ic: IcId,
         key: (u32, u32, u32, bool, u32),
         batch: bool,
-        reply: oneshot::Sender<KeyAnswer>,
+        reply: KeyReply,
     },
     /// An application left the bus.
     ClientGone(String),
+    /// Its output could not be delivered within the transport budget.
+    OutputFailed {
+        ic: IcId,
+        ctx: Option<ContextId>,
+    },
 }
 
 /// A signal of `org.fcitx.Fcitx.InputContext1`.
@@ -129,10 +139,7 @@ pub enum Outgoing {
         signal: Signal,
     },
     /// Answers a key; everything queued before has been sent by then.
-    Reply {
-        reply: oneshot::Sender<KeyAnswer>,
-        answer: KeyAnswer,
-    },
+    Reply { reply: KeyReply, answer: KeyAnswer },
     /// Removes an input context's object from the bus.
     Remove(OwnedObjectPath),
 }
@@ -156,6 +163,9 @@ struct Ic {
     window: Option<Rect>,
     capability: u64,
     focused: bool,
+    /// Output retirement is distinct from temporarily sensitive fields. Only a
+    /// genuine focus transition may permit composition again.
+    output_retired: bool,
     /// The core's context while the field has focus and is not sensitive.
     ctx: Option<ContextId>,
     surrounding: Option<Surrounding>,
@@ -223,7 +233,7 @@ impl Surrounding {
 #[derive(Debug)]
 struct Pending {
     ic: IcId,
-    reply: oneshot::Sender<KeyAnswer>,
+    reply: KeyReply,
     /// keyval, state, release: what goes back to the application in `ForwardKey`.
     key: (u32, u32, bool),
     /// For `ProcessKeyEventBatch`: what the key produced so far.
@@ -234,7 +244,7 @@ struct Pending {
 
 /// The input contexts of applications using the Fcitx5 module.
 pub struct FcitxFrontend {
-    queues: [Option<mpsc::UnboundedSender<Outgoing>>; 2],
+    queues: [Option<OutputQueue>; 2],
     context_ids: ContextIds,
     ics: BTreeMap<IcId, Ic>,
     /// By key id; ids grow, so the first entry of a context is its oldest key.
@@ -253,12 +263,20 @@ impl std::fmt::Debug for FcitxFrontend {
     }
 }
 
+impl Drop for FcitxFrontend {
+    fn drop(&mut self) {
+        for (_, pending) in std::mem::take(&mut self.pending) {
+            let _ = pending.reply.send(KeyAnswer {
+                handled: pending.produced,
+                batch: Vec::new(),
+            });
+        }
+    }
+}
+
 impl FcitxFrontend {
     /// A frontend sending through `queues` (from [`start`]).
-    pub fn new(
-        queues: [Option<mpsc::UnboundedSender<Outgoing>>; 2],
-        context_ids: ContextIds,
-    ) -> Self {
+    pub fn new(queues: [Option<OutputQueue>; 2], context_ids: ContextIds) -> Self {
         Self {
             queues,
             context_ids,
@@ -326,6 +344,7 @@ impl FcitxFrontend {
                         window: None,
                         capability: 0,
                         focused: false,
+                        output_retired: false,
                         ctx: None,
                         surrounding: None,
                         surrounding_cleared: false,
@@ -338,6 +357,7 @@ impl FcitxFrontend {
             Request::FocusOut(ic) => {
                 if let Some(state) = self.ics.get_mut(&ic) {
                     state.focused = false;
+                    state.output_retired = false;
                 }
                 self.end_context(ic);
             }
@@ -369,7 +389,7 @@ impl FcitxFrontend {
                 if state.focused && sensitive == state.ctx.is_some() {
                     if sensitive {
                         self.end_context(ic);
-                    } else {
+                    } else if !state.output_retired {
                         self.start_context(ic);
                     }
                 } else {
@@ -408,6 +428,7 @@ impl FcitxFrontend {
                 batch,
                 reply,
             } => self.key(ic, key, batch, reply),
+            Request::OutputFailed { ic, ctx } => self.fail_output(ic, ctx),
             Request::ClientGone(owner) => {
                 let gone: Vec<IcId> = self
                     .ics
@@ -485,16 +506,14 @@ impl FcitxFrontend {
             return;
         };
         debug!(ic, "input context destroyed");
-        self.send(state.bus, Outgoing::Remove(state.path));
+        if let Some(queue) = &self.queues[state.bus as usize] {
+            queue.discard(ic);
+        }
+        self.settle_pending(ic);
+        self.send(state.bus, ic, None, Outgoing::Remove(state.path));
     }
 
-    fn key(
-        &mut self,
-        ic: IcId,
-        key: (u32, u32, u32, bool, u32),
-        batch: bool,
-        reply: oneshot::Sender<KeyAnswer>,
-    ) {
+    fn key(&mut self, ic: IcId, key: (u32, u32, u32, bool, u32), batch: bool, reply: KeyReply) {
         // Like fcitx5, a key focuses its context.
         self.focus_in(ic);
         let Some(state) = self.ics.get_mut(&ic) else {
@@ -509,6 +528,8 @@ impl FcitxFrontend {
             let bus = state.bus;
             self.send(
                 bus,
+                ic,
+                None,
                 Outgoing::Reply {
                     reply,
                     answer: KeyAnswer::default(),
@@ -516,6 +537,18 @@ impl FcitxFrontend {
             );
             return;
         };
+        if self.pending.len() >= MAX_PENDING_KEYS
+            || self
+                .pending
+                .values()
+                .filter(|pending| pending.ic == ic)
+                .count()
+                >= output::MAX_IC_ITEMS
+        {
+            self.fail_output(ic, Some(ctx));
+            let _ = reply.send(KeyAnswer::default());
+            return;
+        }
         self.next_key += 1;
         let id = self.next_key;
         self.pending.insert(
@@ -555,8 +588,30 @@ impl FcitxFrontend {
             let (keyval, mods, released) = pending.key;
             let signal = Signal::Forward(keyval, mods, released);
             match &mut pending.batch {
-                Some(batch) => batch.push(Batched(signal)),
-                None => self.send(bus, Outgoing::Signal { dest, path, signal }),
+                Some(batch) => {
+                    if !push_batch(batch, signal) {
+                        self.fail_output(pending.ic, Some(key.ctx));
+                        let _ = pending.reply.send(KeyAnswer {
+                            handled: true,
+                            batch: Vec::new(),
+                        });
+                        return;
+                    }
+                }
+                None => {
+                    if !self.send(
+                        bus,
+                        pending.ic,
+                        Some(key.ctx),
+                        Outgoing::Signal { dest, path, signal },
+                    ) {
+                        let _ = pending.reply.send(KeyAnswer {
+                            handled: true,
+                            batch: Vec::new(),
+                        });
+                        return;
+                    }
+                }
             }
         }
         let answer = KeyAnswer {
@@ -565,6 +620,8 @@ impl FcitxFrontend {
         };
         self.send(
             bus,
+            pending.ic,
+            Some(key.ctx),
             Outgoing::Reply {
                 reply: pending.reply,
                 answer,
@@ -602,6 +659,23 @@ impl FcitxFrontend {
         actions: &[Action],
         modifiers: Option<u32>,
     ) {
+        // Check the complete transaction before cloning text or changing preedit
+        // state. Reserve room for the clear generated by a commit.
+        let text_bytes = actions.iter().try_fold(0usize, |bytes, action| {
+            bytes.checked_add(match action {
+                Action::Commit(text) => text.len(),
+                Action::Preedit(preedit) => preedit.text.len(),
+                _ => 0,
+            })
+        });
+        if actions.len() >= output::MAX_IC_ITEMS
+            || text_bytes.is_none_or(|bytes| bytes > output::MAX_IC_BYTES / 2)
+        {
+            if let Some((ic, _)) = self.ics.iter().find(|(_, state)| state.ctx == Some(ctx)) {
+                self.fail_output(*ic, Some(ctx));
+            }
+            return;
+        }
         let Some((ic, state)) = self.ics.iter_mut().find(|(_, s)| s.ctx == Some(ctx)) else {
             return;
         };
@@ -677,33 +751,116 @@ impl FcitxFrontend {
         let Some(state) = self.ics.get(&ic) else {
             return;
         };
-        let (bus, dest, path) = (state.bus, state.owner.clone(), state.path.clone());
+        let (bus, dest, path, ctx) = (
+            state.bus,
+            state.owner.clone(),
+            state.path.clone(),
+            state.ctx,
+        );
         // Keys of a field are answered in order, so the oldest one waiting is the one the
         // engine works on (or the next, if this comes from another request).
         if let Some(pending) = self.pending.values_mut().find(|p| p.ic == ic) {
             pending.produced = true;
             if let Some(batch) = &mut pending.batch {
-                batch.extend(signals.into_iter().map(Batched));
+                let admitted = signals.into_iter().all(|signal| push_batch(batch, signal));
+                if !admitted {
+                    self.fail_output(ic, ctx);
+                }
                 return;
             }
         }
         for signal in signals {
-            self.send(
+            if !self.send(
                 bus,
+                ic,
+                ctx,
                 Outgoing::Signal {
                     dest: dest.clone(),
                     path: path.clone(),
                     signal,
                 },
-            );
+            ) {
+                break;
+            }
         }
     }
 
-    fn send(&self, bus: Bus, item: Outgoing) {
-        if let Some(queue) = &self.queues[bus as usize] {
-            let _ = queue.send(item);
+    fn settle_pending(&mut self, ic: IcId) {
+        let ids: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.ic == ic)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            if let Some(pending) = self.pending.remove(&id) {
+                let _ = pending.reply.send(KeyAnswer {
+                    handled: pending.produced,
+                    batch: Vec::new(),
+                });
+            }
         }
     }
+
+    fn fail_output(&mut self, ic: IcId, ctx: Option<ContextId>) {
+        let Some(state) = self.ics.get(&ic) else {
+            return;
+        };
+        // A delayed write failure must not retire a newly focused field.
+        if state.ctx != ctx {
+            return;
+        }
+        if let Some(queue) = &self.queues[state.bus as usize] {
+            queue.discard(ic);
+        }
+        self.settle_pending(ic);
+        self.end_context(ic);
+        if let Some(state) = self.ics.get_mut(&ic) {
+            state.output_retired = true;
+        }
+        debug!(
+            ic,
+            "Fcitx output limit reached; composition resumes on the next focus transition"
+        );
+    }
+
+    fn send(&mut self, bus: Bus, ic: IcId, ctx: Option<ContextId>, item: Outgoing) -> bool {
+        let sent = self.queues[bus as usize]
+            .as_ref()
+            .is_some_and(|queue| queue.send(ic, ctx, item));
+        if !sent {
+            self.fail_output(ic, ctx);
+        }
+        sent
+    }
+}
+
+/// One batch belongs to one IC/key; every non-preedit action is an ordering barrier.
+fn push_batch(batch: &mut Vec<Batched>, signal: Signal) -> bool {
+    let replace = matches!(
+        (&signal, batch.last()),
+        (Signal::Preedit(..), Some(Batched(Signal::Preedit(..))))
+    );
+    let keep = batch.len() - usize::from(replace);
+    let bytes = batch
+        .iter()
+        .take(keep)
+        .map(|s| output::signal_bytes(&s.0))
+        .sum::<usize>()
+        + output::signal_bytes(&signal)
+        + batch.capacity().max(keep + 1) * std::mem::size_of::<Batched>();
+    if keep + 1 >= output::MAX_IC_ITEMS || bytes > output::MAX_IC_BYTES / 2 {
+        return false;
+    }
+    if replace {
+        batch.pop();
+    } else {
+        // Keep capacity included in the byte budget rather than relying on the
+        // vector's geometric growth for many small signals.
+        batch.reserve_exact(1);
+    }
+    batch.push(Batched(signal));
+    true
 }
 
 /// What the core and engines learn about a field.
@@ -773,8 +930,8 @@ fn cursor_scale(scale: f64) -> f64 {
 mod tests {
     use super::*;
 
-    fn frontend() -> (FcitxFrontend, mpsc::UnboundedReceiver<Outgoing>) {
-        let (queue, outgoing) = mpsc::unbounded_channel();
+    fn frontend() -> (FcitxFrontend, output::Receiver) {
+        let (queue, outgoing) = output::channel();
         let mut frontend = FcitxFrontend::new([Some(queue), None], ContextIds::default());
         frontend.handle(Request::Created {
             ic: 1,
@@ -784,6 +941,160 @@ mod tests {
             args: vec![("display".into(), "wayland:".into())],
         });
         (frontend, outgoing)
+    }
+
+    fn pending_key(frontend: &mut FcitxFrontend, batch: bool) -> oneshot::Receiver<KeyAnswer> {
+        let (reply, answer) = oneshot::channel();
+        frontend.handle(Request::Key {
+            ic: 1,
+            key: (65, 38, 0, false, 0),
+            batch,
+            reply: reply.into(),
+        });
+        answer
+    }
+
+    #[test]
+    fn saturated_output_retires_only_its_context_and_settles_pending_keys() {
+        let (mut frontend, mut outgoing) = frontend();
+        let mut answer = pending_key(&mut frontend, false);
+        let ctx = frontend.ics[&1].ctx.unwrap();
+        frontend.handle(Request::Created {
+            ic: 2,
+            bus: Bus::Main,
+            owner: ":1.2".into(),
+            path: OwnedObjectPath::try_from("/ic/2").unwrap(),
+            args: Vec::new(),
+        });
+        frontend.handle(Request::FocusIn(2));
+        let other = frontend.ics[&2].ctx.unwrap();
+        for _ in 0..=output::MAX_IC_ITEMS {
+            frontend.apply_actions(ctx, &[Action::Commit("part".into())], None);
+        }
+        assert!(answer.try_recv().unwrap().handled);
+        assert!(frontend.pending.is_empty());
+        assert!(frontend.ics[&1].ctx.is_none());
+        assert_eq!(frontend.ics[&2].ctx, Some(other));
+        for capability in [
+            0,
+            convert::capability::PASSWORD,
+            0,
+            convert::capability::PREEDIT,
+        ] {
+            frontend.handle(Request::Capability { ic: 1, capability });
+            assert!(
+                frontend.ics[&1].ctx.is_none(),
+                "capability churn cannot recover overload retirement"
+            );
+        }
+        assert!(outgoing.try_recv().is_none());
+        frontend.apply_actions(other, &[Action::Commit("healthy".into())], None);
+        assert!(
+            matches!(outgoing.try_recv(), Some(output::Entry { ic: 2, item: Outgoing::Signal { signal: Signal::Commit(text), .. }, .. }) if text == "healthy")
+        );
+        frontend.handle(Request::FocusIn(1));
+        assert!(
+            frontend.ics[&1].ctx.is_none(),
+            "duplicate focus cannot resume a rejected composition"
+        );
+        frontend.handle(Request::FocusOut(1));
+        frontend.handle(Request::FocusIn(1));
+        let fresh = frontend.ics[&1].ctx.unwrap();
+        assert_ne!(fresh, ctx);
+        frontend.handle(Request::OutputFailed {
+            ic: 1,
+            ctx: Some(ctx),
+        });
+        assert_eq!(
+            frontend.ics[&1].ctx,
+            Some(fresh),
+            "late failure belongs to the old field"
+        );
+    }
+
+    #[test]
+    fn batched_preedit_replaces_adjacent_values_but_commits_bound_the_batch() {
+        let (mut frontend, _) = frontend();
+        let mut answer = pending_key(&mut frontend, true);
+        let ctx = frontend.ics[&1].ctx.unwrap();
+        for _ in 0..8192 {
+            frontend.apply_actions(
+                ctx,
+                &[Action::Preedit(omime_proto::engine::Preedit {
+                    text: "x".repeat(2048),
+                    cursor_begin: 2048,
+                    cursor_end: 2048,
+                })],
+                None,
+            );
+        }
+        assert_eq!(
+            frontend
+                .pending
+                .values()
+                .next()
+                .unwrap()
+                .batch
+                .as_ref()
+                .unwrap()
+                .len(),
+            1
+        );
+        for _ in 0..output::MAX_IC_ITEMS {
+            frontend.apply_actions(ctx, &[Action::Commit("barrier".into())], None);
+        }
+        assert!(answer.try_recv().unwrap().handled);
+        assert!(frontend.pending.is_empty());
+        assert!(frontend.ics[&1].ctx.is_none());
+    }
+
+    #[test]
+    fn teardown_and_pending_key_limit_release_every_key() {
+        let (mut frontend, _) = frontend();
+        let mut pending = Vec::new();
+        for _ in 0..output::MAX_IC_ITEMS {
+            pending.push(pending_key(&mut frontend, false));
+        }
+        assert_eq!(frontend.pending.len(), output::MAX_IC_ITEMS);
+        let mut overflow = pending_key(&mut frontend, false);
+        assert!(!overflow.try_recv().unwrap().handled);
+        for mut answer in pending {
+            assert!(!answer.try_recv().unwrap().handled);
+        }
+        assert!(frontend.pending.is_empty());
+        frontend.handle(Request::FocusOut(1));
+        let mut answer = pending_key(&mut frontend, false);
+        frontend.handle(Request::Destroy(1));
+        assert!(!answer.try_recv().unwrap().handled);
+        assert!(frontend.pending.is_empty());
+        let (mut frontend, _) = self::frontend();
+        let mut answer = pending_key(&mut frontend, true);
+        drop(frontend);
+        assert!(!answer.try_recv().unwrap().handled);
+    }
+
+    #[test]
+    fn sensitivity_changes_resume_an_ordinary_context_without_clearing_retirement() {
+        let (mut frontend, _) = frontend();
+        frontend.handle(Request::FocusIn(1));
+        let original = frontend.ics[&1].ctx.unwrap();
+        frontend.handle(Request::Capability {
+            ic: 1,
+            capability: convert::capability::PASSWORD,
+        });
+        assert!(frontend.ics[&1].ctx.is_none());
+        frontend.handle(Request::Capability {
+            ic: 1,
+            capability: 0,
+        });
+        let fresh = frontend.ics[&1].ctx.unwrap();
+        assert_ne!(original, fresh);
+        assert!(!frontend.ics[&1].output_retired);
+        frontend.fail_output(1, Some(fresh));
+        for capability in [convert::capability::PASSWORD, 0] {
+            frontend.handle(Request::Capability { ic: 1, capability });
+            assert!(frontend.ics[&1].ctx.is_none());
+        }
     }
 
     #[test]
@@ -927,8 +1238,11 @@ mod tests {
         );
         assert!(matches!(
             outgoing.try_recv(),
-            Ok(Outgoing::Signal {
-                signal: Signal::Delete(-1, 2),
+            Some(output::Entry {
+                item: Outgoing::Signal {
+                    signal: Signal::Delete(-1, 2),
+                    ..
+                },
                 ..
             })
         ));
@@ -941,7 +1255,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(outgoing.try_recv(), Ok(Outgoing::Signal { signal: Signal::Delete(offset, size), .. }) if offset == -(cursor as i32) && size == chars)
+            matches!(outgoing.try_recv(), Some(output::Entry { item: Outgoing::Signal { signal: Signal::Delete(offset, size), .. }, .. }) if offset == -(cursor as i32) && size == chars)
         );
     }
 
@@ -1123,7 +1437,7 @@ mod tests {
             }],
             None,
         );
-        assert!(outgoing.try_recv().is_err());
+        assert!(outgoing.try_recv().is_none());
     }
 
     #[test]

@@ -216,6 +216,35 @@ know which frontend a key came from.
   without surrounding text until the application sends fresh text. Position-only
   updates cannot restore a cleared cache, and deletion requires valid cached text
   to convert engine byte counts into application character counts.
+  Output admission is nonblocking: each bus retains at most 256 items / 256 KiB,
+  and each IC at most 64 items / 64 KiB, including text allocation and item metadata.
+  Key requests additionally reserve 256 compact reply records per bus / 64 per IC,
+  retained through actual response serialization and writing, even after overload
+  settlement. These small header/permit records do not hold batch text; queued batch
+  text uses the output byte budget above. The single ordered worker writes both
+  signals and key replies; one such message per bus may additionally be in flight.
+  Its IC interface dispatches without spawned per-call tasks: when reply admission
+  fills, at most one dispatcher waits and zbus's existing 64-message input queue
+  supplies backpressure. This can delay other IC methods on that Fcitx connection;
+  the daemon control service uses a separate connection. Non-key methods retain
+  their generated signatures and have at most this one dispatcher waiting to write.
+  Only adjacent preedits for the
+  same destination and core context replace one another; commit, deletion,
+  forwarded-key and reply entries remain ordering barriers. An action transaction
+  is limited to 63 actions / 32 KiB of text before conversion. Batch replies retain
+  at most 63 signals / 32 KiB including signal metadata. Pending keys are limited
+  to 64 per IC and 1,024 overall. On overflow the affected composition ends, its
+  queued output is discarded and pending keys are settled; keys that may already
+  have produced output are consumed to avoid replaying them. Composition resumes
+  after a real focus-out/focus-in transition; capability changes cannot clear this
+  retirement. Ordinary sensitive-to-normal transitions still resume composition.
+  A write stalled for 300 ms triggers
+  the same cleanup for queued contexts, including newly arriving keys on later
+  deadlines. The single write keeps running so a partially written D-Bus frame
+  is not corrupted. Destroyed contexts discard their queued output and settle
+  their keys immediately into reserved compact replies; those replies retain
+  admission until written. Object removals retain their existing live-context
+  quota until the bus worker processes them.
   The GTK 4 Fcitx5 module may suppress unchanged text after refocusing, and Qt 6 may
   remove surrounding-text support during widget updates. Operations that need this
   text remain unavailable until the application sends it again and keeps it valid.
@@ -237,6 +266,11 @@ know which frontend a key came from.
   `GET_TREE`) when the field gets focus, and again at most once a second as the cursor
   moves, and shows the window on a mirror at the window's position plus the cursor
   (`SetCursorRectV2` divided by its scale).
+  Each IC owns at most one query and one coalesced refresh. Both bus names share
+  eight query slots, acquired before creating a task; saturation retries on the
+  next focus/cursor event. Duplicate FocusIn calls respect the one-second refresh
+  interval. Focus-out, DestroyIC and object drop cancel the owned task. The
+  compositor query itself has a 300 ms deadline.
   Incoming Fcitx rectangles and XIM cursor rectangles are clamped to coordinates within
   ±(1 << 24) and dimensions from 0 through (1 << 16). A non-finite, zero or negative
   cursor scale is treated as 1. Placement uses 64-bit integer arithmetic and saturates

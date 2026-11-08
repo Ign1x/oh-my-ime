@@ -86,6 +86,7 @@ pub enum CoreEvent {
         engine: String,
         connection_id: u64,
         call: HostCall,
+        admission: Option<engines::TextAdmission>,
     },
     Reply {
         ctx: ContextId,
@@ -1614,6 +1615,7 @@ impl Core {
                 engine,
                 connection_id,
                 call,
+                admission: _admission,
             } => {
                 if self.engines.get(&engine).is_some_and(|s| {
                     s.connection_id == Some(connection_id) && matches!(s.state, EngineState::Ready)
