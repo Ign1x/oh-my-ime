@@ -5,6 +5,7 @@ the Ubuntu packaging container without touching the user's desktop session.
 """
 
 import json
+import importlib.util
 import os
 from pathlib import Path
 import shlex
@@ -227,6 +228,24 @@ class AppRunTests(unittest.TestCase):
 
 
 class BuildIdentityTests(unittest.TestCase):
+    def test_runtime_mapping_checks_use_the_images_actual_architecture_dependencies(self):
+        spec = importlib.util.spec_from_file_location("appimage_smoke", appimage.TEMPLATES / "smoke.py")
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = root / "build.json"
+            common = ["libstdc++.so.6", "libgcc_s.so.1"]
+            maps = "/usr/lib64/libstdc++.so.6.0.34\n/usr/lib64/libgcc_s-15-20260722.so.1\n"
+            metadata.write_text(json.dumps({"host_libraries": common}))
+            smoke.check_host_runtime_maps(root, maps)
+            metadata.write_text(json.dumps({"host_libraries": [*common, "libunwind.so.8"]}))
+            with self.assertRaisesRegex(AssertionError, "libunwind.so.8"):
+                smoke.check_host_runtime_maps(root, maps)
+            smoke.check_host_runtime_maps(root, maps + "/usr/lib64/libunwind.so.8.0.1\n")
+            with self.assertRaisesRegex(AssertionError, "libunwind.so.8"):
+                smoke.check_host_runtime_maps(root, maps + str(root / "usr/lib/oh-my-ime/libunwind.so.8") + "\n")
+
     def test_host_graphics_dependencies_are_not_copied_into_the_image(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

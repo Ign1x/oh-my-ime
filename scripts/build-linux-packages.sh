@@ -16,12 +16,28 @@ esac
 container() {
   local task_image=$1
   shift
+  local task_log task_status
+  task_log=$(mktemp)
+  set +e
   docker run --rm \
     --mount "type=bind,src=$task_source,dst=/source,readonly" \
     --mount "type=bind,src=$task_artifacts,dst=/artifacts,readonly" \
     --mount "type=bind,src=$task_manifest,dst=/release-input.json,readonly" \
     --mount "type=bind,src=$task_output,dst=/out" \
-    -e "OMIME_PACKAGE_SYSTEM=$task_system" "$task_image" "$@"
+    -e "OMIME_PACKAGE_SYSTEM=$task_system" "$task_image" "$@" 2>&1 | tee "$task_log"
+  task_status=${PIPESTATUS[0]}
+  set -e
+  if [ "$task_status" -ne 0 ]; then
+    python3 - "$task_image" "$task_log" <<'PY'
+from pathlib import Path
+import sys
+tail = '\n'.join(Path(sys.argv[2]).read_text(errors='replace').splitlines()[-60:])
+escaped = tail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+print(f'::error title=Packaging container {sys.argv[1]}::{escaped}')
+PY
+  fi
+  rm -f -- "$task_log"
+  return "$task_status"
 }
 
 # shellcheck disable=SC2016 # Expanded inside the container, after its environment is set.

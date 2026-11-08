@@ -22,6 +22,19 @@ def run(args, env, *, success=True, timeout=90):
     return result
 
 
+def check_host_runtime_maps(root, maps):
+    metadata = json.loads((root / "build.json").read_text())
+    # Ubuntu's glog uses libunwind on x86-64, but not on ARM64. Check the
+    # dependency closure actually recorded for this image, not another ABI's.
+    runtime_names = {"libstdc++.so.6": "libstdc++.so", "libgcc_s.so.1": "libgcc_s",
+                     "libunwind.so.8": "libunwind.so"}
+    for soname, filename in runtime_names.items():
+        if soname not in metadata["host_libraries"]:
+            continue
+        loaded = [line for line in maps.splitlines() if filename in line]
+        assert loaded and all(str(root) not in line for line in loaded), f"{soname} must come from the host"
+
+
 def rime_check(root, user):
     """Exercise the same public librime API as the engine, without a GUI/bus."""
     class Traits(c.Structure):
@@ -121,9 +134,7 @@ def rime_check(root, user):
         rime.RimeFinalize()
     maps = Path("/proc/self/maps").read_text()
     assert str(library) in maps, "librime was loaded from outside the bundle"
-    for soname in ("libstdc++.so", "libgcc_s", "libunwind.so"):
-        loaded = [line for line in maps.splitlines() if soname in line]
-        assert loaded and all(str(root) not in line for line in loaded), f"{soname} must come from the host"
+    check_host_runtime_maps(root, maps)
 
 
 def main():
@@ -189,7 +200,17 @@ def main():
         assert record["bundling_policy"] == "Rime-private-libraries-only"
         for name in record["host_libraries"]:
             assert not (root / "usr/lib/oh-my-ime" / name).exists(), f"host library was bundled: {name}"
-        for name in ("libstdc++.so.6", "libgcc_s.so.1", "libunwind.so.8", "libfontconfig.so.1", "libxkbcommon.so.0",
+        loader = {"x86_64": "/lib64/ld-linux-x86-64.so.2",
+                  "aarch64": "/lib/ld-linux-aarch64.so.1"}[platform.machine()]
+        binaries = sorted((root / "usr/lib/oh-my-ime/bin").glob("*.bin"))
+        assert len(binaries) == 8, "all installed executables must be checked"
+        for binary in binaries:
+            loaded = run([loader, "--list", binary], env)
+            assert "not found" not in loaded.stdout + loaded.stderr, loaded.stdout + loaded.stderr
+        for name in ("libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
+                     "libEGL.so.1", "libGL.so.1", "libGLESv2.so.2"):
+            c.CDLL(name)
+        for name in ("libstdc++.so.6", "libgcc_s.so.1", "libfontconfig.so.1", "libxkbcommon.so.0",
                      "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1", "libEGL.so.1"):
             assert name in record["host_libraries"], f"host requirement was omitted: {name}"
         assert record["host_abi_requirements"]["GLIBCXX"]
