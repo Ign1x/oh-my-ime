@@ -19,12 +19,15 @@ fn late_reply_from_previous_engine_preserves_new_composition() -> anyhow::Result
     env.wait_for_log("engine ready")?;
     let editor = env.editor(&[])?;
     env.type_text("a")?;
+    env.wait_for_log("processing delayed key")?;
     env.omime(&["switch", "echo"])?;
     env.type_text("bc")?;
     editor.wait_for("new engine composition", |l| {
         l.starts_with("preedit \"bc\"")
     })?;
-    env.wait_for_log("discarding a late answer")?;
+    // The old call is cancelled locally, so no daemon reply log is expected.
+    // Observe its completion in the engine before checking the new composition.
+    env.wait_for_log("finished delayed key")?;
     env.key(&[], "space")?;
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(

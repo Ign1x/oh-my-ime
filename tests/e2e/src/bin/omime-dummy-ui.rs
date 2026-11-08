@@ -127,7 +127,13 @@ impl omime_sdk::Engine for PassThrough {
             // Count requests without logging their contents.
             println!("processed key");
         }
+        if !self.slow.is_zero() {
+            println!("processing delayed key");
+        }
         std::thread::sleep(self.slow);
+        if !self.slow.is_zero() {
+            println!("finished delayed key");
+        }
         false
     }
 }

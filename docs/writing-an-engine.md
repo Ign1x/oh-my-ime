@@ -91,10 +91,17 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   across `commit_string` requests before a `commit`. Rejections log no text and
   still settle the triggering key. Application feedback can delay each chunk by
   up to 200 ms, so keep replies short when later keys need to arrive promptly.
-- Answer quickly. After 200 ms (configurable) the key is passed to the application.
-  Further keys bypass the busy context until its late answer is discarded and a
-  queued `reset` finishes. A reply abandoned on switching or deactivation is simply
-  discarded and cannot reset the new session.
+- Answer quickly. The default 200 ms key deadline includes queueing at the daemon;
+  initial activation retains its bounded dictionary-loading allowance. Once sent,
+  a key still has at most one key-timeout interval to finish. On timeout the key
+  passes to the application. Further keys bypass the busy context until its late
+  answer is discarded and a queued `reset` finishes. Switching or deactivation
+  cancels the daemon's call; late replies cannot reset a new session.
+- Adjacent field updates may merge by field, preserving the last value before
+  each key/reset/mode-restore barrier. Queue saturation also passes accepted keys
+  through once in order. The daemon waits for the old call, resets, refreshes the
+  field and restores its remembered mode before sending new composition keys.
+  A call that cannot recover is terminated by the existing watchdog.
 - `activate`, `deactivate`, `update` and `reset` tell you about focus and the field
   (`ctx.info()` has its content type, the surrounding text and, while your window is
   shown, the cursor rectangle). Wayland/Fcitx5 fields explicitly marked as sensitive

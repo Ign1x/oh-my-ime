@@ -280,13 +280,29 @@ death; the SDK treats direct SIGTERM as an orderly stop.
   after a mouse click on a candidate), `SetPopupVisible`, `SetStatus` and `RequestSwitch`.
   Everything except `Register` is fire-and-forget.
 - Field activation allows at least one second (or `key_timeout_ms`, if longer) to
-  load a schema or dictionary, with incoming keys queued in order. Key events still
-  time out after 200 ms by default. On timeout the key is forwarded to the
-  application and later keys bypass that context until the request completes and a
-  queued `Reset` finishes. A call that still has not completed after two further
-  key-timeout intervals causes its engine to be restarted; this also bounds a stuck
-  activation. Replies abandoned by switching,
-  deactivation or process exit are discarded without modifying the current context.
+  load a schema or dictionary. Native keys have a deadline from arrival at the
+  core, including time queued behind updates: normally 200 ms, with the initial
+  activation window as a bounded allowance. Later keys cannot extend that window,
+  and each dispatched key still has at most one key-timeout interval to finish.
+  On timeout the key is forwarded to the application and later keys bypass that
+  context until the request completes and a queued `Reset` finishes. A call still
+  pending after two further key-timeout intervals kills its engine immediately.
+  Soft timeouts keep the call alive to preserve request/reset ordering; switching,
+  deactivation, engine loss and compositor disconnection cancel retired calls.
+  Replies apply only to the current context and request token.
+- Adjacent context updates merge by field, keeping the latest value without
+  crossing a key, reset or mode-restore barrier. Each context queues at most 64
+  requests and 64 KiB of encoded key/update payloads, besides its current field
+  state and one in-flight call. If a queue fills or a queued key reaches its arrival
+  deadline, all accepted keys finish once in arrival order as direct input. The
+  outstanding reply is discarded; reset, a refresh from the current field state
+  and mode restoration finish before composition resumes. Keys arriving during
+  this recovery pass through immediately. This also bounds floods that alternate
+  updates and barriers, which cannot be coalesced.
+- `Deactivate` sends are owned separately after a field retires, with at most 64
+  pending sends across the core and one key-timeout interval to finish sending.
+  A full cleanup queue or an expired send kills that engine immediately, so a
+  blocked transport cannot accumulate detached tasks or strand engine contexts.
 - Composition belongs to a `ContextId`. Multiple contexts can coexist; the bundled
   engines store separate state for each. Engine selection and popup placement remain
   global, so the supported UI workflow is single-seat.

@@ -243,7 +243,8 @@ fn settings_reload_releases_pending_fcitx_keys_and_ignores_late_commits() -> any
         },
     )?;
     std::fs::write(env.dir().join("state/release-key"), b"release")?;
-    env.wait_for_log("discarding a late answer")?;
+    // Retirement cancels the RPC. The engine reaching its finalizer proves the
+    // held callback finished; exact text/reply assertions below reject late output.
     wait_for_saved(&env, old)?;
     client.send("key 0x62 56 0 press")?;
     wait_until_within(
@@ -305,7 +306,8 @@ fn settings_reload_releases_queued_keys_before_a_late_reply() -> anyhow::Result<
         || (editor.text() == "ab").then_some(()),
     )?;
     std::fs::write(env.dir().join("state/release-key"), b"release")?;
-    env.wait_for_log("discarding a late answer")?;
+    // Retirement cancels the RPC. The engine reaching its finalizer proves the
+    // held callback finished; exact text/reply assertions below reject late output.
     wait_for_saved(&env, old)?;
     wait_for_replacement(&env, old)?;
     env.type_on_seat("seat0", "c")?;

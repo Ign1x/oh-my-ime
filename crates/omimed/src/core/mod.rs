@@ -44,6 +44,12 @@ const HOSTED_WAIT: Duration = Duration::from_secs(1);
 /// Activating a field may load a schema or dictionary for the first time. Give
 /// that setup at least as long as a hosted method, without extending key deadlines.
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
+/// Per-field pending work, in addition to its one in-flight request. Payload
+/// accounting uses encoded update dictionaries and key events; barriers use count.
+const MAX_QUEUED_REQUESTS: usize = 64;
+const MAX_QUEUED_BYTES: usize = 64 * 1024;
+/// Deactivate is no-reply, but its send can still block on a stalled transport.
+const MAX_DEACTIVATIONS: usize = 64;
 /// How often to look whether a hosted input method reads the keys it was given, and
 /// for how long it may read nothing before it counts as hung. Keys handed to a hung
 /// input method are gone, so it is killed and restarted.
@@ -180,8 +186,10 @@ enum Request {
     Activate,
     RestoreMode,
     Update(Dict),
+    /// Resynchronize from the one retained ContextInfo after overload recovery.
+    Refresh,
     Reset,
-    Key(KeyRef, KeyEvent),
+    Key(KeyRef, KeyEvent, Option<Instant>),
 }
 
 impl Request {
@@ -190,15 +198,48 @@ impl Request {
         match self {
             Self::Activate => "Activate",
             Self::RestoreMode => "SetInputMode",
-            Self::Update(_) => "UpdateContext",
+            Self::Update(_) | Self::Refresh => "UpdateContext",
             Self::Reset => "Reset",
             Self::Key(..) => "ProcessKey",
         }
     }
 }
 
+/// Owning a call also owns its cancellation, including when the core is dropped.
+/// A soft timeout keeps this owner alive until the reply or hard recovery deadline.
+#[derive(Debug, Default)]
+struct RpcTask(Option<tokio::task::AbortHandle>);
+
+impl RpcTask {
+    fn new(task: tokio::task::JoinHandle<()>) -> Self {
+        Self(Some(task.abort_handle()))
+    }
+
+    fn is_finished(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(tokio::task::AbortHandle::is_finished)
+    }
+}
+
+impl Drop for RpcTask {
+    fn drop(&mut self) {
+        if let Some(task) = &self.0 {
+            task.abort();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Deactivation {
+    engine: String,
+    task: RpcTask,
+    deadline: Instant,
+}
+
 #[derive(Debug)]
 struct InFlight {
+    _task: RpcTask,
     token: u64,
     engine: String,
     method: &'static str,
@@ -227,6 +268,8 @@ struct Context {
     activated: bool,
     queue: VecDeque<Request>,
     in_flight: Option<InFlight>,
+    /// Overload passes keys through until reset and field resynchronization finish.
+    recovering: bool,
     /// When the field started waiting for its engine: when it got focus, when it got
     /// another engine, or when a hosted engine was activated for it.
     waiting_since: Instant,
@@ -243,6 +286,56 @@ struct Context {
 }
 
 impl Context {
+    fn update(&mut self, changes: Dict) {
+        if changes.is_empty() {
+            return;
+        }
+        // Never look past a key, reset or restore: those requests observe the
+        // preceding field state. Explicit clear values also replace older values.
+        if let Some(Request::Update(previous)) = self.queue.back_mut() {
+            previous.extend(changes);
+        } else {
+            self.queue.push_back(Request::Update(changes));
+        }
+    }
+
+    fn queued_key_deadline(&self) -> Option<Instant> {
+        self.queue
+            .iter()
+            .filter_map(|request| match request {
+                Request::Key(_, _, deadline) => *deadline,
+                _ => None,
+            })
+            .min()
+    }
+
+    fn queued_payload_bytes(&self) -> usize {
+        self.queue
+            .iter()
+            .filter_map(|request| match request {
+                Request::Update(changes) => Some(
+                    zbus::wire::serialized_size(
+                        zbus::wire::serialized::Context::new(zbus::wire::LE, 0),
+                        changes,
+                    )
+                    .map_or(usize::MAX, |size| size.size()),
+                ),
+                Request::Key(_, event, _) => Some(
+                    zbus::wire::serialized_size(
+                        zbus::wire::serialized::Context::new(zbus::wire::LE, 0),
+                        event,
+                    )
+                    .map_or(usize::MAX, |size| size.size()),
+                ),
+                _ => None,
+            })
+            .fold(0, usize::saturating_add)
+    }
+
+    fn queue_overloaded(&self) -> bool {
+        self.queue.len() > MAX_QUEUED_REQUESTS || self.queued_payload_bytes() > MAX_QUEUED_BYTES
+    }
+
     /// Whether a key that a hosted engine cannot take yet should wait for it, which it
     /// does for [`HOSTED_WAIT`]. Sets the deadline of the wait.
     fn hold_key(&mut self) -> bool {
@@ -323,9 +416,8 @@ pub struct Core {
     contexts: BTreeMap<ContextId, Context>,
     events: mpsc::UnboundedSender<CoreEvent>,
     next_token: u64,
-    /// Requests abandoned on switch, deactivation or engine exit. Their replies
-    /// must never touch a newer engine or composition, even on the same field.
-    stale_tokens: HashSet<u64>,
+    /// Bounded cleanup sends for contexts that have already retired.
+    deactivations: Vec<Deactivation>,
     /// Consecutive timeouts per engine.
     timeouts: BTreeMap<String, u32>,
     /// Hosted engines that may not have read the keys they were given yet.
@@ -379,7 +471,7 @@ impl Core {
             contexts: BTreeMap::new(),
             events,
             next_token: 0,
-            stale_tokens: HashSet::new(),
+            deactivations: Vec::new(),
             timeouts: BTreeMap::new(),
             hosted_watch: BTreeMap::new(),
             visible_engines: BTreeSet::new(),
@@ -945,9 +1037,21 @@ impl Core {
         let requests = self
             .contexts
             .values()
-            .filter_map(|c| c.in_flight.as_ref().map(|f| f.deadline).or(c.hold_until));
+            .flat_map(|c| {
+                [
+                    c.in_flight.as_ref().map(|f| f.deadline),
+                    c.hold_until,
+                    c.queued_key_deadline(),
+                ]
+            })
+            .flatten();
         let watches = self.hosted_watch.values().map(|w| w.next_check);
-        requests.chain(watches).chain(self.engines.deadline()).min()
+        let retiring = self.deactivations.iter().map(|call| call.deadline);
+        requests
+            .chain(watches)
+            .chain(retiring)
+            .chain(self.engines.deadline())
+            .min()
     }
 
     pub fn on_timer(&mut self, now: Instant, out: &mut dyn Frontends) {
@@ -957,6 +1061,21 @@ impl Core {
             self.engine_unavailable(&failed, out);
         }
         self.check_hosted(now, out);
+        self.deactivations.retain(|call| !call.task.is_finished());
+        let stalled: BTreeSet<_> = self
+            .deactivations
+            .iter()
+            .filter(|call| call.deadline <= now)
+            .map(|call| call.engine.clone())
+            .collect();
+        for engine in stalled {
+            warn!(
+                engine,
+                "the engine transport did not finish deactivation; restarting it"
+            );
+            self.engines.kill_unresponsive(&engine);
+            self.engine_unavailable(&engine, out);
+        }
         let held: Vec<ContextId> = self
             .contexts
             .iter()
@@ -1025,6 +1144,19 @@ impl Core {
             }
             self.pump(ctx, out);
         }
+        let queued: Vec<_> = self
+            .contexts
+            .iter()
+            .filter(|(_, c)| {
+                c.queued_key_deadline()
+                    .is_some_and(|deadline| deadline <= now)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for ctx in queued {
+            self.recover_queue(ctx, now, out);
+            self.pump(ctx, out);
+        }
         if self.mode_error != previous_mode_error {
             self.status_changed();
         }
@@ -1047,6 +1179,7 @@ impl Core {
                     activated: false,
                     queue: VecDeque::new(),
                     in_flight: None,
+                    recovering: false,
                     waiting_since: Instant::now(),
                     hold_until: None,
                     framework_ready: true,
@@ -1094,9 +1227,7 @@ impl Core {
                     context.pending_mode = None;
                 }
                 if context.engine.is_some() {
-                    if !changes.is_empty() {
-                        context.queue.push_back(Request::Update(changes));
-                    }
+                    context.update(changes);
                     if reset {
                         context.queue.push_back(Request::Reset);
                     }
@@ -1108,18 +1239,17 @@ impl Core {
             }
             FrontendEvent::Deactivated { ctx } => {
                 if let Some(context) = self.contexts.remove(&ctx) {
-                    if let Some(flight) = context.in_flight {
-                        self.stale_tokens.insert(flight.token);
-                        if let Some(key) = flight.key {
-                            out.finish_key(&key, false);
-                        }
+                    if let Some(flight) = context.in_flight
+                        && let Some(key) = flight.key
+                    {
+                        out.finish_key(&key, false);
                     }
                     if context.activated {
-                        Self::deactivate(&self.engines, context.engine.as_deref(), ctx, out);
+                        self.deactivate(context.engine.as_deref(), ctx, out);
                     }
                     // Keys still waiting for a hosted engine go to the application.
                     for request in context.queue {
-                        if let Request::Key(key, _) = request {
+                        if let Request::Key(key, _, _) = request {
                             out.finish_key(&key, false);
                         }
                     }
@@ -1130,7 +1260,28 @@ impl Core {
                     out.finish_key(&key, false);
                     return;
                 };
-                context.queue.push_back(Request::Key(key, event));
+                let native = context
+                    .engine
+                    .as_deref()
+                    .and_then(|id| self.engines.get(id))
+                    .is_some_and(|slot| !slot.installed.manifest.is_hosted());
+                let deadline = native.then(|| {
+                    let ordinary = Instant::now() + self.key_timeout;
+                    // Initial dictionary/schema loading keeps its existing allowance.
+                    // It is tied to activation, never extended by arriving keys.
+                    if !context.activated
+                        || context
+                            .in_flight
+                            .as_ref()
+                            .is_some_and(|f| f.method == "Activate")
+                    {
+                        ordinary
+                            .max(context.waiting_since + self.key_timeout.max(ACTIVATION_TIMEOUT))
+                    } else {
+                        ordinary
+                    }
+                });
+                context.queue.push_back(Request::Key(key, event, deadline));
                 self.pump(key.ctx(), out);
             }
             FrontendEvent::CursorRect { engine, rect } => {
@@ -1148,9 +1299,7 @@ impl Core {
                     info.cursor_rect = Some(rect);
                     let changes = info.diff(&context.info);
                     context.info = info;
-                    if !changes.is_empty() {
-                        context.queue.push_back(Request::Update(changes));
-                    }
+                    context.update(changes);
                     self.pump(ctx, out);
                 }
             }
@@ -1166,25 +1315,51 @@ impl Core {
     }
 
     /// Tells `engine` that it no longer serves the field `ctx`.
-    fn deactivate(
-        engines: &EngineManager,
-        engine: Option<&str>,
-        ctx: ContextId,
-        out: &mut dyn Frontends,
-    ) {
+    fn deactivate(&mut self, engine: Option<&str>, ctx: ContextId, out: &mut dyn Frontends) {
         let Some(id) = engine else {
             return;
         };
-        let Some(slot) = engines.get(id) else {
+        let Some(slot) = self.engines.get(id) else {
             return;
         };
         if slot.installed.manifest.is_hosted() {
             out.hosted_deactivate(&EngineId::from(id), ctx);
-        } else if let Some(proxy) = slot.proxy.clone() {
-            tokio::task::spawn_local(async move {
-                let _ = proxy.deactivate(ctx).await;
-            });
+        } else if !self.deactivate_native(id, ctx) {
+            self.engine_unavailable(id, out);
         }
+    }
+
+    fn admit_deactivation(&mut self, engine: &str) -> bool {
+        self.deactivations.retain(|call| !call.task.is_finished());
+        if self.deactivations.len() >= MAX_DEACTIVATIONS {
+            // Dropping a cleanup send alone could strand state in the engine.
+            // Retire that engine instead; its exit clears all its contexts.
+            warn!(
+                engine,
+                "too many pending deactivations; restarting the engine"
+            );
+            self.engines.kill_unresponsive(engine);
+            self.deactivations.retain(|call| call.engine != engine);
+            return false;
+        }
+        true
+    }
+
+    fn deactivate_native(&mut self, engine: &str, ctx: ContextId) -> bool {
+        let Some(proxy) = self.engines.get(engine).and_then(|slot| slot.proxy.clone()) else {
+            return true;
+        };
+        if !self.admit_deactivation(engine) {
+            return false;
+        }
+        self.deactivations.push(Deactivation {
+            engine: engine.to_owned(),
+            deadline: Instant::now() + self.key_timeout,
+            task: RpcTask::new(tokio::task::spawn_local(async move {
+                let _ = proxy.deactivate(ctx).await;
+            })),
+        });
+        true
     }
 
     fn on_hosted(&mut self, event: HostedEvent, out: &mut dyn Frontends) {
@@ -1569,10 +1744,6 @@ impl Core {
     }
 
     fn on_reply(&mut self, ctx: ContextId, token: u64, reply: Reply, out: &mut dyn Frontends) {
-        if self.stale_tokens.remove(&token) {
-            debug!(ctx, "discarding a late answer");
-            return;
-        }
         let current_method = self.current_method();
         let Some(context) = self.contexts.get_mut(&ctx) else {
             return;
@@ -1589,7 +1760,7 @@ impl Core {
         }
         if flight.timed_out {
             debug!(ctx, "discarding a late answer");
-            if flight.method != "Reset" {
+            if flight.method != "Reset" && !matches!(context.queue.front(), Some(Request::Reset)) {
                 context.queue.push_front(Request::Reset);
             }
             self.pump(ctx, out);
@@ -1703,6 +1874,7 @@ impl Core {
     /// An engine went away (crash, failed start): its fields fall back to direct input
     /// until it is back.
     fn engine_unavailable(&mut self, engine: &str, out: &mut dyn Frontends) {
+        self.deactivations.retain(|call| call.engine != engine);
         let ids: Vec<ContextId> = self
             .contexts
             .iter()
@@ -1713,14 +1885,14 @@ impl Core {
             let Some(context) = self.contexts.get_mut(&ctx) else {
                 continue;
             };
-            if let Some(flight) = context.in_flight.take() {
-                self.stale_tokens.insert(flight.token);
-                if let Some(key) = flight.key {
-                    out.finish_key(&key, false);
-                }
+            if let Some(flight) = context.in_flight.take()
+                && let Some(key) = flight.key
+            {
+                out.finish_key(&key, false);
             }
             // Keys pass through until the engine is back; it is activated again then.
             context.activated = false;
+            context.recovering = false;
             context.mode_ready = false;
             context.mode_revision = 0;
             context.mode = None;
@@ -1744,35 +1916,87 @@ impl Core {
         self.lists_changed();
     }
 
+    /// Release accepted keys in arrival order and rebuild just the state needed
+    /// for recovery. Never cancel a live call here: its late reply must be discarded
+    /// before Reset, so it cannot duplicate text or erase a new composition.
+    fn recover_queue(&mut self, ctx: ContextId, now: Instant, out: &mut dyn Frontends) {
+        let Some(context) = self.contexts.get_mut(&ctx) else {
+            return;
+        };
+        warn!(
+            ctx,
+            "queued engine work exceeded its size or key arrival deadline"
+        );
+        context.recovering = true;
+        // Reset and Refresh may report the retired composition's mode. Keep those
+        // observations visible, but protect the saved target until RestoreMode
+        // confirms it. A previous asynchronous restore must not reopen saving.
+        context.mode_ready = false;
+        context.pending_mode = None;
+        if let Some(flight) = context.in_flight.as_mut() {
+            if !flight.timed_out {
+                flight.timed_out = true;
+                flight.deadline = now + self.key_timeout * 2;
+            }
+            if let Some(key) = flight.key.take() {
+                out.finish_key(&key, false);
+            }
+        }
+        for request in context.queue.drain(..) {
+            if let Request::Key(key, _, _) = request {
+                out.finish_key(&key, false);
+            }
+        }
+        out.clear_preedit(context.origin, ctx);
+        if context.engine.is_some() {
+            if context.activated {
+                // Reset is also queued for an in-flight Reset: later field changes
+                // may have made its original snapshot obsolete.
+                context.queue.push_back(Request::Reset);
+                context.queue.push_back(Request::Refresh);
+            } else {
+                context.queue.push_back(Request::Activate);
+            }
+            context.queue.push_back(Request::RestoreMode);
+        }
+    }
+
     /// Sends queued requests of `ctx` while nothing is in flight.
     fn pump(&mut self, ctx: ContextId, out: &mut dyn Frontends) {
         loop {
+            let now = Instant::now();
+            if self.contexts.get(&ctx).is_some_and(|context| {
+                context.queue_overloaded()
+                    || context
+                        .queued_key_deadline()
+                        .is_some_and(|deadline| deadline <= now)
+            }) {
+                self.recover_queue(ctx, now, out);
+            }
             let Some(context) = self.contexts.get_mut(&ctx) else {
                 return;
             };
-            if context.in_flight.as_ref().is_some_and(|f| !f.timed_out) {
+            let bypass =
+                context.recovering || context.in_flight.as_ref().is_some_and(|f| f.timed_out);
+            let waiting_key = bypass
+                .then(|| {
+                    context
+                        .queue
+                        .iter()
+                        .position(|r| matches!(r, Request::Key(..)))
+                })
+                .flatten();
+            if waiting_key.is_none() && context.in_flight.is_some() {
                 return;
             }
-            let index = if context.in_flight.is_some() {
-                // Keep context updates queued for recovery, while still finding
-                // every key that needs an immediate answer.
-                let Some(index) = context
-                    .queue
-                    .iter()
-                    .position(|r| matches!(r, Request::Key(..)))
-                else {
-                    return;
-                };
-                index
-            } else {
-                0
-            };
+            let index = waiting_key.unwrap_or(0);
             let Some(request) = context.queue.get(index) else {
+                context.recovering = false;
                 return;
             };
 
             // Hotkeys are handled in order with the keys around them.
-            if let Request::Key(key, event) = request
+            if let Request::Key(key, event, _) = request
                 && let Some(action) = match_hotkey(&self.hotkeys, event)
             {
                 let key = *key;
@@ -1788,10 +2012,10 @@ impl Core {
                 continue;
             }
 
-            if context.in_flight.is_some() {
-                // A timed-out call is still running. Keep typing responsive without
-                // starting a composition that its eventual cleanup could erase.
-                if let Some(Request::Key(key, _)) = context.queue.remove(index) {
+            if waiting_key.is_some() {
+                // Recovery must finish before another composition can start.
+                // Until then every new key gets an immediate answer.
+                if let Some(Request::Key(key, _, _)) = context.queue.remove(index) {
                     out.finish_key(&key, false);
                 }
                 continue;
@@ -1815,7 +2039,7 @@ impl Core {
                     if context.hold_key() {
                         return;
                     }
-                    if let Some(Request::Key(key, _)) = context.queue.pop_front() {
+                    if let Some(Request::Key(key, _, _)) = context.queue.pop_front() {
                         out.finish_key(&key, false);
                     }
                     continue;
@@ -1825,7 +2049,7 @@ impl Core {
                 // No engine, or it is unavailable: keys pass straight through and
                 // other requests are dropped (the engine is activated afresh later).
                 _ => {
-                    if let Some(Request::Key(key, _)) = context.queue.pop_front() {
+                    if let Some(Request::Key(key, _, _)) = context.queue.pop_front() {
                         out.finish_key(&key, false);
                     }
                     continue;
@@ -1918,7 +2142,7 @@ impl Core {
             Request::RestoreMode => {
                 context.mode_ready = true;
             }
-            Request::Update(_) | Request::Reset => {
+            Request::Update(_) | Request::Refresh | Request::Reset => {
                 let mut reset = matches!(request, Request::Reset);
                 if matches!(context.queue.front(), Some(Request::Reset)) {
                     context.queue.pop_front();
@@ -1928,14 +2152,14 @@ impl Core {
                     out.hosted_update(&engine, ctx, &context.info, reset);
                 }
             }
-            Request::Key(key, event) => {
+            Request::Key(key, event, deadline) => {
                 let selecting = self
                     .engines
                     .get(&engine)
                     .is_some_and(|slot| slot.wanted_inner.is_some());
                 if !context.framework_ready || selecting {
                     if context.hold_key() {
-                        context.queue.push_front(Request::Key(key, event));
+                        context.queue.push_front(Request::Key(key, event, deadline));
                         return false;
                     }
                     // Without its input context the framework would lose the key. One
@@ -1964,7 +2188,7 @@ impl Core {
                         // The input method grabs the keyboard once it learns about the
                         // field; until then, keys wait a moment rather than slip past it.
                         if context.hold_key() {
-                            context.queue.push_front(Request::Key(key, event));
+                            context.queue.push_front(Request::Key(key, event, deadline));
                             return false;
                         }
                         out.finish_key(&key, false);
@@ -2121,10 +2345,12 @@ impl Core {
         let token = self.next_token;
         let events = self.events.clone();
         let method = request.method();
-        let timeout = if matches!(request, Request::Activate) {
-            self.key_timeout.max(ACTIVATION_TIMEOUT)
-        } else {
-            self.key_timeout
+        let deadline = match &request {
+            Request::Activate => Instant::now() + self.key_timeout.max(ACTIVATION_TIMEOUT),
+            Request::Key(_, _, Some(deadline)) => {
+                (*deadline).min(Instant::now() + self.key_timeout)
+            }
+            _ => Instant::now() + self.key_timeout,
         };
         let mut key_ref = None;
         let app = context.info.app_id.clone();
@@ -2135,47 +2361,53 @@ impl Core {
             context.mode_ready = false;
             context.pending_mode = Some((method.clone(), mode.clone()));
         }
-        match request {
+        let request = match request {
             Request::Activate => {
                 context.activated = true;
-                let info = context.info.to_dict();
-                tokio::task::spawn_local(async move {
-                    let reply = Reply::Actions(proxy.activate(ctx, &info).await);
-                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
-                });
+                Request::Activate
             }
-            Request::RestoreMode => {
-                let mode = wanted_mode.expect("restore without a saved mode returns above");
-                tokio::task::spawn_local(async move {
-                    let reply = Reply::Actions(proxy.set_input_mode(ctx, &mode).await);
-                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
-                });
-            }
-            Request::Update(changes) => {
-                tokio::task::spawn_local(async move {
-                    let reply = Reply::Actions(proxy.update_context(ctx, &changes).await);
-                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
-                });
-            }
-            Request::Reset => {
-                tokio::task::spawn_local(async move {
-                    let reply = Reply::Actions(proxy.reset(ctx).await);
-                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
-                });
-            }
-            Request::Key(key, event) => {
-                key_ref = Some(key);
-                tokio::task::spawn_local(async move {
-                    let reply = Reply::Key(proxy.process_key(ctx, &event, &Dict::new()).await);
-                    let _ = events.send(CoreEvent::Reply { ctx, token, reply });
-                });
-            }
+            Request::Refresh => Request::Update(context.info.to_dict()),
+            other => other,
+        };
+        let info = matches!(request, Request::Activate).then(|| context.info.to_dict());
+        if let Request::Key(key, _, _) = &request {
+            key_ref = Some(*key);
         }
+        let task = RpcTask::new(tokio::task::spawn_local(async move {
+            let reply = match request {
+                Request::Activate => Reply::Actions(
+                    proxy
+                        .activate(
+                            ctx,
+                            &info.expect("activation captures the field information"),
+                        )
+                        .await,
+                ),
+                Request::RestoreMode => Reply::Actions(
+                    proxy
+                        .set_input_mode(
+                            ctx,
+                            &wanted_mode.expect("restore without a saved mode returns above"),
+                        )
+                        .await,
+                ),
+                Request::Update(changes) => {
+                    Reply::Actions(proxy.update_context(ctx, &changes).await)
+                }
+                Request::Reset => Reply::Actions(proxy.reset(ctx).await),
+                Request::Key(_, event, _) => {
+                    Reply::Key(proxy.process_key(ctx, &event, &Dict::new()).await)
+                }
+                Request::Refresh => unreachable!("Refresh was expanded above"),
+            };
+            let _ = events.send(CoreEvent::Reply { ctx, token, reply });
+        }));
         context.in_flight = Some(InFlight {
+            _task: task,
             token,
             engine,
             method,
-            deadline: Instant::now() + timeout,
+            deadline,
             key: key_ref,
             timed_out: false,
             app,
@@ -2305,20 +2537,22 @@ impl Core {
             }
             // Leave the old engine: its preedit goes, and so does anything it still
             // had queued that is not a key.
-            if context.activated {
-                Self::deactivate(&self.engines, context.engine.as_deref(), ctx, out);
-            }
+            let old_engine = context.activated.then(|| context.engine.clone()).flatten();
+            self.deactivate(old_engine.as_deref(), ctx, out);
+            let Some(context) = self.contexts.get_mut(&ctx) else {
+                continue;
+            };
             context.waiting_since = Instant::now();
             context.hold_until = None;
             out.clear_preedit(context.origin, ctx);
-            if let Some(flight) = context.in_flight.take() {
-                self.stale_tokens.insert(flight.token);
-                if let Some(key) = flight.key {
-                    out.finish_key(&key, false);
-                }
+            if let Some(flight) = context.in_flight.take()
+                && let Some(key) = flight.key
+            {
+                out.finish_key(&key, false);
             }
             context.queue.retain(|r| matches!(r, Request::Key(..)));
             context.activated = false;
+            context.recovering = false;
             context.mode_ready = false;
             context.mode_revision = 0;
             context.mode = None;
@@ -2426,22 +2660,17 @@ impl Core {
             .partition(|(_, context)| matches!(context.origin, Origin::Wayland(_)));
         self.contexts = others;
         for (ctx, context) in wayland {
-            if let Some(flight) = context.in_flight {
-                self.stale_tokens.insert(flight.token);
-            }
-            // Engines forget the field too. Hosted ones lose their input method with
-            // the connection.
+            // The disconnected frontend no longer owns its keys. Dropping its
+            // in-flight owner still cancels the RPC immediately.
+            drop(context.in_flight);
             if context.activated
-                && let Some(slot) = context
-                    .engine
-                    .as_deref()
-                    .and_then(|id| self.engines.get(id))
-                && !slot.installed.manifest.is_hosted()
-                && let Some(proxy) = slot.proxy.clone()
+                && let Some(engine) = context.engine
+                && self
+                    .engines
+                    .get(&engine)
+                    .is_some_and(|slot| !slot.installed.manifest.is_hosted())
             {
-                tokio::task::spawn_local(async move {
-                    let _ = proxy.deactivate(ctx).await;
-                });
+                self.deactivate_native(&engine, ctx);
             }
         }
     }

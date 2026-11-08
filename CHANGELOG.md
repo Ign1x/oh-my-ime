@@ -43,6 +43,11 @@ All notable changes to this project are documented here. The format follows
 - Fcitx5-module fields discard surrounding text on focus-out, when marked sensitive,
   or when surrounding-text support is removed. Text sent while sensitive is never
   cached, and deletion waits for fresh text so bytes cannot be mistaken for characters.
+- Retired native-engine calls are cancelled, and deactivation sends have bounded
+  lifetimes and concurrency. Context updates coalesce between key/reset/mode
+  barriers; bounded queues and key deadlines measured from arrival keep obsolete
+  updates from delaying typing. Overload passes keys through in order and resets
+  the engine context before composition resumes.
 - Keys forwarded in native engine replies retain their original modifiers on
   Wayland, Fcitx and XIM. Wayland delivers exactly one release and leaves repeat
   handling to the application for forwarded presses.
