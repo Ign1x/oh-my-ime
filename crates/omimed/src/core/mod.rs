@@ -1778,8 +1778,11 @@ impl Core {
                 warn!(
                     engine = flight.engine,
                     method = flight.method,
-                    "engine request failed: {e}"
+                    error = %engines::error_name(&e),
+                    "engine request failed"
                 );
+                debug!(engine = flight.engine, method = flight.method, error = %e,
+                    "engine request failure details");
                 (false, Vec::new())
             }
         };

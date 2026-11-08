@@ -132,6 +132,59 @@ fn saving_engine(args: &[&str]) -> TestEngine {
     }
 }
 
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn engine_dbus_errors_keep_key_arguments_out_of_default_logs() -> anyhow::Result<()> {
+    for debug in [false, true] {
+        let engine = TestEngine {
+            id: "errors",
+            program: target_dir().join("omime-error-engine"),
+            args: Vec::new(),
+            env: Vec::new(),
+            hosted: false,
+        };
+        let env = TestEnv::prepare(&[engine])?;
+        let path = env.dir().join("error-level.log");
+        let mut command = env.command(program_dir().join("omimed"));
+        command
+            .args(["--engine", "errors"])
+            .env_remove("OMIME_LOG")
+            .env_remove("OMIME_WL_DEBUG")
+            .stderr(Stdio::from(std::fs::File::create(&path)?));
+        if debug {
+            command.env("OMIME_LOG", "debug");
+        }
+        if std::env::var_os("OMIME_E2E_INSTALL_DIR").is_some() {
+            command.env_remove("LD_LIBRARY_PATH");
+        }
+        struct Daemon(Child);
+        impl Drop for Daemon {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let _daemon = Daemon(command.spawn()?);
+        wait_until("error engine registration", || {
+            std::fs::read_to_string(&path)
+                .ok()?
+                .contains("engine ready")
+                .then_some(())
+        })?;
+        let client = env.fcitx_client(&[])?;
+        client.send("focus-in")?;
+        client.send("key 0x61 38 0 press")?;
+        client.wait_for("key returned after error", |line| line == "reply false")?;
+        let log = std::fs::read_to_string(&path)?;
+        assert!(log.contains("engine request failed"), "{log}");
+        assert!(log.contains("ProcessKey"), "{log}");
+        assert!(log.contains("org.freedesktop.DBus.Error.Failed"), "{log}");
+        assert_eq!(log.contains("PRIVATE_KEY_ARGUMENT:a"), debug, "{log}");
+        env.omime(&["status"])?;
+    }
+    Ok(())
+}
+
 fn wait_for_engine_exit(pid: u32) -> anyhow::Result<()> {
     wait_until("the engine to exit and be reaped", || {
         (!Path::new(&format!("/proc/{pid}")).exists()).then_some(())

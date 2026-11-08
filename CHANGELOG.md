@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Engine request errors log their name at normal levels and keep the remote
+  description at debug level, so error bodies cannot copy typed text into normal logs.
 - Fcitx5-module fields discard surrounding text on focus-out, when marked sensitive,
   or when surrounding-text support is removed. Text sent while sensitive is never
   cached, and deletion waits for fresh text so bytes cannot be mistaken for characters.

@@ -560,7 +560,10 @@ and IBus frameworks; a separate Fcitx5 addon host is outside the plan.
 
 - Wayland fields marked sensitive are not grabbed; Fcitx5 fields marked sensitive
   bypass engines. XIM does not report field purpose, so it cannot provide this bypass.
-- Key contents are never logged by default.
+- The daemon logs engine request error names at normal levels; remote error bodies
+  require debug logging. Engine stdout and stderr remain relayed at INFO, so engine
+  authors must not print keys, surrounding text or committed text. Use
+  `OMIME_LOG=info,engine=warn` to silence that relay.
 - Sockets live in a `0700` directory and peers are checked with `SO_PEERCRED`.
 - Rime's user-data directory is created or restricted to `0700` before librime starts;
   if this fails, Rime leaves keys to applications. Its existing user database files

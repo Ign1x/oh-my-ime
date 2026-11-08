@@ -69,6 +69,22 @@ const RESTART_MAX: Duration = Duration::from_secs(30);
 pub const MAX_CRASHES: usize = 5;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
 
+/// Classify remote failures without copying their possibly input-bearing body.
+pub(crate) fn error_name(error: &zbus::Error) -> String {
+    use zbus::DBusError as _;
+    match error {
+        zbus::Error::MethodError(name, ..) => name.to_string(),
+        zbus::Error::FDO(error) => match &**error {
+            zbus::fdo::Error::ZBus(error) => error_name(error),
+            error => error.name().to_string(),
+        },
+        zbus::Error::DBus(error) => error.name().to_string(),
+        zbus::Error::InputOutput(_) | zbus::Error::Connection(..) => "I/O error".to_owned(),
+        zbus::Error::Handshake(_) => "D-Bus handshake error".to_owned(),
+        _ => "D-Bus protocol error".to_owned(),
+    }
+}
+
 /// Maximum number of wire entries considered in one native `SetProperties` call.
 pub(crate) const MAX_ENGINE_PROPERTIES: usize = 256;
 
@@ -1443,7 +1459,10 @@ fn listen_engine(
                 };
                 match tokio::time::timeout_at(deadline, register).await {
                     Ok(Ok(())) => {}
-                    Ok(Err(e)) => warn!(engine, "engine connection failed: {e}"),
+                    Ok(Err(e)) => {
+                        warn!(engine, error = %error_name(&e), "engine connection failed");
+                        debug!(engine, error = %e, "engine connection failure details");
+                    }
                     Err(_) => debug!(engine, "closing an unregistered engine connection"),
                 }
             });

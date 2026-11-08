@@ -368,6 +368,11 @@ API and `omime activate <id>` continue to target the current engine.
 
 ## Saving state on shutdown
 
+Do not print keys, surrounding text or committed text to stdout or stderr: omimed
+relays both streams at INFO by default. Remote D-Bus error descriptions appear only
+at debug level; ordinary failures retain the engine ID, method and error name.
+`OMIME_LOG=info,engine=warn` silences relayed engine output.
+
 On daemon shutdown, restart, settings reload or uninstall, native engines receive
 `Shutdown` and have **two seconds** to save state and exit. If they remain running,
 omimed sends SIGTERM, waits another two seconds, then sends SIGKILL. A stuck engine
