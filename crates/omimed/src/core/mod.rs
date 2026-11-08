@@ -1238,7 +1238,7 @@ impl Core {
                 if let Some(context) = self.contexts.get(&ctx)
                     && context.engine.as_deref() == Some(&*engine)
                 {
-                    out.apply_actions(context.origin, ctx, &actions);
+                    out.apply_actions(context.origin, ctx, &actions, None);
                 }
             }
             HostedEvent::ForwardKey { engine, ctx, key } => {
@@ -1462,7 +1462,7 @@ impl Core {
                 if let Some(context) = self.contexts.get(&ctx)
                     && context.engine.as_deref() == Some(engine)
                 {
-                    out.apply_actions(context.origin, ctx, &[action]);
+                    out.apply_actions(context.origin, ctx, &[action], None);
                 }
             }
             HostCall::SetPopupVisible(visible) => {
@@ -1689,7 +1689,7 @@ impl Core {
             }
         }
         // Text must reach the application before a key it did not consume.
-        out.apply_actions(origin, ctx, &text_actions);
+        out.apply_actions(origin, ctx, &text_actions, flight.key.as_ref());
         if flight.mode.is_some() && same_app && mode_confirmed {
             self.set_mode_error(None);
             self.remember_confirmed_mode(ctx);

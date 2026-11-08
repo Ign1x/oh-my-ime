@@ -4,7 +4,8 @@
 use std::time::Duration;
 
 use omime_e2e::harness::{
-    TestEnv, dummy_engine, echo_engine, hosted_engine, sparkle_engine, wait_until,
+    TestEnv, dummy_engine, echo_engine, forwarding_engine, hosted_engine, sparkle_engine,
+    wait_until,
 };
 
 #[test]
@@ -307,4 +308,318 @@ fn hosted_forwarding_preserves_modifiers_and_restores_current_state() -> anyhow:
     env.type_on_seat("seat0", "1")?;
     editor.wait_for_text("!1")?;
     Ok(())
+}
+
+/// Exactly one complete stroke, including its order, after all queued replies.
+fn forwarded_stroke(mode: &str, script: &str) -> anyhow::Result<()> {
+    let env = TestEnv::start_with_wayland_trace(&[forwarding_engine(mode)], Some("forwarding"))?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    env.keys_on_seat("seat0", script)?;
+    // The second stroke is a barrier: its reply follows both events of the first.
+    env.keys_on_seat("seat0", "tap z\nsleep 300\n")?;
+    editor.wait_for("the barrier release", |line| line == "release \"z\"")?;
+    let events: Vec<_> = editor
+        .lines()
+        .into_iter()
+        .filter(|line| line.starts_with("key ") || line.starts_with("release "))
+        .collect();
+    assert_eq!(
+        events,
+        ["key \"a\"", "release \"a\"", "key \"z\"", "release \"z\""]
+    );
+    assert_eq!(editor.text(), "az");
+    assert_forwarded_wire(&env, &[(30, 1), (30, 0), (44, 1), (44, 0)]);
+    Ok(())
+}
+
+fn assert_forwarded_wire(env: &TestEnv, expected: &[(u32, u32)]) {
+    let log = env.daemon_log();
+    let events: Vec<_> = log
+        .lines()
+        .filter(|line| line.contains("<= zwp_virtual_keyboard_v1#") && line.contains(".key("))
+        .map(|line| {
+            let (_, key) = line
+                .split_once(", key: ")
+                .expect("key event contains a code");
+            let (key, state) = key
+                .split_once(", state: ")
+                .expect("key event contains a state");
+            (
+                key.parse::<u32>().expect("numeric key code"),
+                state
+                    .trim_end_matches(')')
+                    .parse::<u32>()
+                    .expect("numeric key state"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        events, expected,
+        "outgoing virtual-keyboard events must match exactly"
+    );
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_reply_releasing_another_forwarded_key_sends_one_wire_release() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_wayland_trace(
+        &[forwarding_engine("forward-cross-release")],
+        Some("forwarding"),
+    )?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    // A is forwarded first. While B's reply is pending, A-up arrives at the
+    // grab; B then forwards A-up before A's own release decision is processed.
+    env.keys_on_seat(
+        "seat0",
+        "press a\nsleep 150\npress b\nsleep 20\nrelease a\nrelease b\nsleep 350\ntap z\nsleep 300\n",
+    )?;
+    editor.wait_for("the barrier release", |line| line == "release \"z\"")?;
+    let log = env.daemon_log();
+    let physical_release = log
+        .lines()
+        .position(|line| {
+            line.contains("-> zwp_input_method_keyboard_grab_v2#")
+                && line.ends_with("key: 30, state: RELEASED)")
+        })
+        .expect("A-up arrived at the keyboard grab");
+    let forwarded_release = log
+        .lines()
+        .position(|line| {
+            line.contains("<= zwp_virtual_keyboard_v1#") && line.ends_with("key: 30, state: 0)")
+        })
+        .expect("B's reply forwarded A-up");
+    assert!(
+        physical_release < forwarded_release,
+        "the physical release must precede B's reply"
+    );
+    // Sway discards duplicate releases before delivering them to the editor.
+    // Check the daemon's outgoing requests so that filtering cannot hide a bug.
+    assert_forwarded_wire(&env, &[(30, 1), (30, 0), (44, 1), (44, 0)]);
+    assert_eq!(editor.text(), "az");
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn native_forward_actions_preserve_release() -> anyhow::Result<()> {
+    forwarded_stroke("forward", "press a\nsleep 150\nrelease a\nsleep 250\n")
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn an_engine_forwarding_press_and_release_gives_one_release() -> anyhow::Result<()> {
+    // Press-only forwarding, both events in the press reply, and a physical
+    // release before either reply all leave exactly one complete stroke. A rejected
+    // text transaction must still complete the earlier accepted press.
+    for (mode, script) in [
+        (
+            "forward-press",
+            "press a\nsleep 150\nrelease a\nsleep 250\n",
+        ),
+        (
+            "forward-stroke",
+            "press a\nsleep 150\nrelease a\nsleep 250\n",
+        ),
+        ("slow-forward", "tap a\nsleep 400\n"),
+        (
+            "forward-release-overflow",
+            "press a\nsleep 150\nrelease a\nsleep 250\n",
+        ),
+    ] {
+        forwarded_stroke(mode, script)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn native_forward_actions_preserve_original_shift() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[forwarding_engine("slow-forward")], Some("forwarding"))?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&["--print-modifiers"])?;
+    env.keys_on_seat(
+        "seat0",
+        "press shift\nsleep 20\ntap a\nsleep 20\nrelease shift\nsleep 800\n",
+    )?;
+    assert_eq!(editor.text(), "A", "events: {:?}", editor.lines());
+    env.keys_on_seat("seat0", "tap z\nsleep 400\n")?;
+    editor.wait_for_text("Az")?;
+    let lines = editor.lines();
+    let strokes: Vec<_> = lines
+        .iter()
+        .filter(|line| {
+            line.starts_with("key ")
+                || matches!(
+                    line.as_str(),
+                    "release \"A\"" | "release \"a\"" | "release \"z\""
+                )
+        })
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        strokes,
+        ["key \"A\"", "release \"A\"", "key \"z\"", "release \"z\""]
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .rev()
+            .find(|line| line.starts_with("active "))
+            .map(String::as_str),
+        Some("active ")
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_forwarded_handled_press_starts_no_daemon_repeat() -> anyhow::Result<()> {
+    for mode in ["forward", "forward-stroke"] {
+        let env = TestEnv::start(&[forwarding_engine(mode)], Some("forwarding"))?;
+        env.wait_for_log("engine ready")?;
+        assert!(
+            env.command("swaymsg")
+                .args(["input", "type:keyboard", "repeat_delay", "50"])
+                .stdout(std::process::Stdio::null())
+                .status()?
+                .success()
+        );
+        let editor = env.editor(&[])?;
+        env.keys_on_seat(
+            "seat0",
+            "press a\nsleep 350\nrelease a\nsleep 150\ntap z\nsleep 150\n",
+        )?;
+        editor.wait_for("the barrier release", |line| line == "release \"z\"")?;
+        let keys = std::fs::read_to_string(env.dir().join("forward-keys.log"))?;
+        assert_eq!(
+            keys.lines()
+                .filter(|line| line.starts_with("30 "))
+                .collect::<Vec<_>>(),
+            ["30 false false", "30 true false"],
+            "forwarded key was repeated by the daemon: {keys}"
+        );
+        let strokes: Vec<_> = editor
+            .lines()
+            .into_iter()
+            .filter(|line| line.starts_with("key ") || line.starts_with("release "))
+            .collect();
+        assert_eq!(
+            strokes,
+            ["key \"a\"", "release \"a\"", "key \"z\"", "release \"z\""]
+        );
+        assert_eq!(editor.text(), "az");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn out_of_band_forward_key_keeps_current_modifiers() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[forwarding_engine("out-of-band-forward")],
+        Some("forwarding"),
+    )?;
+    env.wait_for_log("engine ready")?;
+    let editor = env.editor(&["--print-modifiers"])?;
+    env.keys_on_seat(
+        "seat0",
+        "press shift\ntap a\nrelease shift\nsleep 300\ntap z\nsleep 150\n",
+    )?;
+    editor.wait_for_text("az")?;
+    let lines = editor.lines();
+    let strokes: Vec<_> = lines
+        .iter()
+        .filter(|line| {
+            line.starts_with("key ") || matches!(line.as_str(), "release \"a\"" | "release \"z\"")
+        })
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        strokes,
+        ["key \"a\"", "release \"a\"", "key \"z\"", "release \"z\""]
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .rev()
+            .find(|line| line.starts_with("active "))
+            .map(String::as_str),
+        Some("active ")
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn native_fcitx_forward_uses_the_in_flight_keys_modifiers() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[forwarding_engine("slow-forward")], Some("forwarding"))?;
+    env.wait_for_log("engine ready")?;
+    let address = String::from_utf8(
+        env.command("printenv")
+            .arg("DBUS_SESSION_BUS_ADDRESS")
+            .output()?
+            .stdout,
+    )?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            // No X server is needed; this is the same portal API available to
+            // sandboxed applications loading the Fcitx module.
+            let conn = zbus::connection::Builder::address(address.trim())
+                .build()
+                .await?;
+            let service = zbus::Proxy::new(
+                &conn,
+                "org.freedesktop.portal.Fcitx",
+                "/org/freedesktop/portal/inputmethod",
+                "org.fcitx.Fcitx.InputMethod1",
+            )
+            .await?;
+            let (path, _): (zbus::OwnedObjectPath, Vec<u8>) = service
+                .call(
+                    "CreateInputContext",
+                    &vec![("program", "review-input"), ("display", "x11:")],
+                )
+                .await?;
+            let ic = zbus::Proxy::new(
+                &conn,
+                "org.freedesktop.portal.Fcitx",
+                path,
+                "org.fcitx.Fcitx.InputContext1",
+            )
+            .await?;
+            let _: () = ic.call("FocusIn", &()).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            type Batch = (Vec<(u32, zbus::OwnedVariant)>, bool);
+            let first_args = (0x41_u32, 38_u32, 1_u32, false, 1_u32);
+            let first = ic.call::<_, _, Batch>("ProcessKeyEventBatch", &first_args);
+            let later = async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                ic.call::<_, _, Batch>(
+                    "ProcessKeyEventBatch",
+                    &(0x62_u32, 56_u32, 0_u32, false, 2_u32),
+                )
+                .await
+            };
+            let (first, later) =
+                tokio::time::timeout(Duration::from_secs(3), async { tokio::join!(first, later) })
+                    .await?;
+            later?;
+            let (actions, handled) = first?;
+            assert!(handled);
+            let forwarded: Vec<(u32, u32, bool)> = actions
+                .into_iter()
+                .filter(|(kind, _)| *kind == 2)
+                .map(|(_, value)| value.try_into())
+                .collect::<Result<_, _>>()?;
+            assert_eq!(
+                forwarded,
+                [(0x41, 1, false)],
+                "the later unshifted key must not change the forwarded Shift+A"
+            );
+            anyhow::Ok(())
+        })
 }

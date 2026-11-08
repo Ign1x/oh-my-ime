@@ -84,6 +84,9 @@ pub struct SeatSession {
     keyboard: Keyboard,
     keymap: Option<Rc<str>>,
     keys: KeyTracker,
+    /// A reply already forwarded its own press, possibly as a complete stroke.
+    /// The immediately following finish_key must neither consume nor repeat it.
+    forwarded_reply: Option<KeyRef>,
     /// Presses actually sent, distinct from decisions waiting in pending_output.
     sent_keys: std::collections::BTreeSet<u32>,
     /// Keys physically held right now, as reported by the grab. Engines answer later
@@ -148,6 +151,7 @@ impl SeatSession {
             keyboard: Keyboard::new(),
             keymap: None,
             keys: KeyTracker::default(),
+            forwarded_reply: None,
             sent_keys: std::collections::BTreeSet::new(),
             held: std::collections::BTreeSet::new(),
             repeat: None,
@@ -463,6 +467,7 @@ impl SeatSession {
     }
 
     fn release_sent_keys(&mut self) {
+        self.forwarded_reply = None;
         self.keys.take_forwarded();
         let forwarded = std::mem::take(&mut self.sent_keys);
         if let Some(vk) = &self.vk
@@ -594,9 +599,13 @@ impl SeatSession {
 
     /// Carries out the core's decision about a key.
     pub fn finish_key(&mut self, key: &KeyRef, handled: bool) {
+        let already_forwarded = self.forwarded_reply.take() == Some(*key);
         if key.ctx != 0 && Some(key.ctx) != self.ctx {
             // Focus moved on while the engine was thinking; the key is meaningless now.
             // Releases of keys the application holds were sent when the grab ended.
+            return;
+        }
+        if already_forwarded {
             return;
         }
         let code = key.keycode;
@@ -666,7 +675,12 @@ impl SeatSession {
     }
 
     /// Applies an engine's actions to the focused field `ctx`.
-    pub fn apply_actions(&mut self, ctx: ContextId, actions: &[Action]) {
+    pub fn apply_actions(
+        &mut self,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    ) {
         if Some(ctx) != self.ctx || actions.is_empty() {
             return;
         }
@@ -683,15 +697,7 @@ impl SeatSession {
                     pressed: false,
                 } = action
                 {
-                    self.forward_key(
-                        ctx,
-                        &frontend::ForwardedKey {
-                            keycode: *keycode,
-                            time: now_ms(),
-                            pressed: false,
-                            modifiers: self.keyboard.modifiers(),
-                        },
-                    );
+                    self.forward_action(ctx, *keycode, false, reply_key);
                 }
             }
             return;
@@ -715,24 +721,52 @@ impl SeatSession {
                 Action::ForwardKey { keycode, pressed } => {
                     // Text before the key must reach the application first.
                     self.flush_batch(std::mem::take(&mut batch));
-                    self.forward_key(
-                        ctx,
-                        &frontend::ForwardedKey {
-                            keycode: *keycode,
-                            time: now_ms(),
-                            pressed: *pressed,
-                            modifiers: self.keyboard.modifiers(),
-                        },
-                    );
+                    self.forward_action(ctx, *keycode, *pressed, reply_key);
                 }
             }
         }
         self.flush_batch(batch);
     }
 
-    pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
-        if Some(ctx) != self.ctx {
+    fn forward_action(
+        &mut self,
+        ctx: ContextId,
+        code: u32,
+        pressed: bool,
+        reply_key: Option<&KeyRef>,
+    ) {
+        let key = frontend::ForwardedKey {
+            keycode: code,
+            time: reply_key.map_or_else(now_ms, |key| key.time),
+            pressed,
+            modifiers: reply_key.map_or_else(|| self.keyboard.modifiers(), |key| key.modifiers),
+        };
+        if !self.forward_key(ctx, &key) {
             return;
+        }
+        let Some(reply_key) = reply_key else { return };
+        if pressed {
+            if self.repeat.is_some_and(|repeat| repeat.keycode == code) {
+                self.repeat = None;
+            }
+            if code == reply_key.keycode && !reply_key.released {
+                self.forwarded_reply = Some(*reply_key);
+                if !self.held.contains(&code) {
+                    // forward_key completed this late press with a release already.
+                    self.keys.press_consumed(code);
+                }
+            }
+        } else {
+            // The physical release may already be queued behind another key's
+            // reply. Remember this completed stroke until that decision settles.
+            // forward_key accepted the release only for an existing forwarded press.
+            self.keys.press_consumed(code);
+        }
+    }
+
+    pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) -> bool {
+        if Some(ctx) != self.ctx {
+            return false;
         }
         let code = key.keycode;
         if key.pressed && !self.held.contains(&code) {
@@ -740,17 +774,18 @@ impl SeatSession {
             // Complete the stroke now so the application cannot keep it held.
             if self.send_key(key.time, code, KEY_STATE_PRESSED, key.modifiers) {
                 self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
+                return true;
             }
-            return;
+            return false;
         }
         if key.pressed {
-            self.send_press(key.time, code, key.modifiers);
+            self.send_press(key.time, code, key.modifiers)
         } else {
             if !self.keys.is_forwarded(code) {
-                return;
+                return false;
             }
             self.keys.release(code);
-            self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers);
+            self.send_key(key.time, code, KEY_STATE_RELEASED, key.modifiers)
         }
     }
 
@@ -855,14 +890,16 @@ impl SeatSession {
         self.commit(self.ime.serial());
     }
 
-    fn send_press(&mut self, time: u32, key: u32, modifiers: ModifierState) {
-        if self.send_key(time, key, KEY_STATE_PRESSED, modifiers) {
+    fn send_press(&mut self, time: u32, key: u32, modifiers: ModifierState) -> bool {
+        let accepted = self.send_key(time, key, KEY_STATE_PRESSED, modifiers);
+        if accepted {
             self.keys.press_forwarded(key);
         } else if !self.keys.is_forwarded(key) {
             // Swallow the release of a rejected press, but retain the release
             // obligation if this was a repeated press of an already held key.
             self.keys.press_consumed(key);
         }
+        accepted
     }
 
     fn send_key(&mut self, time: u32, key: u32, state: u32, modifiers: ModifierState) -> bool {

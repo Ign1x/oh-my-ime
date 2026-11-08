@@ -154,6 +154,17 @@ pub fn dummy_engine(args: &[&str]) -> TestEngine {
     }
 }
 
+/// Native reply/host forwarding probes, sharing the commit-ordering test engine.
+pub fn forwarding_engine(mode: &str) -> TestEngine {
+    TestEngine {
+        id: "forwarding",
+        program: target_dir().join("omime-review-input-engine"),
+        args: vec![mode.to_owned()],
+        env: Vec::new(),
+        hosted: false,
+    }
+}
+
 /// The file `omime-im-client` reports to, in the environment's directory.
 pub const HOSTED_LOG: &str = "hosted.log";
 
@@ -193,6 +204,18 @@ impl TestEnv {
     /// is passed as `--engine`.
     pub fn start(engines: &[TestEngine], start_engine: Option<&str>) -> anyhow::Result<Self> {
         Self::start_with_seats(engines, start_engine, &[])
+    }
+
+    /// Like [`Self::start`], with Wayland wire logs for this private daemon.
+    /// Protocol assertions can detect duplicate events a compositor filters out.
+    pub fn start_with_wayland_trace(
+        engines: &[TestEngine],
+        start_engine: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let mut env = Self::prepare(engines)?;
+        env.env.push(("OMIME_WL_DEBUG".into(), "1".into()));
+        env.start_daemon(start_engine)?;
+        Ok(env)
     }
 
     /// Like [`Self::start`], with more seats than `seat0`.

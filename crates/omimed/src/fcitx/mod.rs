@@ -553,8 +553,16 @@ impl FcitxFrontend {
     }
 
     /// Applies an engine's actions to the field `ctx`.
-    pub fn apply_actions(&mut self, ctx: ContextId, actions: &[Action]) {
-        self.apply_actions_with_modifiers(ctx, actions, None);
+    pub fn apply_actions(
+        &mut self,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    ) {
+        let modifiers = reply_key
+            .and_then(|key| self.pending.get(&key.id))
+            .map(|pending| pending.key.1);
+        self.apply_actions_with_modifiers(ctx, actions, modifiers);
     }
 
     pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
@@ -611,9 +619,8 @@ impl FcitxFrontend {
                         self.keymap = default_keymap();
                     }
                     if let Some(keymap) = &mut self.keymap {
-                        // With the modifiers of the application's last key, as a virtual
-                        // keyboard's keys reach Wayland applications: Ctrl+C an input
-                        // method does not want must arrive as Ctrl+C, Shift+a as A.
+                        // Reply actions retain their key's state. Host calls use the
+                        // last state reported by the application.
                         let mods = modifiers.unwrap_or(state.last_mods);
                         let keyval = keysym(keymap, *keycode, mods);
                         signals.push(Signal::Forward(keyval, mods, !pressed));
@@ -889,6 +896,7 @@ mod tests {
                 before: 3,
                 after: 4,
             }],
+            None,
         );
         assert!(matches!(
             outgoing.try_recv(),
@@ -903,6 +911,7 @@ mod tests {
                 before: u32::MAX,
                 after: u32::MAX,
             }],
+            None,
         );
         assert!(
             matches!(outgoing.try_recv(), Ok(Outgoing::Signal { signal: Signal::Delete(offset, size), .. }) if offset == -(cursor as i32) && size == chars)

@@ -12,7 +12,13 @@ impl Frontends for TestFrontends {
         self.finished.push((*key, handled));
     }
 
-    fn apply_actions(&mut self, _origin: Origin, _ctx: ContextId, actions: &[Action]) {
+    fn apply_actions(
+        &mut self,
+        _origin: Origin,
+        _ctx: ContextId,
+        actions: &[Action],
+        _reply_key: Option<&KeyRef>,
+    ) {
         self.actions.extend_from_slice(actions);
     }
 

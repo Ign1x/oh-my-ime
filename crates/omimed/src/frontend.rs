@@ -123,8 +123,15 @@ pub trait Frontends {
     /// engine `handled` it.
     fn finish_key(&mut self, key: &KeyRef, handled: bool);
 
-    /// Applies an engine's actions to the text field `ctx`.
-    fn apply_actions(&mut self, origin: Origin, ctx: ContextId, actions: &[Action]);
+    /// Applies an engine's actions to the text field `ctx`. Reply actions use the
+    /// in-flight key's snapshot; out-of-band actions use the current state.
+    fn apply_actions(
+        &mut self,
+        origin: Origin,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    );
 
     fn forward_key(&mut self, origin: Origin, ctx: ContextId, key: &ForwardedKey);
 

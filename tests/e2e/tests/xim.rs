@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TIMEOUT, TestEnv, dummy_engine, echo_engine};
+use omime_e2e::harness::{TIMEOUT, TestEnv, dummy_engine, echo_engine, forwarding_engine};
 use omime_e2e::json_string;
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
@@ -802,5 +802,36 @@ fn retained_context_commits_use_compound_text() -> anyhow::Result<()> {
     expect_commit(&request, 2, 3, b"AB")?;
     assert!(expect_commit(&request, 2, 3, b"CD").is_err());
     assert!(expect_commit(&request, 2, 4, b"AB").is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_reply_forward_uses_the_in_flight_keys_modifiers() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[forwarding_engine("slow-forward")], Some("forwarding"))?;
+    env.wait_for_log("engine ready")?;
+    let client = env.xim_client(&[])?;
+    env.keys_on_seat(
+        "seat0",
+        "press shift\ntap a\nrelease shift\ntap b\nsleep 600\n",
+    )?;
+    client.wait_for("the following unshifted key", |line| line == "key \"b\"")?;
+    let lines = client.lines();
+    let forwarded: Vec<_> = lines
+        .iter()
+        .filter(|line| {
+            line.starts_with("forwarded 38 ")
+                || line.starts_with("forwarded 56 ")
+                || line.starts_with("key ")
+                || line.starts_with("release ")
+        })
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        forwarded,
+        ["forwarded 38 1", "key \"A\"", "forwarded 56 0", "key \"b\""]
+    );
+    assert_eq!(client.text(), "Ab");
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 0);
     Ok(())
 }

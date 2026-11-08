@@ -40,6 +40,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Keys forwarded in native engine replies retain their original modifiers on
+  Wayland, Fcitx and XIM. Wayland delivers exactly one release and leaves repeat
+  handling to the application for forwarded presses.
 - Duplicate fractional-scale objects are rejected within the offending engine's
   connection, keeping the shared compositor connection and other input working.
 - Removing an engine closes and unlinks its listeners and cancels unregistered

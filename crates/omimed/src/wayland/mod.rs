@@ -361,9 +361,15 @@ impl Frontend {
     }
 
     /// Applies an engine's actions to the text field `ctx` on `seat`.
-    pub fn apply_actions(&mut self, seat: SeatId, ctx: ContextId, actions: &[Action]) {
+    pub fn apply_actions(
+        &mut self,
+        seat: SeatId,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    ) {
         if let Some(seat) = self.seats.get_mut(&seat) {
-            seat.apply_actions(ctx, actions);
+            seat.apply_actions(ctx, actions, reply_key);
         }
     }
 

@@ -962,13 +962,35 @@ impl Frontends for Outputs<'_> {
         }
     }
 
-    fn apply_actions(&mut self, origin: Origin, ctx: ContextId, actions: &[Action]) {
+    fn apply_actions(
+        &mut self,
+        origin: Origin,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    ) {
         match origin {
-            Origin::Wayland(seat) => self.wayland.apply_actions(seat, ctx, actions),
-            Origin::Fcitx => self.fcitx.apply_actions(ctx, actions),
+            Origin::Wayland(seat) => {
+                let key = match reply_key {
+                    Some(KeyRef::Wayland(key)) => Some(key),
+                    _ => None,
+                };
+                self.wayland.apply_actions(seat, ctx, actions, key);
+            }
+            Origin::Fcitx => {
+                let key = match reply_key {
+                    Some(KeyRef::Fcitx(key)) => Some(key),
+                    _ => None,
+                };
+                self.fcitx.apply_actions(ctx, actions, key);
+            }
             Origin::Xim => {
                 if let Some(xim) = &mut self.xim {
-                    xim.apply_actions(ctx, actions);
+                    let key = match reply_key {
+                        Some(KeyRef::Xim(key)) => Some(key),
+                        _ => None,
+                    };
+                    xim.apply_actions(ctx, actions, key);
                 }
             }
         }

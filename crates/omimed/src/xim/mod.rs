@@ -748,8 +748,16 @@ impl XimFrontend {
     }
 
     /// Applies an engine's actions to the field `ctx`.
-    pub fn apply_actions(&mut self, ctx: ContextId, actions: &[Action]) {
-        self.apply_actions_with_key(ctx, actions, None);
+    pub fn apply_actions(
+        &mut self,
+        ctx: ContextId,
+        actions: &[Action],
+        reply_key: Option<&KeyRef>,
+    ) {
+        let event = reply_key
+            .and_then(|key| self.handler.pending.get(&key.id))
+            .map(|pending| pending.event.clone());
+        self.apply_actions_with_key(ctx, actions, None, event.as_ref());
     }
 
     pub fn forward_key(&mut self, ctx: ContextId, key: &frontend::ForwardedKey) {
@@ -760,6 +768,7 @@ impl XimFrontend {
                 pressed: key.pressed,
             }],
             Some(key),
+            None,
         );
     }
 
@@ -768,6 +777,7 @@ impl XimFrontend {
         ctx: ContextId,
         actions: &[Action],
         forwarded: Option<&frontend::ForwardedKey>,
+        reply_event: Option<&XEvent>,
     ) {
         let Some(key) = self.find(ctx) else {
             return;
@@ -803,18 +813,17 @@ impl XimFrontend {
                     if !*pressed {
                         continue;
                     }
-                    let template = self
-                        .handler
-                        .ics
-                        .get(&key)
-                        .and_then(|ic| ic.last_event.clone());
+                    let template = reply_event.cloned().or_else(|| {
+                        self.handler
+                            .ics
+                            .get(&key)
+                            .and_then(|ic| ic.last_event.clone())
+                    });
                     let detail = u8::try_from(*keycode)
                         .ok()
                         .and_then(|code| code.checked_add(X11_KEYCODE_OFFSET));
-                    // The key goes back with the modifiers of the key the application
-                    // sent last, as a virtual keyboard's keys reach Wayland applications
-                    // with the modifiers held: Ctrl+C an input method does not want
-                    // must arrive as Ctrl+C, not as a c.
+                    // Replies use the pending event's state, time and window metadata;
+                    // host calls retain the most recently reported event as before.
                     if let (Some(mut template), Some(detail)) = (template, detail) {
                         if let Some(forwarded) = forwarded {
                             template.state = forwarded.modifiers.x11_bits() as u16;
