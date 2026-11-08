@@ -358,6 +358,13 @@ death; the SDK treats direct SIGTERM as an orderly stop.
   choices (Chinese or English punctuation, full or half width) as a flat list of
   entries, each naming the submenu it is in, and the daemon calls `ActivateProperty`
   when one is clicked. The menu of the engine in use is what the control API offers.
+- Version 1.2 negotiates optional input modes. Engines advertise stable mode IDs,
+  accept `SetInputMode` per context and report the actual mode with a shared
+  observation revision across RPC replies and asynchronous updates. The core
+  ignores older observations and restores saved modes before queued keys when
+  `apps.remember` and `apps.remember_mode` are enabled. Labels remain display text;
+  they do not substitute for a confirmed mode. Older engines keep working without
+  this extension.
 - The protocol is versioned by interface name (major) and negotiated at `Register` (minor).
   Extensible arguments use `a{sv}`, and unknown keys are ignored. The XML in `protocol/` is the
   source of truth.
@@ -518,7 +525,10 @@ omimed: the `omime` command line tool, status bars, and settings programs. The X
   preserving its target's mode without changing the target; setup instead refuses
   symlinks.
 - **Applications.** `Apps`, `SetAppInputMethod` and `ForgetApp` read and edit what
-  `[apps] remember` keeps for each application.
+  `[apps] remember` keeps for each application. `apps.remember_mode` optionally
+  saves confirmed modes per application and input method; forgetting an application
+  removes its saved modes too. `Status` exposes the confirmed `input_mode`, or no
+  mode while confirmation is unavailable.
 - **Menus.** `Properties` returns the menu of the engine in use, `ActivateProperty`
   activates one of its entries and `PropertiesChanged` says when it changed;
   `omime properties` and `omime activate` use them.
@@ -557,6 +567,12 @@ the pointer (`Pointer::Take`): Sparkle's recent-emoji panel, a process of its ow
 compositor's display, which draws color emoji as images (the software renderer draws a
 glyph in one color only).
 Slint stays out of omimed, the command line tool, the protocol crate and the SDK.
+
+`omime choose` asks the same panel process to open an interactive chooser. Browsing
+does not change the current method; confirmation applies the selection and remembers
+it for the original application when `apps.remember` is enabled. Cancel, focus loss
+or daemon exit closes it without switching. The chooser uses a keyboard-interactive layer surface while open, releases
+focus when dismissed, and updates its list when enabled methods change.
 
 ## Settings
 

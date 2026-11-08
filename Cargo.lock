@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "omime-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures-core",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "omime-e2e"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2972,14 +2972,14 @@ dependencies = [
 
 [[package]]
 name = "omime-echo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "omime-sdk",
 ]
 
 [[package]]
 name = "omime-overlay"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "slint",
  "smithay-client-toolkit 0.20.0",
@@ -2991,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "omime-panel"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "omime-proto"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustix 1.1.6",
  "serde",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "omime-rime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "omime-proto",
  "omime-sdk",
@@ -3030,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "omime-sdk"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "omime-proto",
  "thiserror 2.0.21",
@@ -3041,7 +3041,7 @@ dependencies = [
 
 [[package]]
 name = "omime-settings"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3057,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "omime-sparkle"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "emojis",
  "fontique",
@@ -3070,7 +3070,7 @@ dependencies = [
 
 [[package]]
 name = "omimed"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures-core",

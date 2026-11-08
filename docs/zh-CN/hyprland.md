@@ -137,7 +137,7 @@ omime config apps.remember true
 omime config apps.remember_mode true
 ```
 
-此功能位于 v0.4.0 之后的开发版本，默认关闭。平台按应用及 Rime 方案保存模式，在处理
+此功能从 v0.5.0 起可用，默认关闭。平台按应用及 Rime 方案保存模式，在处理
 新按键前恢复。普通托盘图标也会显示“中”或“A”；`omime status --json` 的 `input_mode`
 字段分别为稳定的 `native`、`latin`，设置页显示相同的已确认状态。关闭选项后恢复引擎
 原有的共享模式行为，并保留已保存偏好；忘记某个应用会同时删除它的模式记录。
@@ -175,7 +175,7 @@ enabled = false
 
 ### 切换浮层
 
-v0.4.0 之后的开发版本可用 `omime choose` 打开交互式选择器：方向键或 Tab/Shift+Tab
+从 v0.5.0 起可用 `omime choose` 打开交互式选择器：方向键或 Tab/Shift+Tab
 浏览，Enter/空格或鼠标点击确认，Esc 取消。长列表支持滚轮、PageUp/PageDown 和
 Home/End。浏览时不改变输入法；开启 `[apps] remember` 后，确认会记到打开选择器前的
 应用。失去焦点或守护进程退出时自动关闭，重复运行命令不会打开多个选择器。

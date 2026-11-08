@@ -13,13 +13,8 @@ nix develop .#e2e      # 共用测试工具，加上 Python/GTK 4（CI 使用）
 
 ## 检查
 
-```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-python3 scripts/check-translations.py
-cargo deny check
-```
+先运行完整的[贡献者检查](../../CONTRIBUTING.md#before-you-send-a-change)；若修改输入行为，
+再运行下面的端到端测试。
 
 ## 端到端测试
 

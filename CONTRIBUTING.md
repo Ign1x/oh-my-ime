@@ -19,15 +19,17 @@ and `dbus`.
 ## Before you send a change
 
 ```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 python3 scripts/check-translations.py
 python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+python3 -m unittest discover -s tests/desktop -p 'test_*.py'
 cargo deny check        # licenses, advisories, sources
 ```
 
-CI runs the same checks.
+CI runs the same checks, plus the [headless end-to-end suite](docs/development.md#end-to-end-tests)
+against source and installed Nix builds.
 
 Binary release maintenance and the dry-run workflow are documented in
 [docs/releases.md](docs/releases.md).

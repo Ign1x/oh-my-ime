@@ -4,7 +4,7 @@
 
 Release 工作流在原生 x86_64 和 ARM64 runner 上编译，随后将压缩包实际安装为
 Nix 包，运行输入、界面与 Rime 测试。推送版本 tag 后自动发布验证过的产物；
-手动运行工作流只生成 Actions 附件，不公开 Release。
+手动运行工作流或推送到 `release/` 分支只生成 Actions 附件，不公开 Release。
 
 从 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0) 起提供这些附件，
 下面的下载地址现已可用。更早的 v0.1.0–v0.3.0 tag 没有二进制附件。
@@ -75,10 +75,14 @@ Rime 还需 librime ≥ 1.11（`librime.so.1`）和方案数据。Nix 包会提�
 
 1. 更新 `Cargo.toml` 中的 workspace 版本、三个内部依赖版本和 `Cargo.lock`，
    整理 changelog 并提交已验证的源码。
-2. 在 **Actions → Release → Run workflow** 选择该提交所在分支，先验证两个架构。
+2. 在 **Actions → Release → Run workflow** 选择该提交所在分支，或将该提交推送到
+   `release/` 分支，先验证两个架构，不公开 Release。
 3. 给该提交打 `vVERSION` tag 并推送；tag 必须与 `Cargo.toml` 版本相同。
 4. 工作流验证两个架构，组装并求值 Release flake，将全部附件上传到草稿，再公开
    Release。`-rc.1` 等带后缀的 tag 作为预发布，不替换稳定版 latest。
+
+若存在 `docs/release-notes/vVERSION.md`，工作流会用它作为版本说明；否则由 GitHub
+根据合入的改动生成。
 
 流程拒绝覆盖已有 Release。若上传失败留下草稿，检查或删除该草稿后再重试；
 已发布二进制发生变化时应使用新版本，因为 Nix 用户会固定其校验值。

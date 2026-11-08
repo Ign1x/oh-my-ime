@@ -16,13 +16,8 @@ for the Python engine example's test. Rust comes from rustup and `rust-toolchain
 
 ## Checks
 
-```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-python3 scripts/check-translations.py
-cargo deny check
-```
+Run the complete [contributor checks](../CONTRIBUTING.md#before-you-send-a-change),
+then the end-to-end tests below for changes to input behavior.
 
 ## End-to-end tests
 

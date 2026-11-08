@@ -4,8 +4,9 @@ English | [简体中文](zh-CN/releases.md)
 
 The Release workflow builds Linux binaries on native x86_64 and ARM64 runners,
 then installs those archives with Nix and runs input, UI and Rime tests. A pushed
-version tag publishes the verified assets. A manual workflow run produces the same
-assets as Actions artifacts without publishing a Release.
+version tag publishes the verified assets. A manual workflow run or a push to a
+`release/` branch produces the same assets as Actions artifacts without publishing
+a Release.
 
 Binary assets are available starting with
 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0).
@@ -84,12 +85,15 @@ Push tags using your normal SSH credentials. A tag created by another workflow's
 1. Update `[workspace.package].version`, the three internal workspace dependency
    versions in `Cargo.toml`, and `Cargo.lock`. Finish the changelog and commit the
    tested release source.
-2. Run **Actions → Release → Run workflow** on the release commit to validate both
-   architectures without publishing.
+2. Run **Actions → Release → Run workflow** on the release commit, or push that
+   commit to a `release/` branch, to validate both architectures without publishing.
 3. Tag that commit `vVERSION` and push the tag. The tag must match `Cargo.toml`.
 4. The workflow builds and tests both architectures, assembles and evaluates the
    release flake, uploads all assets to a draft, then publishes the draft. Tags with
    a suffix such as `-rc.1` create prereleases and do not become the stable latest.
+
+Release notes come from `docs/release-notes/vVERSION.md` when present; otherwise
+GitHub generates them from the merged changes.
 
 Existing release assets are never overwritten. If uploading leaves a draft after
 a failure, inspect or remove that draft before retrying. Use a new version for a

@@ -183,7 +183,7 @@ omime config apps.remember true
 omime config apps.remember_mode true
 ```
 
-This optional feature is available on the development branch after v0.4.0. Modes
+This optional feature is available from v0.5.0. Modes
 are saved for each application and Rime schema, and restored before the next key.
 The tray shows `中` or `A` even in hosts without tray-label extensions; the same
 confirmed mode is `native` or `latin` in `omime status --json`'s `input_mode` field.
@@ -233,7 +233,7 @@ enabled = false
 
 ### Switcher
 
-On the development branch after v0.4.0, `omime choose` opens an explicit chooser:
+From v0.5.0, `omime choose` opens an explicit chooser:
 use arrows or Tab/Shift+Tab to browse, Enter/Space or a click to select, and Esc to
 cancel. Long lists support scrolling, PageUp/PageDown and Home/End. Browsing does
 not change the input method; confirming remembers the selection for the original

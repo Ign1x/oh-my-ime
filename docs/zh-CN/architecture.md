@@ -95,6 +95,7 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 - 引擎不得隐藏自己的工具包窗口。它们通过 `SetPopupVisible` 请求平台处理。
 - 1.1 版允许引擎拥有自己的多个输入法，例如 Rime 引擎的各个方案：引擎用 `SetInputMethods` 公布它们，用 `SetCurrentInputMethod` 报告正在使用的那个；用户像选择被托管框架里的输入法一样以 `engine/id` 选择它们，守护进程用 `SelectInputMethod` 请求切换。核心对待它们的方式与框架里的输入法相同：所做的选择会跨重启保留，并在引擎注册时交还给它。
 - 1.1 版还让引擎拥有菜单：`SetProperties` 以扁平列表公布动作、开关和选择（中文或英文标点、全角或半角），每一项写明自己所在的子菜单；某一项被点击时，守护进程调用 `ActivateProperty`。控制 API 提供的就是正在使用的引擎的菜单。
+- 1.2 版协商可选的输入模式能力。引擎声明稳定的模式 ID，按上下文处理 `SetInputMode`，并用 RPC 回复和异步更新共用的观察版本号报告实际模式。核心忽略较旧的观察；用户同时开启 `apps.remember` 和 `apps.remember_mode` 时，在处理排队按键之前恢复保存的模式。标签仅用于显示，不能代替模式确认；旧引擎无需此扩展也能继续工作。
 - 协议按接口名区分版本（主版本号），并在 `Register` 时协商（次版本号）。可扩展参数使用 `a{sv}`，未知键被忽略。`protocol/` 中的 XML 是权威来源。
 
 ## 会话配置与应用诊断
@@ -141,7 +142,7 @@ undo 恢复受管理的文件，恢复后的环境在重新登录时生效。
 
 - **列表。** `Engines` 和 `InputMethods` 返回面向设置程序的字典：每个已安装的引擎及其描述、语言、类型和状态，以及所有可供选择的输入法，不论是否已启用。框架在已配置的输入法之外还拥有的那些（Fcitx 5 的 `AvailableInputMethods`、IBus 的 `Engines`，均不含键盘布局）保存在 `$XDG_CACHE_HOME/oh-my-ime/catalog.toml` 中，因此框架再次运行之前也能列出它们。从未运行过的框架，则由它安装的文件说明它有哪些输入法：Fcitx 5 的 `share/fcitx5/inputmethod/*.conf`，以及 IBus 的 `share/ibus/component/*.xml` 中的引擎（对于用程序列出引擎的组件，像 IBus 那样运行该程序）；这些文件在清单所运行和所需程序的安装前缀中查找。`InputMethodsChanged` 表示需要重新读取。
 - **配置。** omimed 的 `Configure` 按点分名称（`apps.remember`、`engines`）设置 `config.toml` 的选项，检查文件仍然有效，保留注释和其它所有内容，经临时文件写入后重新加载。`omime enable`、`disable` 和 `config` 都用它；不需要 omimed 也能运行的 `omime install`、`uninstall` 和 `setup` 会自己写文件。`setup` 还管理 Hyprland 的 include 与自启动行，记录原内容和写入内容，撤销前检查冲突。`initial_input_method` 提供首次登录的选择，后续登录以保存的状态为准。每次重新加载之后都会发出 `ConfigChanged`。
-- **应用。** `Apps`、`SetAppInputMethod` 和 `ForgetApp` 读取和修改 `[apps] remember` 为每个应用记住的内容。
+- **应用。** `Apps`、`SetAppInputMethod` 和 `ForgetApp` 读取和修改 `[apps] remember` 为每个应用记住的内容。`apps.remember_mode` 可选地按应用和输入法保存已确认的模式；忘记应用时也删除其模式。`Status` 用 `input_mode` 提供已确认的模式，尚未确认时不提供模式值。
 - **文件写入。** 配置、守护进程状态和输入法目录缓存先以排他方式创建名称唯一的同目录临时文件，再重命名替换目标文件。更新时保留原文件权限，新文件使用 `0600`；写入失败则保留原内容并清理临时文件。配置文件在重命名前同步到磁盘。状态、目录缓存和 Sparkle 历史记录不调用 fsync，以免磁盘刷新拖慢输入；原子替换不保证断电后的持久性。Configure 和 CLI 的引擎编辑操作会替换符号链接形式的 `config.toml`，沿用链接目标的权限但不改变目标文件；setup 则拒绝符号链接。
 - **菜单。** `Properties` 返回正在使用的引擎的菜单，`ActivateProperty` 激活其中一项，`PropertiesChanged` 表示菜单有了变化；`omime properties` 和 `omime activate` 用的就是它们。
 
@@ -154,6 +155,8 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 用户用 omimed 的热键或控制 API 的 `Switch`、`Next`、`Toggle` 切换时，`omime-panel` 会短暂显示输入法，并高亮刚切换到的那个。它是合成器的普通客户端：omimed 在 `[panel] enabled` 时启动它，它退出时重新启动，并在 omimed 退出时一起停止。它通过控制 API 的 `Switched(input_method, reason)` 得知切换，只在原因为 "hotkey" 和 "command" 时显示；来自托盘（"menu"）、来自引擎（"engine"）以及随焦点在应用之间切换的，都不显示。
 
 它通过 `omime-overlay` 用 Slint 绘制。`omime-overlay` 是一个小库，把图层表面（`zwlr_layer_shell_v1`，smithay-client-toolkit）作为 Slint 的平台：Slint 的软件渲染器绘制到共享内存中，表面不接收输入，由应用以所需的尺寸显示或隐藏它。引擎的浮动面板也用它，并接收指针（`Pointer::Take`）：例如 Sparkle 的最近使用表情面板，它是连接合成器 display 的独立进程，把彩色 emoji 作为图片绘制（软件渲染器只用一种颜色绘制字形）。omimed、命令行工具、协议 crate 和 SDK 都不依赖 Slint。
+
+`omime choose` 请求同一面板进程打开交互式选择器。浏览不改变当前输入法；确认时应用选择，开启 `apps.remember` 时也为原来的应用记住它。取消、失去焦点或守护进程退出时，选择器关闭且不切换。打开期间使用接收键盘输入的图层表面，关闭时释放焦点，启用列表变化时同步更新内容。
 
 ## 设置程序
 

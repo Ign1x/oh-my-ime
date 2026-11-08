@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
 ### Added
 
 - `omime choose` opens a keyboard and pointer input-method chooser. Browse without
@@ -49,7 +51,6 @@ All notable changes to this project are documented here. The format follows
   settles pending keys instead of retaining an unbounded backlog. Key replies keep
   their reservation through the actual D-Bus write, and capability updates cannot
   bypass overload retirement before the field loses and regains focus.
-
 - An XIM application that stops acknowledging output no longer delays other
   applications with repeated 300 ms waits. Its queued output and pending keys are
   retired after the first timeout; only its matching connection/context reply resumes
@@ -512,7 +513,8 @@ compositors with `input-method-v2`, with engines that draw their own UI.
 - `scripts/install.sh`, Hyprland snippets (Lua and legacy), a systemd user unit, a sample
   configuration and the Hyprland guide (`docs/hyprland.md`).
 
-[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Ign1x/oh-my-ime/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ign1x/oh-my-ime/compare/v0.1.0...v0.2.0

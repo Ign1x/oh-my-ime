@@ -76,8 +76,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   restart, a misbehaving engine is stopped, and password fields that applications report
   bypass engines. A stalled XIM application loses its queued output after 300 ms so
   other applications can keep typing.
-- 🧭 **A platform UI.** A settings app, a tray menu, a switcher, desktop notifications, the
-  `omime` command line and a D-Bus API. The input method can be remembered per application.
+- 🧭 **A platform UI.** Settings, a tray menu, the `omime choose` picker, desktop notifications,
+  the `omime` command line and a D-Bus API. Input methods and modes can be remembered per app.
 - 🌐 **English and Simplified Chinese.**
 
 ## Desktop support

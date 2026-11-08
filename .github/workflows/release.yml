@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    # Release branches validate the exact candidate without publishing assets.
+    branches: ['release/**']
     tags: ['v[0-9]*']
   # A dry run on a branch builds and validates assets without publishing them.
   workflow_dispatch:
@@ -169,7 +171,13 @@ jobs:
           fi
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          notes="docs/release-notes/$RELEASE_TAG.md"
+          if [ -f "$notes" ]; then
+            flags+=(--notes-file "$notes")
+          else
+            flags+=(--generate-notes)
+          fi
           gh release create "$RELEASE_TAG" --verify-tag --draft \
-            --title "$RELEASE_TAG" --generate-notes "${flags[@]}" \
+            --title "$RELEASE_TAG" "${flags[@]}" \
             dist/*.tar.gz dist/release.json dist/SHA256SUMS
           gh release edit "$RELEASE_TAG" --draft=false

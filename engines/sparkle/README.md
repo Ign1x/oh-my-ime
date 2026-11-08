@@ -44,9 +44,9 @@ Everything else you type passes through untouched.
 
 ## Rendering
 
-Slint renders with OpenGL (femtovg) when it can, using GPU buffers through the bridge,
-and falls back to its software renderer otherwise. To force the software renderer, set
-`SLINT_BACKEND=winit-software` in omimed's environment.
+Slint uses OpenGL (femtovg) by default, passing GPU buffers through the bridge.
+If OpenGL is unavailable, select the software renderer explicitly by setting
+`SLINT_BACKEND=winit-software` in omimed's environment before starting it.
 
 Emoji glyphs use the "Noto Color Emoji" font when it is installed. The panel always
 uses Slint's software renderer, which draws a glyph in one color only, so it draws its

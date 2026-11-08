@@ -130,9 +130,10 @@ Import the module and enable it:
 `settings` is the content of `~/.config/oh-my-ime/config.toml`, the file described
 in [the configuration](../data/config.toml): `engines` lists the enabled engines
 and input methods in switching order, and `initial_input_method` is the first
-login's choice. `"fcitx5/shuangpin"` is the Xiaohe shuangpin input method inside
+login's choice. `"fcitx5/shuangpin"` is the shuangpin input method inside
 the hosted Fcitx 5, so it needs `fcitx5.enable` and
-`qt6Packages.fcitx5-chinese-addons`. To include a demo, add `"sparkle"` or `"echo"`
+`qt6Packages.fcitx5-chinese-addons`. Choose Xiaohe or another layout in Fcitx 5's
+configuration. To include a demo, add `"sparkle"` or `"echo"`
 to `settings.engines` explicitly; neither needs another package.
 
 The option defaults to `{ }`, which writes no file and leaves omimed's defaults,
