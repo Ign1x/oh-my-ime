@@ -3,7 +3,9 @@
 //!
 //! See `typing.rs` for how to run them.
 
+use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
@@ -469,6 +471,373 @@ fn uninstall_stops_native_engines_politely() -> anyhow::Result<()> {
     env.omime(&["reload"])?;
     wait_for_engine_exit(pid)?;
     assert_saved(&env, pid);
+    Ok(())
+}
+
+// Use a private ID so removing its manifest also uninstalls the engine when the
+// programs under test come from a package that bundles Echo's own manifest.
+fn socket_engine() -> TestEngine {
+    TestEngine {
+        id: "socket-probe",
+        ..echo_engine()
+    }
+}
+
+fn wait_for_ready(env: &TestEnv, id: &str) -> anyhow::Result<()> {
+    wait_until("the engine to register", || {
+        env.omime(&["engines"])
+            .ok()?
+            .lines()
+            .any(|line| line.split_whitespace().any(|field| field == id) && line.ends_with("ready"))
+            .then_some(())
+    })
+}
+
+fn fd_count(pid: u32) -> anyhow::Result<usize> {
+    Ok(std::fs::read_dir(format!("/proc/{pid}/fd"))?.count())
+}
+
+/// Include unlinked listening sockets: checking path existence alone misses the
+/// descriptor leak caused by rebinding the same name on every installation.
+fn engine_listener_counts(env: &TestEnv) -> anyhow::Result<[usize; 2]> {
+    let inodes: std::collections::HashSet<String> =
+        std::fs::read_dir(format!("/proc/{}/fd", env.daemon_pid()))?
+            .filter_map(|entry| {
+                let link = std::fs::read_link(entry.ok()?.path()).ok()?;
+                Some(
+                    link.to_str()?
+                        .strip_prefix("socket:[")?
+                        .strip_suffix(']')?
+                        .to_owned(),
+                )
+            })
+            .collect();
+    let paths = ["engine", "wayland"].map(|name| {
+        env.dir()
+            .join("oh-my-ime/socket-probe")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let mut counts = [0, 0];
+    for line in std::fs::read_to_string("/proc/net/unix")?.lines().skip(1) {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() >= 8 && fields[3] == "00010000" && inodes.contains(fields[6]) {
+            for (path, count) in paths.iter().zip(&mut counts) {
+                if fields[7] == path {
+                    *count += 1;
+                }
+            }
+        }
+    }
+    Ok(counts)
+}
+
+fn idle_peer(env: &TestEnv, id: &str) -> anyhow::Result<UnixStream> {
+    let socket = UnixStream::connect(env.dir().join("oh-my-ime").join(id).join("engine"))?;
+    socket.set_nonblocking(true)?;
+    Ok(socket)
+}
+
+fn peer_closed(mut socket: &UnixStream) -> bool {
+    match socket.read(&mut [0; 1]) {
+        Ok(0) => true,
+        Err(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+        ),
+        _ => false,
+    }
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn engine_removal_releases_its_listening_sockets() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    let manifest = env.dir().join("engines/socket-probe/engine.toml");
+    let text = std::fs::read_to_string(&manifest)?;
+    let mut counts = Vec::new();
+    for _ in 0..8 {
+        let old = env.engine_pid("socket-probe").expect("the running engine");
+        std::fs::remove_file(&manifest)?;
+        env.omime(&["reload"])?;
+        wait_for_engine_exit(old)?;
+        // Allow the socket and child-output tasks to observe the exit.
+        std::thread::sleep(Duration::from_millis(120));
+        counts.push(fd_count(env.daemon_pid())?);
+        std::fs::write(&manifest, &text)?;
+        env.omime(&["reload"])?;
+        env.omime(&["switch", "socket-probe"])?;
+        wait_for_ready(&env, "socket-probe")?;
+    }
+    eprintln!("daemon FD counts after each uninstall: {counts:?}");
+    assert!(
+        counts[7] <= counts[0] + 2,
+        "removed engines leaked descriptors: {counts:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn removed_engines_keep_no_listening_sockets() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    let manifest = env.dir().join("engines/socket-probe/engine.toml");
+    let text = std::fs::read_to_string(&manifest)?;
+    for cycle in 0..8 {
+        assert_eq!(engine_listener_counts(&env)?, [1, 1]);
+        let old = env.engine_pid("socket-probe").expect("the running engine");
+        std::fs::remove_file(&manifest)?;
+        env.omime(&["reload"])?;
+        wait_for_engine_exit(old)?;
+        wait_until_within(Duration::from_secs(1), "both listeners to close", || {
+            (engine_listener_counts(&env).ok()? == [0, 0]).then_some(())
+        })?;
+        for name in ["engine", "wayland"] {
+            assert!(!env.dir().join("oh-my-ime/socket-probe").join(name).exists());
+        }
+        std::fs::write(&manifest, &text)?;
+        env.omime(&["reload"])?;
+        env.omime(&["switch", "socket-probe"])?;
+        wait_for_ready(&env, "socket-probe")?;
+        eprintln!(
+            "cycle {cycle}: listeners {:?}",
+            engine_listener_counts(&env)?
+        );
+    }
+    assert_eq!(engine_listener_counts(&env)?, [1, 1]);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn idle_engine_handshakes_are_bounded_or_expire() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    let editor = env.editor(&[])?;
+    let before = fd_count(env.daemon_pid())?;
+    let idle: Vec<_> = (0..128)
+        .map(|_| idle_peer(&env, "socket-probe"))
+        .collect::<Result<_, _>>()?;
+    wait_until_within(
+        Duration::from_secs(1),
+        "excess silent peers to close",
+        || (idle.iter().filter(|peer| !peer_closed(peer)).count() <= 16).then_some(()),
+    )?;
+    let retained = idle.iter().filter(|peer| !peer_closed(peer)).count();
+    eprintln!(
+        "{retained}/128 silent peers retained; daemon FDs {} -> {}",
+        before,
+        fd_count(env.daemon_pid())?
+    );
+    assert!(
+        retained > 0,
+        "ordinary handshakes must have time to complete"
+    );
+    // Socket, cancellation duplicate, and (on recent Linux) zbus's peer pidfd.
+    assert!(fd_count(env.daemon_pid())? <= before + 16 * 3);
+    env.type_text("during ")?;
+    editor.wait_for_text("DURING ")?;
+    wait_until_within(Duration::from_secs(6), "silent handshake deadlines", || {
+        idle.iter().all(peer_closed).then_some(())
+    })?;
+    wait_until("the expired peers' descriptors to close", || {
+        (fd_count(env.daemon_pid()).ok()? <= before).then_some(())
+    })?;
+
+    // A real SDK engine must also register with silent peers still connected.
+    let idle: Vec<_> = (0..8)
+        .map(|_| idle_peer(&env, "socket-probe"))
+        .collect::<Result<_, _>>()?;
+    let old = env.engine_pid("socket-probe").expect("the running engine");
+    rustix::process::kill_process(
+        rustix::process::Pid::from_raw(old.try_into()?).expect("pid"),
+        rustix::process::Signal::KILL,
+    )?;
+    wait_until("a replacement process", || {
+        env.engine_pid("socket-probe").filter(|pid| *pid != old)
+    })?;
+    wait_for_ready(&env, "socket-probe")?;
+    assert!(idle.iter().any(|peer| !peer_closed(peer)));
+    env.type_text("after ")?;
+    editor.wait_for_text("DURING AFTER ")?;
+    Ok(())
+}
+
+async fn unregistered_peer(env: &TestEnv) -> zbus::Result<zbus::Connection> {
+    zbus::connection::Builder::address(
+        format!(
+            "unix:path={}/oh-my-ime/socket-probe/engine",
+            env.dir().display()
+        )
+        .as_str(),
+    )
+    .p2p()
+    .build()
+    .await
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn authenticated_engine_peers_are_bounded_until_registration() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let mut peers = Vec::new();
+            for _ in 0..16 {
+                peers.push(unregistered_peer(&env).await?);
+            }
+            let extra =
+                tokio::time::timeout(Duration::from_secs(1), unregistered_peer(&env)).await?;
+            assert!(
+                extra.is_err(),
+                "authentication alone must not release the quota"
+            );
+            tokio::time::timeout(Duration::from_secs(6), async {
+                for peer in &peers {
+                    peer.closed().await;
+                }
+            })
+            .await?;
+            // Permits become available again after those connections expire.
+            let fresh =
+                tokio::time::timeout(Duration::from_secs(1), unregistered_peer(&env)).await??;
+            fresh.close().await?;
+            anyhow::Ok(())
+        })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn removing_engine_closes_pending_peers_before_readding() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let peer = unregistered_peer(&env).await?;
+            let idle = idle_peer(&env, "socket-probe")?;
+            let manifest = env.dir().join("engines/socket-probe/engine.toml");
+            let text = std::fs::read_to_string(&manifest)?;
+            std::fs::remove_file(&manifest)?;
+            env.omime(&["reload"])?;
+            tokio::time::timeout(Duration::from_secs(1), peer.closed()).await?;
+            wait_until_within(
+                Duration::from_secs(1),
+                "the silent peer to close on removal",
+                || peer_closed(&idle).then_some(()),
+            )?;
+            std::fs::write(&manifest, text)?;
+            env.omime(&["reload"])?;
+            env.omime(&["switch", "socket-probe"])?;
+            wait_for_ready(&env, "socket-probe")?;
+            let host = zbus::Proxy::new(
+                &peer,
+                "io.github.ign1x.OhMyIme",
+                "/io/github/ign1x/OhMyIme",
+                "io.github.ign1x.OhMyIme.EngineHost1",
+            )
+            .await?;
+            let result: zbus::Result<std::collections::HashMap<String, zbus::OwnedVariant>> = host
+                .call(
+                    "Register",
+                    &(
+                        "socket-probe",
+                        1u16,
+                        0u16,
+                        std::collections::HashMap::<String, zbus::OwnedVariant>::new(),
+                    ),
+                )
+                .await;
+            assert!(
+                result.is_err(),
+                "a removed peer registered with the new installation"
+            );
+            anyhow::Ok(())
+        })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn readded_engine_ignores_the_removed_process_exit() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[saving_engine(&["--hang"])], Some("saver"))?;
+    wait_for_ready(&env, "saver")?;
+    let old = env.engine_pid("saver").expect("the running engine");
+    let manifest = env.dir().join("engines/saver/engine.toml");
+    let text = std::fs::read_to_string(&manifest)?;
+    std::fs::remove_file(&manifest)?;
+    env.omime(&["reload"])?;
+    wait_for_saved(&env, old)?;
+    std::fs::write(&manifest, text)?;
+    env.omime(&["reload"])?;
+    env.omime(&["switch", "saver"])?;
+    wait_for_ready(&env, "saver")?;
+    let replacement = env.engine_pid("saver").expect("the replacement");
+    assert_ne!(old, replacement);
+    wait_for_engine_exit(old)?;
+    std::thread::sleep(Duration::from_millis(150));
+    wait_for_ready(&env, "saver")?;
+    assert_eq!(env.engine_pid("saver"), Some(replacement));
+    let editor = env.editor(&[])?;
+    env.type_text("alive")?;
+    editor.wait_for_text("alive")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn engine_accept_errors_back_off_and_recover() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[socket_engine()], Some("socket-probe"))?;
+    wait_for_ready(&env, "socket-probe")?;
+    let pid = rustix::process::Pid::from_raw(env.daemon_pid().try_into()?).expect("pid");
+    let limits_text = std::fs::read_to_string(format!("/proc/{}/limits", env.daemon_pid()))?;
+    let hard = limits_text
+        .lines()
+        .find(|line| line.starts_with("Max open files"))
+        .and_then(|line| line.split_whitespace().nth(4))
+        .expect("the hard descriptor limit")
+        .parse()?;
+    let limits = rustix::process::prlimit(
+        Some(pid),
+        rustix::process::Resource::Nofile,
+        rustix::process::Rlimit {
+            current: Some(0),
+            maximum: Some(hard),
+        },
+    )?;
+    let idle = idle_peer(&env, "socket-probe")?;
+    let ui = UnixStream::connect(env.dir().join("oh-my-ime/socket-probe/wayland"))?;
+    env.wait_for_log("Too many open files")?;
+    std::thread::sleep(Duration::from_millis(1300));
+    // Restore before using the CLI or performing assertions, including on base.
+    rustix::process::prlimit(Some(pid), rustix::process::Resource::Nofile, limits)?;
+    let warnings = env
+        .daemon_log()
+        .lines()
+        .filter(|line| line.contains("accepting an") || line.contains("accepting a UI"))
+        .count();
+    eprintln!("accept warnings in 1.3 s of descriptor exhaustion: {warnings}");
+    assert!(
+        warnings <= 2,
+        "accept failures produced {warnings} warnings"
+    );
+    drop((idle, ui));
+    env.omime(&["status"])?;
+    let old = env.engine_pid("socket-probe").expect("the running engine");
+    rustix::process::kill_process(
+        rustix::process::Pid::from_raw(old.try_into()?).expect("pid"),
+        rustix::process::Signal::KILL,
+    )?;
+    wait_until("the engine to restart after descriptor exhaustion", || {
+        env.engine_pid("socket-probe").filter(|pid| *pid != old)
+    })?;
+    wait_for_ready(&env, "socket-probe")?;
     Ok(())
 }
 

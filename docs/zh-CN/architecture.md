@@ -78,6 +78,8 @@ X11 应用不使用 `text-input`，Wayland 前端因此够不到它们。另有�
 
 引擎连接到一个私有的点对点 D-Bus socket，地址在 `OMIME_ENGINE_ADDRESS` 中。
 
+每个已安装引擎拥有自己的监听 socket。卸载会关闭两个监听器、删除 socket 路径，并取消尚未注册的原生连接；重新添加引擎会创建新的监听器。原生连接从接受时起有五秒完成认证和注册，每个引擎最多保留 16 个待注册连接，超额连接立即关闭。仅完成认证不会释放名额。Linux 上，每个静默握手最多占用守护进程的三个文件描述符：传输 socket、用于取消连接的副本，以及 zbus 在认证期间持有的对端进程描述符。成功注册后释放用于取消连接的描述符，并把连接交给核心。静默连接可以占满全部名额直至期限到达；这些私有 socket 只允许同一用户连接，不构成同一用户进程之间的安全边界。连续接受连接失败时，重试间隔从 100 毫秒递增到一秒，每个监听器每五秒最多记录一条警告。托管引擎继承的 socket pair 不受影响。
+
 关闭、重启、重新加载设置或卸载时，原生引擎监督器先发送 `Shutdown` 并最多等待两秒，再发送 SIGTERM 并等待两秒，最后才发送 SIGKILL。发送 `Shutdown` 本身也计入第一个期限。输入超时监控与隔离故障引擎的终止仍然立即执行。守护进程最多等待五秒让引擎退出，正常的 UI bridge 在此期间保持连接。systemd 单元使用 `KillMode=mixed` 和六秒停止超时，让守护进程先停止其子进程。原生子进程使用 `PR_SET_PDEATHSIG=SIGKILL` 处理守护进程突然死亡的情况；SDK 将直接收到的 SIGTERM 视为正常停止请求。
 
 - `io.github.ign1x.OhMyIme.Engine1` 由引擎在 `/io/github/ign1x/OhMyIme/Engine` 导出。它包含 `Activate`、`Deactivate`、`UpdateContext`、`ProcessKey`、`Reset` 和 `Shutdown`。`ProcessKey` 返回 `(handled, actions)`，其中 `actions` 是一个有序列表，包含上屏、预编辑、删除周围文本和转发按键等操作。

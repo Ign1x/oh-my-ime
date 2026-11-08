@@ -237,6 +237,20 @@ know which frontend a key came from.
 Engines connect to a private peer-to-peer D-Bus socket whose address is in
 `OMIME_ENGINE_ADDRESS`.
 
+Each installed engine owns its listening sockets. Uninstall closes both listeners,
+unlinks their paths, and cancels pending native connections; re-adding the engine
+creates fresh listeners. Native peers have five seconds from acceptance to complete
+authentication and registration, with at most 16 pending peers per engine. Excess
+connections close immediately. Authentication alone does not release the quota.
+A silent handshake uses up to three daemon descriptors on Linux: its transport,
+a cancellation duplicate, and zbus's peer-process descriptor during authentication.
+Successful registration releases the cancellation descriptor and transfers the
+connection to the core.
+Silent peers can occupy every permit until the deadline; these private, same-user
+sockets are not a security boundary between processes of the same user. Repeated
+accept failures back off from 100 ms to one second, with at most one warning per
+listener every five seconds. Hosted engines' inherited socket pairs are unaffected.
+
 For shutdown, restart, settings reload and uninstall, the native supervisor sends
 `Shutdown` and waits up to two seconds, then sends SIGTERM and waits another two
 seconds before SIGKILL. Sending Shutdown shares the first deadline. Watchdog and

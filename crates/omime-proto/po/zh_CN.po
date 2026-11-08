@@ -1145,3 +1145,6 @@ msgstr "无法将 {arg0} 设为私有：{arg1}"
 
 msgid "private data path is not a directory"
 msgstr "私有数据路径不是目录"
+
+msgid "cannot remove an engine socket: {error}"
+msgstr "无法删除引擎套接字：{error}"

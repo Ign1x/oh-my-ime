@@ -10,12 +10,15 @@
 //! on a private session bus (see [`super::bus`]).
 
 use omime_proto::tr;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::net::Shutdown;
 use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -31,7 +34,8 @@ use omime_proto::{
     engine::{ContextId, Status},
 };
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::task::{AbortHandle, JoinSet};
 use tracing::{debug, info, warn};
 use zbus::{OwnedVariant, Variant};
 
@@ -43,6 +47,11 @@ use crate::runtime_dir;
 
 /// How long an engine may take to start and register.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Includes authentication and Register, using the native startup budget. Each
+/// pending transport has a cancellation duplicate; zbus may also hold a peer
+/// pidfd during authentication on Linux.
+const REGISTRATION_TIMEOUT: Duration = STARTUP_TIMEOUT;
+const MAX_PENDING_PEERS: usize = 16;
 /// Hosted input methods load all their addons first; Fcitx5 may take a while.
 const HOSTED_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a native engine has to receive Shutdown and save its state.
@@ -398,7 +407,7 @@ pub struct EngineSlot {
     /// crash.
     reloading: bool,
     crashes: Vec<Instant>,
-    sockets_ready: bool,
+    sockets: Option<EngineSockets>,
 }
 
 impl std::fmt::Debug for EngineSlot {
@@ -474,7 +483,7 @@ impl EngineManager {
             kill: None,
             reloading: false,
             crashes: Vec::new(),
-            sockets_ready: false,
+            sockets: None,
         }
     }
 
@@ -594,12 +603,16 @@ impl EngineManager {
             anyhow::bail!("{}", tr!("no engine `{id}` is installed", id = id));
         };
         let hosted = slot.installed.manifest.is_hosted();
-        if !slot.sockets_ready {
-            if !hosted {
-                listen_engine(id, events.clone())?;
-            }
-            listen_ui(id, hosted, ui)?;
-            slot.sockets_ready = true;
+        if slot.sockets.is_none() {
+            let native = if hosted {
+                None
+            } else {
+                Some(listen_engine(id, events.clone())?)
+            };
+            slot.sockets = Some(EngineSockets {
+                native,
+                _ui: listen_ui(id, hosted, ui)?,
+            });
         }
         let dir = runtime_dir::engine_dir(id)?;
         let argv = slot.installed.command();
@@ -643,7 +656,10 @@ impl EngineManager {
             None => command.env_remove(ENV_HOST_WAYLAND_DISPLAY),
         };
 
-        slot.generation += 1;
+        // Removal may overlap the old process's polite shutdown. A fresh slot
+        // must not reuse that process's generation when the same ID is re-added.
+        static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+        slot.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         let generation = slot.generation;
         let (kill_tx, kill_rx) = oneshot::channel();
         slot.kill = Some(kill_tx);
@@ -785,7 +801,13 @@ impl EngineManager {
             return Ok(());
         };
         anyhow::ensure!(
-            matches!(slot.state, EngineState::Starting { .. }),
+            matches!(slot.state, EngineState::Starting { .. })
+                && slot.sockets.as_ref().is_some_and(|sockets| {
+                    sockets
+                        .native
+                        .as_ref()
+                        .is_some_and(|native| native.accept(connection_id))
+                }),
             "{}",
             tr!("engine `{id}` is not waiting for registration", id = id)
         );
@@ -1216,18 +1238,144 @@ impl EngineManager {
     }
 }
 
-/// Serves the engine protocol on the engine's D-Bus socket.
-fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyhow::Result<()> {
+/// Socket names and accept loops belong to an installed slot, across restarts.
+/// The registered connection belongs to the core (or the shutdown supervisor).
+struct EngineSockets {
+    native: Option<NativeListener>,
+    _ui: ListenerTask,
+}
+
+struct ListenerTask {
+    task: AbortHandle,
+    path: PathBuf,
+}
+
+impl Drop for ListenerTask {
+    fn drop(&mut self) {
+        self.task.abort();
+        if let Err(error) = std::fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(path = %self.path.display(), "{}", tr!("cannot remove an engine socket: {error}", error = error));
+        }
+    }
+}
+
+struct PendingRegistration {
+    ready: Option<oneshot::Sender<()>>,
+    accepted: bool,
+}
+
+type Registrations = Rc<RefCell<HashMap<u64, PendingRegistration>>>;
+
+struct NativeListener {
+    _listener: ListenerTask,
+    pending: Registrations,
+}
+
+impl NativeListener {
+    fn accept(&self, id: u64) -> bool {
+        let mut pending = self.pending.borrow_mut();
+        let Some(registration) = pending.get_mut(&id) else {
+            // Timed out, or accepted by a listener of an uninstalled slot.
+            return false;
+        };
+        let Some(ready) = registration.ready.take() else {
+            return false;
+        };
+        registration.accepted = ready.send(()).is_ok();
+        registration.accepted
+    }
+}
+
+/// Cancellation must shut down the transport even when a queued Registered event
+/// still holds a zbus connection clone. Disarm only when the core takes ownership;
+/// the supervisor then keeps that connection alive while sending Shutdown.
+struct PendingPeer {
+    socket: UnixStream,
+    id: u64,
+    pending: Registrations,
+}
+
+impl Drop for PendingPeer {
+    fn drop(&mut self) {
+        if !self
+            .pending
+            .borrow_mut()
+            .remove(&self.id)
+            .is_some_and(|peer| peer.accepted)
+        {
+            let _ = self.socket.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// Back off repeated accept failures (including EMFILE/ENFILE) and keep warning
+/// bursts bounded even if a successful accept briefly interrupts the failures.
+struct AcceptBackoff {
+    delay: Duration,
+    last_warning: Option<Instant>,
+}
+
+impl AcceptBackoff {
+    fn new() -> Self {
+        Self {
+            delay: Duration::from_millis(100),
+            last_warning: None,
+        }
+    }
+
+    fn accepted(&mut self) {
+        self.delay = Duration::from_millis(100);
+    }
+
+    async fn failed(&mut self, engine: &str, ui: bool, error: std::io::Error) {
+        let now = Instant::now();
+        if self
+            .last_warning
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(5))
+        {
+            if ui {
+                warn!(engine, "accepting a UI connection failed: {error}");
+            } else {
+                warn!(engine, "accepting an engine connection failed: {error}");
+            }
+            self.last_warning = Some(now);
+        }
+        tokio::time::sleep(self.delay).await;
+        self.delay = (self.delay * 2).min(Duration::from_secs(1));
+    }
+}
+
+/// Serves the engine protocol on the engine's D-Bus socket. Aborting this listener
+/// drops its JoinSet, cancelling every pending peer, including authenticated peers
+/// that have not registered. Successful registration ends the peer task.
+fn listen_engine(
+    engine: &str,
+    events: mpsc::UnboundedSender<CoreEvent>,
+) -> anyhow::Result<NativeListener> {
     let path = runtime_dir::engine_dir(engine)?.join("engine");
     let listener = runtime_dir::bind_socket(&path)?;
     let engine = engine.to_owned();
-    tokio::task::spawn_local(async move {
+    let pending = Registrations::default();
+    let registrations = pending.clone();
+    let task = tokio::task::spawn_local(async move {
+        let permits = Arc::new(Semaphore::new(MAX_PENDING_PEERS));
+        let mut peers = JoinSet::new();
+        let mut backoff = AcceptBackoff::new();
         loop {
-            let stream = match listener.accept().await {
-                Ok((stream, _)) => stream,
-                Err(e) => {
-                    warn!(engine, "accepting an engine connection failed: {e}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+            while peers.try_join_next().is_some() {}
+            let accepted = tokio::select! {
+                accepted = listener.accept() => accepted,
+                _ = peers.join_next(), if !peers.is_empty() => continue,
+            };
+            let stream = match accepted {
+                Ok((stream, _)) => {
+                    backoff.accepted();
+                    stream
+                }
+                Err(error) => {
+                    backoff.failed(&engine, false, error).await;
                     continue;
                 }
             };
@@ -1235,6 +1383,11 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
                 warn!(engine, "refusing an engine connection of another user");
                 continue;
             }
+            let Ok(permit) = permits.clone().try_acquire_owned() else {
+                // Close excess peers immediately; do not queue unbounded tasks or
+                // warn for every connection from a same-user flood.
+                continue;
+            };
             let stream = match stream.into_std() {
                 Ok(stream) => stream,
                 Err(e) => {
@@ -1242,32 +1395,65 @@ fn listen_engine(engine: &str, events: mpsc::UnboundedSender<CoreEvent>) -> anyh
                     continue;
                 }
             };
+            let socket = match stream.try_clone() {
+                Ok(socket) => socket,
+                Err(error) => {
+                    backoff.failed(&engine, false, error).await;
+                    continue;
+                }
+            };
             static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+            let id = NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed);
+            let (ready, registered) = oneshot::channel();
+            registrations.borrow_mut().insert(
+                id,
+                PendingRegistration {
+                    ready: Some(ready),
+                    accepted: false,
+                },
+            );
+            let peer = PendingPeer {
+                socket,
+                id,
+                pending: registrations.clone(),
+            };
             let host = HostObject {
-                connection_id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+                connection_id: id,
                 engine: engine.clone(),
                 events: events.clone(),
             };
             let engine = engine.clone();
-            tokio::task::spawn_local(async move {
-                let built = async {
-                    zbus::connection::Builder::unix_stream(stream)
+            // Start the deadline at accept, including time waiting to be polled.
+            let deadline = tokio::time::Instant::now() + REGISTRATION_TIMEOUT;
+            peers.spawn_local(async move {
+                let _permit = permit;
+                let _peer = peer;
+                let register = async {
+                    let conn = zbus::connection::Builder::unix_stream(stream)
                         .server(zbus::Guid::generate())
                         .p2p()
                         .serve_at(omime_proto::names::DAEMON_OBJECT_PATH, host)
                         .build()
-                        .await
+                        .await?;
+                    tokio::select! {
+                        _ = registered => {},
+                        _ = conn.closed() => {},
+                    }
+                    zbus::Result::Ok(())
                 };
-                match built.await {
-                    // The connection lives as long as the engine keeps it open; the core
-                    // holds it through the proxy after `Register`.
-                    Ok(conn) => conn.closed().await,
-                    Err(e) => warn!(engine, "engine connection failed: {e}"),
+                match tokio::time::timeout_at(deadline, register).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => warn!(engine, "engine connection failed: {e}"),
+                    Err(_) => debug!(engine, "closing an unregistered engine connection"),
                 }
             });
         }
-    });
-    Ok(())
+    })
+    .abort_handle();
+    Ok(NativeListener {
+        _listener: ListenerTask { task, path },
+        pending,
+    })
 }
 
 /// Has the process that `command` starts stopped with SIGTERM when omimed dies, even
@@ -1537,15 +1723,16 @@ pub fn install_prefixes(installed: &InstalledEngine) -> Vec<PathBuf> {
 }
 
 /// Accepts UI bridge connections on the engine's Wayland socket.
-pub fn listen_ui(
+fn listen_ui(
     engine: &str,
     hosted: bool,
     connections: mpsc::UnboundedSender<UiConnection>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ListenerTask> {
     let path = runtime_dir::engine_dir(engine)?.join("wayland");
     let listener = runtime_dir::bind_socket(&path)?;
     let engine = engine.to_owned();
-    tokio::task::spawn_local(async move {
+    let task = tokio::task::spawn_local(async move {
+        let mut backoff = AcceptBackoff::new();
         loop {
             match listener.accept().await {
                 Ok((stream, _)) if !runtime_dir::peer_is_same_user(&stream) => {
@@ -1553,6 +1740,7 @@ pub fn listen_ui(
                 }
                 Ok((stream, _)) => match stream.into_std() {
                     Ok(stream) => {
+                        backoff.accepted();
                         let connection = UiConnection {
                             engine: engine.clone(),
                             hosted,
@@ -1564,12 +1752,10 @@ pub fn listen_ui(
                     }
                     Err(e) => warn!("cannot take over a UI connection: {e}"),
                 },
-                Err(e) => {
-                    warn!(engine, "accepting a UI connection failed: {e}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+                Err(error) => backoff.failed(&engine, true, error).await,
             }
         }
-    });
-    Ok(())
+    })
+    .abort_handle();
+    Ok(ListenerTask { task, path })
 }

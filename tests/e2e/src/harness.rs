@@ -606,6 +606,11 @@ impl TestEnv {
         std::fs::read_to_string(&self.daemon_log).unwrap_or_default()
     }
 
+    /// The daemon owned by this private session, for process resource probes.
+    pub fn daemon_pid(&self) -> u32 {
+        self.daemon.as_ref().expect("the test launched omimed").id()
+    }
+
     /// The pid of the most recently launched process of engine `id`.
     pub fn engine_pid(&self, id: &str) -> Option<u32> {
         let marker = format!("engine=\"{id}\"");

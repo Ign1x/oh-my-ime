@@ -40,6 +40,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Removing an engine closes and unlinks its listeners and cancels unregistered
+  peers. Native engine connections have a five-second authentication and
+  registration deadline with at most 16 pending peers per engine. Descriptor
+  exhaustion backs off socket acceptance and limits repeated warnings.
 - Rime's initial Chinese/Latin mode remains available when a newly focused field's
   application identity arrives before activation finishes, without needing a first key.
 - Native engines get time to save state on shutdown, restart, settings reload and
