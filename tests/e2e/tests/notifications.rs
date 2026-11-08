@@ -7,7 +7,7 @@ use std::process::{Child, Stdio};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TestEngine, TestEnv, echo_engine, target_dir, wait_until};
+use omime_e2e::harness::{FcitxClient, TestEngine, TestEnv, echo_engine, target_dir, wait_until};
 use rustix::process::Signal;
 
 /// The notifications shown so far: (id, the id they replace, "summary|body").
@@ -40,6 +40,181 @@ fn reload(env: &TestEnv, times: usize) -> anyhow::Result<()> {
     wait_until("the reload", || {
         (env.count_in_log("reloading on SIGHUP") >= times).then_some(())
     })
+}
+
+fn break_config(env: &TestEnv) -> anyhow::Result<()> {
+    write_config(env, "[apps]\nremember = 'bad'\n")?;
+    assert!(!env.omime_status(&["reload"])?.0.success());
+    Ok(())
+}
+
+fn notification(server: &FcitxClient, count: usize) -> anyhow::Result<(u32, u32, String)> {
+    wait_until("the notification", || {
+        let notifications = shown(&server.lines());
+        if notifications.len() == count {
+            notifications.last().cloned()
+        } else {
+            None
+        }
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn restarted_notification_server_cannot_reuse_an_old_action_id() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let mut old = env.notifications()?;
+    break_config(&env)?;
+    let (id, _, _) = notification(&old, 1)?;
+    env.wait_for_log("told the user")?;
+    old.kill()?;
+    let current = env.notifications()?;
+    current.send("unrelated")?;
+    let (unrelated, _, _) = notification(&current, 1)?;
+    assert_eq!(unrelated, id, "the new server reuses an old ID");
+    current.send(&format!("click {id}"))?;
+    current.wait_for("the reused action", |line| line == format!("clicked {id}"))?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        env.count_in_log("opened the settings"),
+        0,
+        "{}",
+        env.daemon_log()
+    );
+    // Restarting the server must not reset the trouble's repeat deadline.
+    break_config(&env)?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(shown(&current.lines()).len(), 1, "{:?}", current.lines());
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn restarted_notification_server_does_not_close_or_replace_reused_ids() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let mut old = env.notifications()?;
+    break_config(&env)?;
+    let (id, _, _) = notification(&old, 1)?;
+    env.wait_for_log("told the user")?;
+    old.kill()?;
+    let current = env.notifications()?;
+    current.send("unrelated")?;
+    assert_eq!(notification(&current, 1)?.0, id);
+    env.configure("")?;
+    break_config(&env)?;
+    // The new notification also proves the queued resolution has completed.
+    let (fresh, replaces, _) = notification(&current, 2)?;
+    assert_ne!(fresh, id);
+    assert_eq!(replaces, 0);
+    assert!(
+        !current
+            .lines()
+            .iter()
+            .any(|line| line == &format!("close {id}")),
+        "{:?}",
+        current.lines()
+    );
+    current.send(&format!("click {fresh}"))?;
+    env.wait_for_log("opened the settings")?;
+    env.configure("")?;
+    current.wait_for("the current notification to close", |line| {
+        line == format!("close {fresh}")
+    })?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn a_late_reply_from_the_previous_notification_owner_cannot_restore_its_ids() -> anyhow::Result<()>
+{
+    let env = TestEnv::start(&[], None)?;
+    let old = env.notifications()?;
+    old.send("hold notify")?;
+    old.wait_for("the held reply to be armed", |line| {
+        line == "notify hold armed"
+    })?;
+    break_config(&env)?;
+    let (id, _, _) = notification(&old, 1)?;
+    old.wait_for("the old reply to be held", |line| {
+        line == format!("notify {id} held")
+    })?;
+    old.send("release-name")?;
+    old.wait_for("the old owner to release its name", |line| {
+        line == "name released"
+    })?;
+    let current = env.notifications()?;
+    current.send("unrelated")?;
+    assert_eq!(notification(&current, 1)?.0, id);
+    old.send("reply")?;
+    old.wait_for("the old reply to arrive", |line| {
+        line == format!("notify {id} released")
+    })?;
+    current.send(&format!("click {id}"))?;
+    current.wait_for("the unrelated notification's click", |line| {
+        line == format!("clicked {id}")
+    })?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        env.count_in_log("opened the settings"),
+        0,
+        "{}",
+        env.daemon_log()
+    );
+    env.configure("")?;
+    break_config(&env)?;
+    let (fresh, replaces, _) = notification(&current, 2)?;
+    assert_ne!(fresh, id);
+    assert_eq!(replaces, 0);
+    assert!(
+        !current
+            .lines()
+            .iter()
+            .any(|line| line == &format!("close {id}")),
+        "{:?}",
+        current.lines()
+    );
+    // The old connection stays alive and can emit both actions and closures, even
+    // using the current owner's fresh ID. Neither may affect the current ID.
+    old.send(&format!("click {fresh}\nclosed {fresh} 2"))?;
+    old.wait_for("the old-owner signals", |line| {
+        line == format!("closed {fresh} 2")
+    })?;
+    current.send(&format!("click {fresh}\nclosed {fresh} 2\nclick {fresh}"))?;
+    env.wait_for_log("opened the settings")?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        env.count_in_log("opened the settings"),
+        1,
+        "{}",
+        env.daemon_log()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn foreign_notification_actions_and_closures_do_not_affect_live_ids() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[], None)?;
+    let server = env.notifications()?;
+    break_config(&env)?;
+    let (id, _, _) = notification(&server, 1)?;
+    env.wait_for_log("told the user")?;
+    server.send(&format!("foreign click {id}\nforeign closed {id} 2"))?;
+    server.wait_for("the foreign signals", |line| {
+        line == format!("foreign closed {id} 2")
+    })?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(env.count_in_log("opened the settings"), 0);
+    server.send(&format!("click {id}\nclosed {id} 2\nclick {id}"))?;
+    env.wait_for_log("opened the settings")?;
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        env.count_in_log("opened the settings"),
+        1,
+        "{}",
+        env.daemon_log()
+    );
+    Ok(())
 }
 
 #[test]

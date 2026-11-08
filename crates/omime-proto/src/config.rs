@@ -144,7 +144,29 @@ impl Config {
     /// Reads a configuration, and the keys in it that this version does not know
     /// (misspelt, or from a newer version), which it ignores.
     pub fn parse(text: &str) -> Result<(Self, Vec<String>), String> {
-        crate::from_toml(text)
+        let (config, unknown): (Self, _) = crate::from_toml(text)?;
+        // These strings are exposed by Config on D-Bus, whose string type cannot
+        // carry NUL. Do not echo the invalid value into another D-Bus reply.
+        for (key, has_nul) in [
+            (
+                "engines",
+                config.engines.iter().flatten().any(|s| s.contains('\0')),
+            ),
+            (
+                "initial_input_method",
+                config
+                    .initial_input_method
+                    .as_ref()
+                    .is_some_and(|s| s.contains('\0')),
+            ),
+            ("hotkeys.toggle", config.hotkeys.toggle.contains('\0')),
+            ("hotkeys.next", config.hotkeys.next.contains('\0')),
+        ] {
+            if has_nul {
+                return Err(tr!("option `{key}` cannot contain NUL", key = key));
+            }
+        }
+        Ok((config, unknown))
     }
 }
 

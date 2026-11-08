@@ -18,18 +18,23 @@
 //! `burst notify <count>` or `burst close <count>` arms that many unrelated
 //! `NotificationClosed` signals before the next matching method reply; it prints
 //! `burst <method> <count> armed` and then `burst <method> <count> sent`.
+//! `release-name` leaves the connection alive but releases the server name, so a
+//! new server can take over while old signals/replies remain possible. `hold notify`
+//! holds the next Notify reply until `reply`. `unrelated` posts another app's
+//! notification. Prefix `click` or `closed` with `foreign ` to use a different sender.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, Write as _};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use zbus::OwnedVariant;
 use zbus::object_server::SignalEmitter;
 
 const PATH: &str = "/org/freedesktop/Notifications";
+const NAME: &str = "org.freedesktop.Notifications";
 
 fn say(line: &str) {
     println!("{line}");
@@ -39,6 +44,7 @@ fn say(line: &str) {
 struct Server {
     last: AtomicU32,
     bursts: Arc<ClosureBursts>,
+    reply: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
 }
 
 #[derive(Default)]
@@ -87,6 +93,12 @@ impl Server {
             "notify {id} {replaces_id} {summary}|{}",
             body.replace('\n', " ")
         ));
+        let reply = self.reply.lock().expect("reply lock poisoned").take();
+        if let Some(reply) = reply {
+            say(&format!("notify {id} held"));
+            let _ = reply.await;
+            say(&format!("notify {id} released"));
+        }
         Ok(id)
     }
 
@@ -132,15 +144,18 @@ impl Server {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let bursts = Arc::new(ClosureBursts::default());
+    let reply = Arc::new(Mutex::new(None));
+    let mut release_reply = None;
     let conn = zbus::connection::Builder::session()
         .serve_at(
             PATH,
             Server {
                 last: AtomicU32::new(0),
                 bursts: bursts.clone(),
+                reply: reply.clone(),
             },
         )
-        .name("org.freedesktop.Notifications")
+        .name(NAME)
         .build()
         .await
         .context("cannot serve notifications on the session bus")?;
@@ -156,19 +171,55 @@ async fn main() -> anyhow::Result<()> {
     say("ready");
 
     let emitter = SignalEmitter::new(&conn, PATH)?;
+    let foreign = zbus::Connection::session().await?;
+    let foreign_emitter = SignalEmitter::new(&foreign, PATH)?;
     while let Some(command) = commands.recv().await {
-        if let Some(id) = command.strip_prefix("click ") {
+        let (prefix, command, signal_emitter) = match command.strip_prefix("foreign ") {
+            Some(command) => ("foreign ", command, &foreign_emitter),
+            None => ("", command.as_str(), &emitter),
+        };
+        if command == "release-name" {
+            conn.release_name(NAME).await?;
+            say("name released");
+        } else if command == "hold notify" {
+            let (tx, rx) = oneshot::channel();
+            *reply.lock().expect("reply lock poisoned") = Some(rx);
+            release_reply = Some(tx);
+            say("notify hold armed");
+        } else if command == "reply" {
+            if let Some(tx) = release_reply.take() {
+                let _ = tx.send(());
+            }
+        } else if command == "unrelated" {
+            conn.call_method(
+                Some(NAME),
+                PATH,
+                Some(NAME),
+                "Notify",
+                &(
+                    "another app",
+                    0u32,
+                    "",
+                    "unrelated app",
+                    "",
+                    Vec::<String>::new(),
+                    HashMap::<String, OwnedVariant>::new(),
+                    -1i32,
+                ),
+            )
+            .await?;
+        } else if let Some(id) = command.strip_prefix("click ") {
             let id: u32 = id.trim().parse().context("a notification id")?;
-            Server::action_invoked(&emitter, id, "default").await?;
-            say(&format!("clicked {id}"));
+            Server::action_invoked(signal_emitter, id, "default").await?;
+            say(&format!("{prefix}clicked {id}"));
         } else if let Some(args) = command.strip_prefix("closed ") {
             let (id, reason) = args
                 .split_once(' ')
                 .context("a notification id and reason")?;
             let id: u32 = id.parse().context("a notification id")?;
             let reason: u32 = reason.trim().parse().context("a close reason")?;
-            Server::notification_closed(&emitter, id, reason).await?;
-            say(&format!("closed {id} {reason}"));
+            Server::notification_closed(signal_emitter, id, reason).await?;
+            say(&format!("{prefix}closed {id} {reason}"));
         } else if let Some(args) = command.strip_prefix("burst ") {
             let (method, count) = args.split_once(' ').context("a method and signal count")?;
             let count: u32 = count.parse().context("a signal count")?;

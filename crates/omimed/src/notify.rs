@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, info};
 use zbus::Variant;
+use zbus::names::OwnedUniqueName;
 use zbus::proxy::SignalStream;
 
 /// How long a trouble that is still there stays untold.
@@ -244,9 +245,30 @@ struct Told {
 #[derive(Debug, Default)]
 struct Ledger {
     told: HashMap<Subject, Told>,
+    /// All live IDs belong to this unique owner, never to the well-known name.
+    owner: Option<OwnedUniqueName>,
 }
 
 impl Ledger {
+    /// Retire old-server IDs without changing when each trouble may be told again.
+    fn set_owner(&mut self, owner: Option<OwnedUniqueName>) -> bool {
+        if self.owner == owner {
+            return false;
+        }
+        self.owner = owner;
+        for told in self.told.values_mut() {
+            told.id = 0;
+        }
+        true
+    }
+
+    /// Resolve a replacement after checking the server, which can happen after
+    /// `tell` has already selected the old owner's ID.
+    fn retarget(&mut self, subject: &Subject, owner: Option<OwnedUniqueName>) -> u32 {
+        self.set_owner(owner);
+        self.told.get(subject).map_or(0, |told| told.id)
+    }
+
     /// Whether to tell about `subject` now, and the notification it replaces (0 for a
     /// new one).
     fn tell(&mut self, subject: &Subject, now: Instant) -> Option<u32> {
@@ -300,7 +322,7 @@ impl Ledger {
 
 async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<String>) {
     let mut ledger = Ledger::default();
-    let mut server: Option<NotificationsProxy<'static>> = None;
+    let mut server: Option<Server> = None;
     let mut events: Option<SignalStream<'static>> = None;
     loop {
         let event = async {
@@ -316,14 +338,14 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                     Command::Flush(done) => { let _ = done.send(()); }
                     Command::Tell(trouble) => {
                         let subject = trouble.subject();
-                        let Some(replaces) = ledger.tell(&subject, Instant::now()) else {
+                        let Some(_) = ledger.tell(&subject, Instant::now()) else {
                             continue;
                         };
                         // The bus only once there is something to tell.
                         if server.is_none() {
                             match connect().await {
-                                Ok((proxy, stream)) => {
-                                    server = Some(proxy);
+                                Ok((connected, stream)) => {
+                                    server = Some(connected);
                                     events = stream;
                                 }
                                 Err(e) => {
@@ -332,7 +354,13 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                                 }
                             }
                         }
-                        let Some(proxy) = &server else { continue };
+                        let Some(server) = &server else { continue };
+                        let owner = server.owner(true).await;
+                        let replaces = ledger.retarget(&subject, owner.clone());
+                        let Some(owner) = owner else { continue };
+                        // A name change after the snapshot cannot redirect this
+                        // replacement to another server that happens to reuse its ID.
+                        let Ok(proxy) = server.destination(owner.clone()).await else { continue };
                         let (summary, body) = trouble.text(omime_proto::i18n::current());
                         let hints = HashMap::from([
                             ("desktop-entry", Variant::from("io.github.ign1x.OhMyIme.Settings")),
@@ -344,20 +372,40 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
                             .await
                         {
                             Ok(id) => {
-                                info!(id, summary, "told the user");
-                                ledger.shown(&subject, id);
+                                let current = server.owner(false).await;
+                                ledger.set_owner(current.clone());
+                                if current.as_ref() == Some(&owner) {
+                                    info!(id, summary, "told the user");
+                                    ledger.shown(&subject, id);
+                                }
                             }
                             Err(e) => debug!("cannot show a notification: {e}"),
                         }
                     }
                     Command::Resolved(subject) => {
-                        if let (Some(id), Some(proxy)) = (ledger.resolve(&subject), &server) {
-                            let _ = proxy.close_notification(id).await;
+                        if let Some(server) = &server {
+                            let owner = server.owner(false).await;
+                            ledger.set_owner(owner.clone());
+                            if let (Some(id), Some(owner)) = (ledger.resolve(&subject), owner)
+                                && let Ok(proxy) = server.destination(owner).await
+                            {
+                                let _ = proxy.close_notification(id).await;
+                            }
+                        } else {
+                            ledger.resolve(&subject);
                         }
                     }
                 }
             }
             Some(signal) = event => {
+                let Some(server) = &server else { continue };
+                // Owner-change streams and notification streams need not be polled
+                // in bus order. Check the current owner at the point of use instead.
+                let owner = server.owner(false).await;
+                ledger.set_owner(owner.clone());
+                if owner.as_ref().map(|owner| owner.as_str()) != signal.header().sender().map(|sender| sender.as_str()) {
+                    continue;
+                }
                 if let Some(closed) = NotificationClosed::from_message(signal.clone()) {
                     let Ok(args) = closed.args() else { continue };
                     ledger.closed(args.id);
@@ -375,8 +423,50 @@ async fn serve(mut pending: mpsc::UnboundedReceiver<Command>, display: Option<St
     }
 }
 
+struct Server {
+    proxy: NotificationsProxy<'static>,
+    bus: zbus::fdo::DBusProxy<'static>,
+}
+
+impl Server {
+    async fn owner(&self, activate: bool) -> Option<OwnedUniqueName> {
+        let name = self.proxy.inner().destination();
+        match self.bus.get_name_owner(name.clone()).await {
+            Ok(owner) => Some(owner),
+            Err(zbus::fdo::Error::NameHasNoOwner(_)) if activate => {
+                // Preserve Notify's ordinary D-Bus activation behavior before
+                // pinning the request to the unique owner it started.
+                let Ok(name) = name.as_str().try_into() else {
+                    return None;
+                };
+                if self.bus.start_service_by_name(name, 0).await.is_err() {
+                    return None;
+                }
+                self.bus
+                    .get_name_owner(self.proxy.inner().destination().clone())
+                    .await
+                    .ok()
+            }
+            Err(e) => {
+                debug!("no notification owner: {e}");
+                None
+            }
+        }
+    }
+
+    async fn destination(
+        &self,
+        owner: OwnedUniqueName,
+    ) -> zbus::Result<NotificationsProxy<'static>> {
+        NotificationsProxy::builder(self.proxy.inner().connection())
+            .destination(owner)
+            .build()
+            .await
+    }
+}
+
 /// The notification server on the session bus, and its signals in arrival order.
-async fn connect() -> zbus::Result<(NotificationsProxy<'static>, Option<SignalStream<'static>>)> {
+async fn connect() -> zbus::Result<(Server, Option<SignalStream<'static>>)> {
     // A full signal queue can block a method reply. Bound Notify and
     // CloseNotification so the loop can resume draining signals afterwards.
     let conn = zbus::connection::Builder::session()
@@ -387,7 +477,14 @@ async fn connect() -> zbus::Result<(NotificationsProxy<'static>, Option<SignalSt
     // A click can be followed immediately by NotificationClosed. Separate streams
     // could reorder them, losing a live click or accepting one after closure.
     let events = proxy.inner().receive_all_signals().await.ok();
-    Ok((proxy, events))
+    // Owner queries must still complete while the notification connection's signal
+    // queue is full; otherwise checking ownership would prevent draining that queue.
+    let owner_conn = zbus::connection::Builder::session()
+        .method_timeout(Duration::from_secs(2))
+        .build()
+        .await?;
+    let bus = zbus::fdo::DBusProxy::new(&owner_conn).await?;
+    Ok((Server { proxy, bus }, events))
 }
 
 #[cfg(test)]
@@ -495,6 +592,50 @@ mod tests {
         assert!(ledger.is_ours(7), "a live notification can be replaced");
         // Nothing was told about a subject that never was in trouble.
         assert_eq!(ledger.resolve(&Subject::Config), None);
+    }
+
+    #[test]
+    fn changing_notification_owner_retires_ids_but_keeps_repeat_deadlines() {
+        let mut ledger = Ledger::default();
+        let first: OwnedUniqueName = ":1.10".try_into().unwrap();
+        let second: OwnedUniqueName = ":1.11".try_into().unwrap();
+        let now = Instant::now();
+        assert!(ledger.set_owner(Some(first.clone())));
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 1);
+        assert!(!ledger.set_owner(Some(first)));
+        assert!(ledger.is_ours(1));
+        assert!(ledger.set_owner(None));
+        assert!(!ledger.is_ours(1));
+        assert!(ledger.set_owner(Some(second)));
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER / 2), None);
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER), Some(0));
+        ledger.shown(&Subject::Config, 1);
+        assert!(ledger.is_ours(1), "the current owner can reuse an ID");
+        assert!(ledger.set_owner(Some(":1.12".try_into().unwrap())));
+        assert_eq!(
+            ledger.resolve(&Subject::Config),
+            None,
+            "cannot close another owner's ID"
+        );
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER), Some(0));
+    }
+
+    #[test]
+    fn recurrence_checks_owner_after_selecting_the_replacement() {
+        let mut ledger = Ledger::default();
+        let first: OwnedUniqueName = ":1.10".try_into().unwrap();
+        let second: OwnedUniqueName = ":1.11".try_into().unwrap();
+        let now = Instant::now();
+        ledger.set_owner(Some(first.clone()));
+        assert_eq!(ledger.tell(&Subject::Config, now), Some(0));
+        ledger.shown(&Subject::Config, 1);
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER), Some(1));
+        assert_eq!(ledger.retarget(&Subject::Config, Some(first)), 1);
+        // This is serve's actual order: select first, then discover the new owner.
+        assert_eq!(ledger.retarget(&Subject::Config, Some(second)), 0);
+        assert!(!ledger.is_ours(1));
+        assert_eq!(ledger.tell(&Subject::Config, now + REPEAT_AFTER), None);
     }
 
     #[tokio::test]

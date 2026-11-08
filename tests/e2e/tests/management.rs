@@ -272,13 +272,16 @@ fn a_broken_config_is_reported_and_the_one_in_effect_kept() -> anyhow::Result<()
 #[ignore = "end-to-end test; see typing.rs"]
 fn reloading_a_nul_hotkey_keeps_the_daemon_alive() -> anyhow::Result<()> {
     let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    // A rejected reload keeps this enabled cycle; --engine alone only tries Echo.
+    env.configure("engines = ['echo']\n")?;
     env.wait_for_log("engine ready")?;
     std::fs::write(
         env.dir().join("config/oh-my-ime/config.toml"),
         "engines = [\"echo\"]\n[hotkeys]\ntoggle = \"Control+\\u0000\"\n[panel]\nenabled = false\n",
     )?;
-    // Rejecting the configuration or disabling this hotkey both keep input working.
-    let _ = env.omime_status(&["reload"])?;
+    let (reload, _) = env.omime_status(&["reload"])?;
+    assert!(!reload.success(), "NUL must reject the configuration");
+    env.omime(&["config"])?;
     let status = env.omime(&["status"]);
     assert!(
         status.is_ok(),
@@ -301,9 +304,111 @@ fn starting_with_a_nul_hotkey_keeps_the_daemon_alive() -> anyhow::Result<()> {
     )?;
     env.launch_daemon()
         .with_context(|| format!("NUL in startup config\n{}", env.daemon_log()))?;
+    env.omime(&["config"])?;
     env.omime(&["status"])?;
     env.omime(&["switch", "echo"])?;
     env.wait_for_log("engine ready")?;
+    let editor = env.editor(&[])?;
+    env.type_text("ok ")?;
+    editor.wait_for_text("OK ")?;
+    Ok(())
+}
+
+const NUL_CONFIG_FIELDS: [(&str, &str); 4] = [
+    ("engines", "engines = [\"private\\u0000value\"]\n"),
+    (
+        "initial_input_method",
+        "initial_input_method = \"private\\u0000value\"\n",
+    ),
+    (
+        "hotkeys.toggle",
+        "[hotkeys]\ntoggle = \"private\\u0000value\"\n",
+    ),
+    (
+        "hotkeys.next",
+        "[hotkeys]\nnext = \"private\\u0000value\"\n",
+    ),
+];
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn nul_config_fields_keep_config_and_status_available_on_reload() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    env.configure("engines = ['echo']\n[hotkeys]\ntoggle = 'F1'\nnext = 'F2'\n")?;
+    let good = env.omime(&["config"])?;
+    for (key, text) in NUL_CONFIG_FIELDS {
+        std::fs::write(env.dir().join("config/oh-my-ime/config.toml"), text)?;
+        let reload = env.omime(&["reload"]);
+        // Config itself used to drop the control connection after an accepted NUL.
+        let current = env.omime(&["config"]).with_context(|| key)?;
+        env.omime(&["status"]).with_context(|| key)?;
+        assert_eq!(current, good, "{key}: the last good configuration stays");
+        let error = format!("{:#}", reload.expect_err(key));
+        assert!(error.contains(&format!("`{key}`")), "{error}");
+        assert!(!error.contains("private"), "{error}");
+    }
+    let editor = env.editor(&[])?;
+    env.type_text("ok ")?;
+    editor.wait_for_text("OK ")?;
+    env.key(&[], "F1")?;
+    env.wait_for_status("direct input")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn nul_config_fields_keep_config_and_status_available_on_startup() -> anyhow::Result<()> {
+    for (key, text) in NUL_CONFIG_FIELDS {
+        let mut env = TestEnv::prepare(&[echo_engine()])?;
+        std::fs::write(env.dir().join("config/oh-my-ime/config.toml"), text)?;
+        env.launch_daemon()?;
+        let config = env.omime(&["config"]).with_context(|| key)?;
+        env.omime(&["status"]).with_context(|| key)?;
+        assert!(
+            config.contains("hotkeys.toggle = \"Control+space\""),
+            "{key}: {config}"
+        );
+        assert!(
+            config.contains("hotkeys.next = \"Control+Shift+space\""),
+            "{key}: {config}"
+        );
+        let log = env.daemon_log();
+        assert!(log.contains(&format!("`{key}`")), "{log}");
+        assert!(!log.contains("private"), "{log}");
+        env.omime(&["switch", "echo"])?;
+        let editor = env.editor(&[])?;
+        env.type_text("ok ")?;
+        editor.wait_for_text("OK ")?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn config_diagnostics_with_nul_keep_control_available() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], Some("echo"))?;
+    let good = "engines = ['echo']\n[panel]\nenabled = false\n";
+    env.configure(good)?;
+    // Unknown option names remain warnings and never enter the control reply.
+    env.configure(&format!("\"\\u0000\" = 1\n{good}"))?;
+    let config = env.omime(&["config"])?;
+    let malformed = "engines = [\"a\0b\"]\n";
+    std::fs::write(env.dir().join("config/oh-my-ime/config.toml"), malformed)?;
+    for command in [vec!["reload"], vec!["config", "apps.remember", "true"]] {
+        let error = format!("{:#}", env.omime(&command).expect_err("invalid TOML"));
+        assert!(
+            error.contains("org.freedesktop.DBus.Error.Failed"),
+            "{error}"
+        );
+        assert!(!error.contains("NoReply"), "{error}");
+        assert!(!error.contains('\0'), "{error}");
+        assert_eq!(env.omime(&["config"])?, config);
+        env.omime(&["status"])?;
+    }
+    assert_eq!(
+        std::fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?,
+        malformed
+    );
     let editor = env.editor(&[])?;
     env.type_text("ok ")?;
     editor.wait_for_text("OK ")?;

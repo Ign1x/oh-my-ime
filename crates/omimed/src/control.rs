@@ -87,7 +87,9 @@ impl ControlObject {
 }
 
 fn failed(result: Result<(), String>) -> zbus::fdo::Result<()> {
-    result.map_err(zbus::fdo::Error::Failed)
+    // Parser diagnostics can include raw file contents; D-Bus strings cannot
+    // carry NUL even when the configuration itself was correctly rejected.
+    result.map_err(|error| zbus::fdo::Error::Failed(error.replace('\0', "\\0")))
 }
 
 #[zbus::interface(name = "io.github.ign1x.OhMyIme.Daemon1")]

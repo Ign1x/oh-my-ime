@@ -5,8 +5,56 @@ use omime_proto::config::{self, Config, HotkeySpec, Value};
 #[test]
 fn nul_in_hotkey_is_rejected_before_c_string_conversion() {
     // TOML permits escaped NUL, but xkbcommon cannot accept it in a keysym name.
-    let (config, _) = Config::parse("[hotkeys]\ntoggle = \"Control+\\u0000\"\n").unwrap();
-    assert!(HotkeySpec::parse(&config.hotkeys.toggle).is_err());
+    assert!(HotkeySpec::parse("Control+\0").is_err());
+}
+
+#[test]
+fn nul_in_each_exposed_config_string_is_rejected_without_echoing_its_value() {
+    for (key, text, value) in [
+        (
+            "engines",
+            "engines = ['echo', \"private\\u0000value\"]",
+            Value::List(vec!["echo".into(), "private\0value".into()]),
+        ),
+        (
+            "initial_input_method",
+            "initial_input_method = \"private\\u0000value\"",
+            Value::String("private\0value".into()),
+        ),
+        (
+            "hotkeys.toggle",
+            "[hotkeys]\ntoggle = \"private\\u0000value\"",
+            Value::String("private\0value".into()),
+        ),
+        (
+            "hotkeys.next",
+            "[hotkeys]\nnext = \"private\\u0000value\"",
+            Value::String("private\0value".into()),
+        ),
+    ] {
+        for error in [
+            Config::parse(text).expect_err(key),
+            config::edit("", key, value).expect_err(key),
+        ] {
+            assert!(error.contains(&format!("`{key}`")), "{error}");
+            assert!(!error.contains("private"), "{error}");
+            assert!(!error.contains('\0'), "{error:?}");
+        }
+    }
+}
+
+#[test]
+fn unicode_config_strings_still_parse_and_edit() {
+    let text = "engines = ['echo', 'rime/拼音']\ninitial_input_method = 'rime/拼音'\n\
+                [hotkeys]\ntoggle = 'Control+é'\nnext = 'Control+あ'\n";
+    let (config, unknown) = Config::parse(text).unwrap();
+    assert!(unknown.is_empty());
+    assert_eq!(config.engines.unwrap(), ["echo", "rime/拼音"]);
+    assert_eq!(config.initial_input_method.as_deref(), Some("rime/拼音"));
+    assert_eq!(config.hotkeys.toggle, "Control+é");
+    assert_eq!(config.hotkeys.next, "Control+あ");
+    let edited = config::edit(text, "hotkeys.next", Value::String("Control+ß".into())).unwrap();
+    assert_eq!(Config::parse(&edited).unwrap().0.hotkeys.next, "Control+ß");
 }
 
 #[test]
