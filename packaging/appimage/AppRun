@@ -1,0 +1,223 @@
+#!/bin/sh
+# This entry point is also used by the installed sibling-program wrappers.
+set -eu
+
+fail() { printf 'oh-my-ime AppImage: %s\n' "$*" >&2; exit 1; }
+root=$(CDPATH='' cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd -P)
+image_id=$(cat "$root/.omime-image-id")
+case "$image_id" in ''|*[!a-zA-Z0-9._-]*) fail 'invalid image identity' ;; esac
+programs='omimed omime omime-ibus omime-panel omime-settings omime-echo omime-sparkle omime-rime'
+stage=
+lock=
+new_tree=
+new_links=
+committed=no
+cleanup() {
+    # A signal can arrive after rename(2), before the shell updates committed.
+    # Keep the new tree whenever current already names it.
+    if [ -n "$new_tree" ] && [ -L "$install_base/current" ] &&
+        [ "$(readlink -- "$install_base/current")" = "$image_id" ]; then
+        committed=yes
+    fi
+    [ -z "$stage" ] || rm -rf -- "$stage"
+    if [ "$committed" = no ]; then
+        for program in $new_links; do
+            link="$launchers/$program"
+            if [ -L "$link" ] && [ "$(readlink -- "$link")" = "$install_base/current/usr/bin/$program" ]; then
+                rm -f -- "$link"
+            fi
+        done
+        [ -z "$new_tree" ] || rm -rf -- "$new_tree"
+    fi
+    [ -z "$lock" ] || rmdir -- "$lock"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+check_path() {
+    case "$1" in /*) ;; *) fail "$2 must be an absolute path" ;; esac
+    # These paths also become PATH/XDG_DATA_DIRS entries and setup commands.
+    case "$1" in *:*) fail "$2 must not contain a colon" ;; esac
+    case "$1" in */.mount_*|*/.mount.*) fail "$2 must not be inside a temporary AppImage mount" ;; esac
+    case "$1" in *'
+'*) fail "$2 must not contain a newline" ;; esac
+}
+
+valid_tree() {
+    [ -d "$1" ] && [ ! -L "$1" ] && [ -f "$1/.omime-image-id" ] &&
+        [ "$(cat "$1/.omime-image-id")" = "$image_id" ] && [ -x "$1/AppRun" ]
+}
+
+materialize() {
+    destination=$1
+    materialize_mode=${2:-cache}
+    parent=$(dirname -- "$destination")
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        valid_tree "$destination" || fail "refusing to replace $destination"
+        if [ "$materialize_mode" = install ]; then
+            [ -f "$destination/.omime-installed" ] &&
+                [ "$(cat "$destination/.omime-installed")" = "$image_id" ] ||
+                fail "refusing to replace $destination"
+        fi
+        return
+    fi
+    mkdir -p -- "$parent"
+    stage=$(mktemp -d "$parent/.extract-XXXXXXXX")
+    cp -a -- "$root/." "$stage/"
+    # An installed source can be used to create another installation.
+    rm -f -- "$stage/.omime-installed"
+    chmod u+w -- "$stage"
+    if [ "$materialize_mode" = install ]; then
+        # Publish only a complete, recognizable installation. If interrupted
+        # immediately after the rename, a later --install can reuse this tree.
+        printf '%s\n' "$image_id" > "$stage/.omime-installed"
+    fi
+    if mv -T -- "$stage" "$destination" 2>/dev/null; then
+        stage=
+    elif valid_tree "$destination"; then
+        # Another concurrent first launch completed the same immutable image.
+        if [ "$materialize_mode" = install ]; then
+            [ -f "$destination/.omime-installed" ] &&
+                [ "$(cat "$destination/.omime-installed")" = "$image_id" ] ||
+                fail "refusing to replace $destination"
+        fi
+        rm -rf -- "$stage"
+        stage=
+    else
+        fail "cannot finish extracting to $destination"
+    fi
+}
+
+install_image() {
+    [ "$#" -eq 0 ] || fail '--install takes no arguments'
+    [ -n "${HOME:-}" ] || fail 'HOME is required for --install'
+    check_path "$HOME" HOME
+    data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
+    check_path "$data_home" XDG_DATA_HOME
+    install_base="$data_home/oh-my-ime/appimage"
+    launchers="$HOME/.local/bin"
+    mkdir -p -- "$install_base" "$launchers"
+    if mkdir -- "$install_base/.install-lock" 2>/dev/null; then
+        lock="$install_base/.install-lock"
+    else
+        fail "an installation is already running ($install_base/.install-lock); remove a stale lock only after that installer has stopped"
+    fi
+
+    # Refuse unrelated executables before creating or changing any launcher.
+    for program in $programs; do
+        link="$launchers/$program"
+        if [ -L "$link" ]; then
+            [ "$(readlink -- "$link")" = "$install_base/current/usr/bin/$program" ] ||
+                fail "refusing to replace $link; move the existing launcher before installing"
+        elif [ -e "$link" ]; then
+            fail "refusing to replace $link; move the existing launcher before installing"
+        fi
+    done
+    if [ -L "$install_base/current" ]; then
+        previous=$(readlink -- "$install_base/current")
+        case "$previous" in ''|*[!a-zA-Z0-9._-]*) fail 'current is not an AppImage installation link' ;; esac
+        [ -f "$install_base/$previous/.omime-installed" ] &&
+            [ "$(cat "$install_base/$previous/.omime-installed")" = "$previous" ] ||
+            fail 'current is not an AppImage installation link'
+    elif [ -e "$install_base/current" ]; then
+        fail "refusing to replace $install_base/current"
+    fi
+
+    destination="$install_base/$image_id"
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        valid_tree "$destination" && [ -f "$destination/.omime-installed" ] &&
+            [ "$(cat "$destination/.omime-installed")" = "$image_id" ] ||
+            fail "refusing to replace $destination"
+    else
+        materialize "$destination" install
+        new_tree=$destination
+    fi
+    for program in $programs; do
+        link="$launchers/$program"
+        if [ ! -L "$link" ]; then
+            new_links="$new_links $program"
+            ln -s -- "$install_base/current/usr/bin/$program" "$link"
+        fi
+    done
+    stage=$(mktemp -d "$install_base/.activate-XXXXXXXX")
+    ln -s -- "$image_id" "$stage/current"
+    mv -Tf -- "$stage/current" "$install_base/current"
+    committed=yes
+    printf 'Installed oh-my-ime in %s\nLaunchers: %s\n' "$destination" "$launchers"
+    printf 'Add that launcher directory to PATH, then run: omime setup --dry-run\n'
+    printf 'Installation does not start the daemon or change desktop settings.\n'
+}
+
+case "${1:-}" in
+    --install) shift; install_image "$@"; exit 0 ;;
+    --package-help)
+        cat <<'HELP'
+Usage: oh-my-ime.AppImage [omime arguments]
+       oh-my-ime.AppImage --daemon [omimed arguments]
+       oh-my-ime.AppImage --tool PROGRAM [arguments]
+       oh-my-ime.AppImage --install
+
+With no arguments, opens settings. Other arguments go to omime.
+--tool selects omime, omimed, omime-settings, omime-panel, omime-ibus,
+omime-echo, omime-sparkle, or omime-rime.
+
+--install creates a versioned installation in XDG_DATA_HOME/oh-my-ime/appimage
+(default ~/.local/share) and launchers in ~/.local/bin. Run the installed
+omime for setup/autostart. Installation does not configure or start input.
+
+Ordinary launches extract once into XDG_CACHE_HOME/oh-my-ime/appimage
+(default ~/.cache). Keep that cache while any of its programs are running.
+Linux glibc 2.39+ and compatible host graphics drivers are required.
+HELP
+        exit 0 ;;
+    --daemon) program=omimed; shift ;;
+    --tool)
+        [ "$#" -ge 2 ] || fail '--tool requires a program name'
+        program=$2
+        shift 2 ;;
+    '') program=omime-settings ;;
+    *) program=omime ;;
+esac
+case " $programs " in *" $program "*) ;; *) fail "unknown program: $program" ;; esac
+
+installed=no
+if [ -f "$root/.omime-installed" ] && [ "$(cat "$root/.omime-installed")" = "$image_id" ]; then
+    installed=yes
+fi
+if [ "$program" = omime ] && [ "${1:-}" = setup ]; then
+    case "${2:-}" in -h|--help) ;;
+        *) [ "$installed" = yes ] || fail 'setup needs a stable installation: run this AppImage with --install, then run ~/.local/bin/omime setup' ;;
+    esac
+fi
+
+if [ "$installed" = no ]; then
+    [ -n "${HOME:-}" ] || [ -n "${XDG_CACHE_HOME:-}" ] || fail 'HOME or XDG_CACHE_HOME is required'
+    cache_home=${XDG_CACHE_HOME:-"$HOME/.cache"}
+    check_path "$cache_home" XDG_CACHE_HOME
+    destination="$cache_home/oh-my-ime/appimage/$image_id"
+    if [ "$root" != "$destination" ]; then
+        materialize "$destination"
+        root=$destination
+    fi
+fi
+
+# RUNPATH is carried by each ELF, never exported as LD_LIBRARY_PATH. In
+# particular, hosted Fcitx/IBus and their settings keep the host's libraries.
+PATH="$root/usr/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+if [ "$installed" = yes ] && [ "$program" = omime ] && [ "${1:-}" = setup ]; then
+    # setup stores the stable current launcher, not an immutable old version or
+    # the AppImage mount. Old versions remain intact for existing processes.
+    install_base=$(dirname -- "$root")
+    [ -L "$install_base/current" ] || fail 'installed current link is missing; rerun --install'
+    PATH="$install_base/current/usr/bin:$PATH"
+fi
+XDG_DATA_DIRS="$root/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+OMIME_RIME_SHARED_DATA=${OMIME_RIME_SHARED_DATA:-"$root/usr/share/rime-data"}
+XKB_CONFIG_ROOT=${XKB_CONFIG_ROOT:-"$root/usr/share/X11/xkb"}
+export PATH XDG_DATA_DIRS OMIME_RIME_SHARED_DATA XKB_CONFIG_ROOT
+# Remove mount metadata before a child can accidentally reuse an expired mount.
+unset APPDIR APPIMAGE ARGV0 OWD
+trap - EXIT HUP INT TERM
+exec "$root/usr/lib/oh-my-ime/bin/$program.bin" "$@"

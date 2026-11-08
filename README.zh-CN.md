@@ -103,6 +103,8 @@ omime setup --engine rime --take-over --start
 [发布版本](docs/zh-CN/releases.md)、[Nix](docs/zh-CN/nix.md)和
 [Hyprland 指南](docs/zh-CN/hyprland.md)。
 
+deb、RPM、AppImage 和 Arch/AUR 的打包与安装见 [Linux 安装包指南](docs/zh-CN/linux-packages.md)。
+
 ## 文档
 
 - [架构](docs/zh-CN/architecture.md)

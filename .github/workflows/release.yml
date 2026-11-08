@@ -74,7 +74,7 @@ jobs:
         run: |
           cargo fmt --all --check
           python3 scripts/check-translations.py
-          python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
           cargo test --workspace --locked
           cargo build --release --locked \
             -p omimed -p omime-cli -p omime-panel -p omime-settings \
@@ -105,6 +105,12 @@ jobs:
               --test settings --test notifications --test tray --test rime \
               --test fcitx5 --test management -- --ignored
           '
+      - name: Build and install-test deb, RPM and AppImage packages
+        env:
+          RELEASE_SYSTEM: ${{ matrix.system }}
+        run: |
+          bash scripts/build-linux-packages.sh \
+            "dist/$RELEASE_SYSTEM.json" dist dist "$RELEASE_SYSTEM"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.system }}
@@ -128,18 +134,30 @@ jobs:
         run: |
           tag=$(python3 -c 'import json; print(json.load(open("dist/x86_64-linux.json"))["tag"])')
           python3 scripts/release.py assemble --tag "$tag" \
-            --repository "$RELEASE_REPOSITORY" --out dist
+            --repository "$RELEASE_REPOSITORY" --out dist --linux-packages
           (cd dist && sha256sum --check SHA256SUMS)
           mkdir release-flake
           tar -xzf dist/oh-my-ime-nix.tar.gz -C release-flake --strip-components=1
       - uses: cachix/install-nix-action@v31
       - name: Evaluate the generated flake on both architectures
         run: nix flake check "path:$PWD/release-flake" --all-systems --no-build --no-update-lock-file
+      - name: Validate the AUR split package
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("dist/release.json"))["version"])')
+          docker run --rm \
+            --mount "type=bind,src=$PWD,dst=/source,readonly" \
+            --mount "type=bind,src=$PWD/dist,dst=/artifacts,readonly" \
+            archlinux:base-devel \
+            bash /source/packaging/aur/smoke.sh "/source/dist/oh-my-ime-aur-$version.tar.gz" /artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: release-assets
           path: |
             dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.AppImage.build.json
             dist/release.json
             dist/SHA256SUMS
           if-no-files-found: error
@@ -179,5 +197,6 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" --verify-tag --draft \
             --title "$RELEASE_TAG" "${flags[@]}" \
-            dist/*.tar.gz dist/release.json dist/SHA256SUMS
+            dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.AppImage \
+            dist/*.AppImage.build.json dist/release.json dist/SHA256SUMS
           gh release edit "$RELEASE_TAG" --draft=false

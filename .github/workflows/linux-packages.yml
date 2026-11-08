@@ -1,0 +1,96 @@
+name: Linux packages
+
+on:
+  push:
+    branches: ['packaging/**']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release to package (for example v0.5.0)
+        required: true
+        default: v0.5.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Linux packages ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check packaging scripts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Fetch verified release inputs
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_SYSTEM: ${{ matrix.system }}
+        run: |
+          tag=$REQUESTED_TAG
+          if [ -z "$tag" ]; then
+            tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          fi
+          python3 scripts/fetch-release.py --tag "$tag" --system "$RELEASE_SYSTEM" --out inputs
+      - name: Build and install-test native packages
+        env:
+          RELEASE_SYSTEM: ${{ matrix.system }}
+        run: |
+          bash scripts/build-linux-packages.sh inputs/release.json inputs dist "$RELEASE_SYSTEM"
+          cp inputs/release.json dist/release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+
+  assemble:
+    name: Verify packages and AUR recipe
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-packages-*
+          path: dist
+          merge-multiple: true
+      - name: Assemble package manifest and checksums
+        run: |
+          python3 scripts/package-linux.py --format assemble --manifest dist/release.json --out dist
+          (cd dist && sha256sum --check SHA256SUMS-linux)
+      - name: Validate the AUR split package
+        run: |
+          tag=$(python3 -c 'import json; print(json.load(open("dist/release.json"))["tag"])')
+          version=${tag#v}
+          python3 scripts/fetch-release.py --tag "$tag" --out inputs
+          docker run --rm \
+            --mount "type=bind,src=$PWD,dst=/source,readonly" \
+            --mount "type=bind,src=$PWD/inputs,dst=/artifacts,readonly" \
+            archlinux:base-devel \
+            bash /source/packaging/aur/smoke.sh "/source/dist/oh-my-ime-aur-$version.tar.gz" /artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.AppImage.build.json
+            dist/oh-my-ime-aur-*.tar.gz
+            dist/linux-packages.json
+            dist/SHA256SUMS-linux
+          if-no-files-found: error

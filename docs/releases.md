@@ -8,6 +8,10 @@ version tag publishes the verified assets. A manual workflow run or a push to a
 `release/` branch produces the same assets as Actions artifacts without publishing
 a Release.
 
+New release builds also create deb, RPM, AppImage and AUR recipe assets, with
+installation checks in isolated containers. The [Linux packages guide](https://github.com/Ign1x/oh-my-ime/blob/main/docs/linux-packages.md)
+covers those formats and the separate workflow for packaging an existing release.
+
 Binary assets are available starting with
 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0).
 Earlier v0.1.0–v0.3.0 tags do not have these assets.
@@ -68,6 +72,12 @@ Each Release contains:
 - `oh-my-ime-nix.tar.gz`: a minimal flake with both modules and binary packages.
 - `release.json` and `SHA256SUMS`: version, commit, architecture, URLs and hashes.
 
+The distribution packaging workflow adds platform/Rime `.deb` and `.rpm` files,
+one `.AppImage` and its `.AppImage.build.json` per architecture, and
+`oh-my-ime-aur-VERSION.tar.gz` containing `PKGBUILD` and `.SRCINFO`. These formats
+are included in the main manifest and checksums for new tagged releases. AUR
+recipe generation does not publish to the AUR.
+
 `SYSTEM` is `x86_64-linux` or `aarch64-linux`. The archives are built on Ubuntu 24.04
 and require glibc 2.39 or newer. They use distribution runtime libraries, including
 Wayland, libxkbcommon, fontconfig and GPU/window-system libraries; Rime additionally
@@ -112,3 +122,6 @@ python3 scripts/release.py assemble --tag vVERSION --systems x86_64-linux \
 
 The local single-architecture flake is for testing. Publishing requires both native
 build jobs, matching source commits and verified hashes for all four binary archives.
+It also builds and validates the distribution packages on both native runners;
+`assemble --linux-packages` refuses missing formats, mismatched revisions or changed
+package files before generating the final manifest and checksums.

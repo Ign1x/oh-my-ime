@@ -148,6 +148,25 @@ def assemble(args):
                 **item,
                 "url": f"https://github.com/{args.repository}/releases/download/{args.tag}/{expected}",
             }
+    extra_files = []
+    if getattr(args, "linux_packages", False):
+        from linux_packages import aur
+        from linux_packages.common import collect_packages, file_record
+
+        if set(args.systems) != set(SYSTEMS):
+            raise ValueError("Linux distribution packages require both native architectures")
+        release["packages"] = collect_packages(release, args.out)
+        for formats in release["packages"].values():
+            for artifacts in formats.values():
+                for item in artifacts:
+                    item["url"] = f"https://github.com/{args.repository}/releases/download/{args.tag}/{item['file']}"
+                    extra_files.append(args.out / item["file"])
+        recipe = aur.build(release, args.out)[0]
+        release["aur"] = {
+            **file_record(recipe),
+            "url": f"https://github.com/{args.repository}/releases/download/{args.tag}/{recipe.name}",
+        }
+        extra_files.append(recipe)
     write_json(args.out / "release.json", release)
     with tempfile.TemporaryDirectory(prefix="omime-release-flake-") as temporary:
         directory = Path(temporary) / "oh-my-ime-nix"
@@ -171,6 +190,7 @@ def assemble(args):
         archive(directory, args.out / "oh-my-ime-nix.tar.gz")
     files = [args.out / "oh-my-ime-nix.tar.gz", args.out / "release.json"]
     files += [args.out / item["file"] for artifacts in release["artifacts"].values() for item in artifacts.values()]
+    files += extra_files
     (args.out / "SHA256SUMS").write_text("".join(f"{digests(path)[0]}  {path.name}\n" for path in sorted(files)))
     print(f"Assembled release flake for {', '.join(args.systems)} with verified SHA-256 hashes")
 
@@ -190,6 +210,8 @@ def main():
             sub.add_argument("--bin-dir", type=Path, required=True)
         else:
             sub.add_argument("--systems", choices=SYSTEMS, nargs="+", default=list(SYSTEMS))
+            sub.add_argument("--linux-packages", action="store_true",
+                             help="require both architectures' deb, RPM and AppImage packages; add AUR recipes")
     args = parser.parse_args()
     try:
         if args.command == "check-tag":

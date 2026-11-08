@@ -6,6 +6,9 @@ Release 工作流在原生 x86_64 和 ARM64 runner 上编译，随后将压缩�
 Nix 包，运行输入、界面与 Rime 测试。推送版本 tag 后自动发布验证过的产物；
 手动运行工作流或推送到 `release/` 分支只生成 Actions 附件，不公开 Release。
 
+新的发布构建还生成 deb、RPM、AppImage 和 AUR 配方，并在隔离容器内检查安装。
+各格式的安装方式，以及为已有版本打包的独立工作流，见 [Linux 安装包指南](https://github.com/Ign1x/oh-my-ime/blob/main/docs/zh-CN/linux-packages.md)。
+
 从 [v0.4.0](https://github.com/Ign1x/oh-my-ime/releases/tag/v0.4.0) 起提供这些附件，
 下面的下载地址现已可用。更早的 v0.1.0–v0.3.0 tag 没有二进制附件。
 
@@ -62,6 +65,10 @@ nix profile install 'https://github.com/Ign1x/oh-my-ime/releases/latest/download
 - `oh-my-ime-nix.tar.gz`：含 NixOS/Home Manager 模块和二进制包的最小 flake。
 - `release.json`、`SHA256SUMS`：版本、提交、架构、下载地址和校验值。
 
+发行版打包流程还增加平台与 Rime 的 `.deb`、`.rpm`，每个架构的 `.AppImage` 和
+`.AppImage.build.json`，以及包含 `PKGBUILD`、`.SRCINFO` 的 `oh-my-ime-aur-VERSION.tar.gz`。
+新标签发布时，主清单和校验和统一覆盖这些格式。生成 AUR 配方不会自动发布到 AUR。
+
 `SYSTEM` 为 `x86_64-linux` 或 `aarch64-linux`。构建环境为 Ubuntu 24.04，要求
 glibc ≥ 2.39，以及 Wayland、libxkbcommon、fontconfig、图形和窗口系统运行库。
 Rime 还需 librime ≥ 1.11（`librime.so.1`）和方案数据。Nix 包会提供依赖及搜索路径；
@@ -100,3 +107,5 @@ python3 scripts/release.py assemble --tag vVERSION --systems x86_64-linux \
 
 单架构的本地产物用于验证；正式发布要求两个原生构建任务均通过、提交一致且
 四个二进制压缩包的校验值全部匹配。
+流程还在两个原生 runner 上构建、验证发行版包；生成最终清单和校验和前，
+`assemble --linux-packages` 会拒绝缺失格式、混用提交或内容被修改的安装包。

@@ -23,7 +23,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 python3 scripts/check-translations.py
-python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 python3 -m unittest discover -s tests/desktop -p 'test_*.py'
 cargo deny check        # licenses, advisories, sources
 ```

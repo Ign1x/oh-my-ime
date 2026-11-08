@@ -5,11 +5,13 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
 SPEC = importlib.util.spec_from_file_location("release", Path(__file__).parents[1] / "release.py")
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
@@ -124,6 +126,60 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "rebuild version 1.2.3"):
                 release.package(args)
         self.assertEqual(list(self.out.iterdir()), [])
+
+    def linux_fixtures(self):
+        from linux_packages.common import file_record
+
+        for system in release.SYSTEMS:
+            for kind, suffix in (("deb", ".deb"), ("rpm", ".rpm"), ("appimage", ".AppImage")):
+                if kind == "appimage":
+                    names = [f"oh-my-ime-1.2.3-{system}.AppImage"]
+                    names.append(names[0] + ".build.json")
+                else:
+                    names = [f"{prefix}-1.2.3-{system}{suffix}"
+                             for prefix in ("oh-my-ime", "oh-my-ime-rime")]
+                artifacts = []
+                for name in names:
+                    path = self.out / name
+                    path.write_text(name)
+                    artifacts.append(file_record(path))
+                release.write_json(self.out / f"linux-{system}-{kind}.json", {
+                    **self.identity, "system": system, "format": kind, "artifacts": artifacts,
+                })
+
+    def test_linux_packages_and_aur_are_covered_by_the_release_checksums(self):
+        self.fixtures()
+        self.linux_fixtures()
+        self.args.linux_packages = True
+        self.assemble()
+        manifest = json.loads((self.out / "release.json").read_text())
+        self.assertEqual(set(manifest["packages"]), set(release.SYSTEMS))
+        names = {item["file"] for formats in manifest["packages"].values()
+                 for artifacts in formats.values() for item in artifacts}
+        names.add(manifest["aur"]["file"])
+        checksums = {name: digest for digest, name in
+                     (line.split("  ") for line in (self.out / "SHA256SUMS").read_text().splitlines())}
+        self.assertEqual(len(checksums), 19)
+        self.assertTrue(names <= checksums.keys())
+        for name in names:
+            self.assertEqual(checksums[name], release.digests(self.out / name)[0])
+        with tarfile.open(self.out / manifest["aur"]["file"]) as archive:
+            recipe = archive.extractfile("oh-my-ime-bin/PKGBUILD").read().decode()
+        for system in release.SYSTEMS:
+            for artifact in manifest["artifacts"][system].values():
+                self.assertIn(artifact["sha256"], recipe)
+        with tarfile.open(self.out / "oh-my-ime-nix.tar.gz") as archive:
+            self.assertEqual(json.load(archive.extractfile("oh-my-ime-nix/nix/release.json")), manifest)
+
+    def test_incomplete_linux_packages_cannot_produce_a_release_manifest(self):
+        self.fixtures()
+        self.linux_fixtures()
+        self.args.linux_packages = True
+        (self.out / "linux-aarch64-linux-appimage.json").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.assemble()
+        self.assertFalse((self.out / "release.json").exists())
+        self.assertFalse((self.out / "SHA256SUMS").exists())
 
 
 if __name__ == "__main__":

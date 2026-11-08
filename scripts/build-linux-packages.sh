@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Native runners invoke disposable distro containers; nothing is installed on the host.
+# Usage: scripts/build-linux-packages.sh MANIFEST ARTIFACTS OUTPUT SYSTEM
+set -euo pipefail
+task_source=$(cd -- "$(dirname -- "$0")/.." && pwd)
+task_manifest=$(realpath -- "$1")
+task_artifacts=$(realpath -- "$2")
+mkdir -p -- "$3"
+task_output=$(realpath -- "$3")
+task_system=$4
+case "$(uname -m):$task_system" in
+  x86_64:x86_64-linux|aarch64:aarch64-linux) ;;
+  *) echo "Use a native runner for $task_system" >&2; exit 1 ;;
+esac
+
+container() {
+  local task_image=$1
+  shift
+  docker run --rm \
+    --mount "type=bind,src=$task_source,dst=/source,readonly" \
+    --mount "type=bind,src=$task_artifacts,dst=/artifacts,readonly" \
+    --mount "type=bind,src=$task_manifest,dst=/release-input.json,readonly" \
+    --mount "type=bind,src=$task_output,dst=/out" \
+    -e "OMIME_PACKAGE_SYSTEM=$task_system" "$task_image" "$@"
+}
+
+# shellcheck disable=SC2016 # Expanded inside the container, after its environment is set.
+container ubuntu:24.04 bash -euo pipefail -c '
+  bash /source/packaging/debian/prepare.sh
+  python3 /source/scripts/package-linux.py --format deb --manifest /release-input.json \
+    --artifacts /artifacts --system "$OMIME_PACKAGE_SYSTEM" --out /out
+  bash /source/packaging/debian/smoke.sh /out platform
+'
+# Noble's librime is too old for the optional Rime engine; verify the complete
+# package installation in a distribution providing librime >= 1.11.
+container debian:13 bash -euo pipefail -c '
+  bash /source/packaging/debian/smoke.sh /out all
+'
+# shellcheck disable=SC2016 # Expanded inside the container.
+container fedora:43 bash -euo pipefail -c '
+  bash /source/packaging/rpm/prepare.sh
+  python3 /source/scripts/package-linux.py --format rpm --manifest /release-input.json \
+    --artifacts /artifacts --system "$OMIME_PACKAGE_SYSTEM" --out /out
+  bash /source/packaging/rpm/smoke.sh /out all
+'
+# shellcheck disable=SC2016 # Expanded inside the container.
+container ubuntu:24.04 bash -euo pipefail -c '
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    python3 ca-certificates patchelf squashfs-tools binutils \
+    build-essential cmake ninja-build libboost-dev libboost-regex-dev \
+    libgoogle-glog-dev libgflags-dev libleveldb-dev libmarisa-dev libopencc-dev \
+    libyaml-cpp-dev libunwind-dev libx11-dev \
+    librime-data rime-data-double-pinyin rime-data-luna-pinyin libopencc-data \
+    xkb-data libxkbcommon0 libfontconfig1 libwayland-client0 libwayland-cursor0 libwayland-egl1
+  python3 /source/packaging/appimage/prepare-rime.py --prefix /tmp/omime-appimage-rime
+  export OMIME_APPIMAGE_RIME_PREFIX=/tmp/omime-appimage-rime
+  python3 /source/scripts/package-linux.py --format appimage --manifest /release-input.json \
+    --artifacts /artifacts --system "$OMIME_PACKAGE_SYSTEM" --out /out
+'
+container ubuntu:24.04 bash -euo pipefail -c '
+  apt-get update
+  apt-get install -y --no-install-recommends python3 util-linux
+  setpriv --reuid=1000 --regid=1000 --clear-groups \
+    bash /source/packaging/appimage/smoke.sh /out
+'

@@ -111,6 +111,9 @@ Installing from source, the NixOS and Home Manager modules, and undoing setup ar
 the [setup guide](docs/setup.md), [releases](docs/releases.md), [Nix](docs/nix.md) and the
 [Hyprland guide](docs/hyprland.md).
 
+deb, RPM, AppImage and Arch/AUR packaging is covered in the
+[Linux packages guide](docs/linux-packages.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)

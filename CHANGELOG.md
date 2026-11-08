@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Native x86_64/ARM64 deb and RPM packages with separate optional Rime packages,
+  a portable AppImage with persistent launchers, and checksum-pinned AUR split-package
+  recipes. Packaging checks install the native packages in isolated containers;
+  existing release archives can also be packaged without replacing published assets.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added
