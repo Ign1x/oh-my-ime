@@ -102,8 +102,8 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   through once in order. The daemon waits for the old call, resets, refreshes the
   field and restores its remembered mode before sending new composition keys.
   A call that cannot recover is terminated by the existing watchdog.
-- Fcitx output has a separate bounded queue: 64 items / 64 KiB per input context
-  and 256 items / 256 KiB per bus. A transaction is limited to 63 actions / 32 KiB
+- Fcitx output has a separate bounded queue: 128 items / 64 KiB per input context
+  and 512 items / 256 KiB per bus. A transaction is limited to 63 actions / 32 KiB
   of text. Adjacent replacement preedits coalesce; commit, delete, forward-key and
   reply ordering is preserved. Overflow or a 300 ms bus stall ends affected
   compositions and settles pending keys; composition resumes after refocusing,
@@ -118,7 +118,15 @@ This is roughly [`engines/echo`](../engines/echo/src/main.rs). The rules worth k
   1,024 calls / 1 MiB overall, including retained text allocation and event metadata.
   There are no tasks waiting for quota. An excess callback is rejected in full;
   ordinary calls get `LimitsExceeded`, while no-reply calls have no response.
-  Consuming or dropping the event releases its quota, so later callbacks can retry.
+  An admitted callback key press also reserves one slot for its matching release
+  (same connection, context and key code). That release transfers its reserved
+  admission even when text fills the queue. Reservations count toward the same
+  quotas and clear when the context/connection retires; no waiter task is created.
+  Consuming or dropping each event releases its quota, so later callbacks can retry.
+  The SDK's `Host` API uses no-reply calls and may burst; an overload rejection of
+  a no-reply text callback is therefore lossy and is not reported back to the SDK.
+  Keep asynchronous output short. Ordinary `Context` actions return with their key
+  reply; a healthy 64-callback Host burst has output item room for commit clears.
 - `activate`, `deactivate`, `update` and `reset` tell you about focus and the field
   (`ctx.info()` has its content type, the surrounding text and, while your window is
   shown, the cursor rectangle). Wayland/Fcitx5 fields explicitly marked as sensitive

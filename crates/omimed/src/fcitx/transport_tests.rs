@@ -69,6 +69,87 @@ async fn actual_key_reply_writes_keep_admission_until_transport_completion() {
         .await;
 }
 
+#[tokio::test]
+async fn destroyed_ic_key_returns_false_on_the_actual_wire() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (client_socket, server_socket) = Channel::pair();
+            let guid = zbus::Guid::generate();
+            let server =
+                zbus::connection::Builder::authenticated_socket(server_socket, guid.clone())
+                    .p2p()
+                    .build()
+                    .await
+                    .unwrap();
+            let client = zbus::connection::Builder::authenticated_socket(client_socket, guid)
+                .p2p()
+                .build()
+                .await
+                .unwrap();
+            let mut messages = zbus::MessageStream::from(&client);
+            let (requests, _) = mpsc::unbounded_channel();
+            let (queue, outgoing) = output::channel();
+            let admission = queue.reply_admission();
+            let slots = Arc::new(Semaphore::new(output::MAX_IC_REPLIES));
+            let mut frontend = crate::fcitx::FcitxFrontend::new(
+                [Some(queue), None],
+                crate::frontend::ContextIds::default(),
+            );
+            frontend.handle(Request::Created {
+                ic: 1,
+                bus: crate::fcitx::Bus::Main,
+                owner: ":1.9".into(),
+                path: zbus::OwnedObjectPath::try_from("/ic/1").unwrap(),
+                args: Vec::new(),
+            });
+            frontend.handle(Request::Destroy(1));
+            let writer = tokio::task::spawn_local(send_outgoing(server, outgoing, requests));
+            for batch in [false, true] {
+                let call = Message::method_call(
+                    "/ic/1",
+                    if batch {
+                        "ProcessKeyEventBatch"
+                    } else {
+                        "ProcessKeyEvent"
+                    },
+                )
+                .sender(":1.9")
+                .build(&())
+                .unwrap();
+                let reply = admission
+                    .reserve(1, slots.clone(), &call.header(), batch)
+                    .await
+                    .unwrap();
+                frontend.handle(Request::Key {
+                    ic: 1,
+                    key: (65, 38, 0, false, 0),
+                    batch,
+                    reply,
+                });
+                let response = tokio::time::timeout(Duration::from_secs(1), messages.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    response.header().reply_serial(),
+                    Some(call.header().primary().serial_num())
+                );
+                if batch {
+                    let (events, handled): (Vec<(u32, zbus::OwnedVariant)>, bool) =
+                        response.body().deserialize().unwrap();
+                    assert!(events.is_empty());
+                    assert!(!handled);
+                } else {
+                    assert!(!response.body().deserialize::<bool>().unwrap());
+                }
+                assert_eq!(slots.available_permits(), output::MAX_IC_REPLIES);
+            }
+            writer.abort();
+        })
+        .await;
+}
+
 async fn stalled_replies(batch: bool) {
     let (client_socket, server_socket) = Channel::pair();
     let gate = Arc::new(Gate::default());
@@ -102,7 +183,7 @@ async fn stalled_replies(batch: bool) {
         InputContextService {
             inner: object,
             admission: queue.reply_admission(),
-            reply_slots: Arc::new(Semaphore::new(output::MAX_IC_ITEMS)),
+            reply_slots: Arc::new(Semaphore::new(output::MAX_IC_REPLIES)),
         },
     )
     .build()
@@ -165,7 +246,7 @@ async fn stalled_replies(batch: bool) {
     // and the transport deadline to settle keys, without an allocator/RSS oracle.
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(
-        processed.load(Ordering::SeqCst) <= output::MAX_IC_ITEMS,
+        processed.load(Ordering::SeqCst) <= output::MAX_IC_REPLIES,
         "reply admission escaped into generated zbus writers: {} keys",
         processed.load(Ordering::SeqCst)
     );
@@ -173,7 +254,7 @@ async fn stalled_replies(batch: bool) {
         "actual zbus stalled {} replies: 80 sent, {} admitted (limit {})",
         if batch { "batch" } else { "ordinary" },
         processed.load(Ordering::SeqCst),
-        output::MAX_IC_ITEMS
+        output::MAX_IC_REPLIES
     );
     gate.blocked.store(false, Ordering::SeqCst);
     gate.released.notify_waiters();

@@ -323,7 +323,7 @@ impl InputMethodObject {
                 InputContextService {
                     inner: object,
                     admission: self.admission.clone(),
-                    reply_slots: Arc::new(Semaphore::new(output::MAX_IC_ITEMS)),
+                    reply_slots: Arc::new(Semaphore::new(output::MAX_IC_REPLIES)),
                 },
             )
             .await?;
@@ -477,6 +477,11 @@ impl zbus::object_server::Interface for InputContextService {
             "ProcessKeyEventBatch" => true,
             _ => return self.inner.call(server, connection, message, name),
         };
+        // Foreign callers use the safe generated default, without reserving the
+        // owner's key slots. Inline dispatch permits only one such response.
+        if !self.inner.is_owner(&message.header()) {
+            return self.inner.call(server, connection, message, name);
+        }
         zbus::object_server::DispatchResult::from_handler(async move {
             let key = message.body().deserialize::<(u32, u32, u32, bool, u32)>()?;
             let header = message.header();
@@ -668,7 +673,7 @@ impl InputContextObject {
         #[zbus(header)] header: Header<'_>,
     ) -> bool {
         let _ = (keyval, keycode, state, is_release, time, header);
-        unreachable!("key replies are dispatched by InputContextService")
+        false
     }
 
     /// Like `ProcessKeyEvent`, but returns what the key produced instead of signalling
@@ -683,7 +688,7 @@ impl InputContextObject {
         #[zbus(header)] header: Header<'_>,
     ) -> (Vec<(u32, OwnedVariant)>, bool) {
         let _ = (keyval, keycode, state, is_release, time, header);
-        unreachable!("key replies are dispatched by InputContextService")
+        (Vec::new(), false)
     }
 
     // Candidate lists and on-screen keyboards are the engines' business; clients that
@@ -723,6 +728,35 @@ pub(super) fn batched(event: Batched) -> Option<(u32, OwnedVariant)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn generated_key_signatures_have_safe_protocol_defaults() {
+        let (requests, _) = mpsc::unbounded_channel();
+        let object = InputContextObject {
+            _slot: ContextSlot::reserve(&Arc::new(Mutex::new(ContextCounts::default())), ":1.1")
+                .unwrap(),
+            ic: 1,
+            owner: ":1.1".into(),
+            requests: requests.clone(),
+            wayland: false,
+            focused: AtomicBool::new(false),
+            window_query: WindowQuery::new(1, requests, Arc::new(Semaphore::new(8))),
+        };
+        let call = zbus::Message::method_call("/ic/1", "ProcessKeyEvent")
+            .sender(":1.1")
+            .build(&())
+            .unwrap();
+        assert!(
+            !object
+                .process_key_event(65, 38, 0, false, 0, call.header())
+                .await
+        );
+        let (batch, handled) = object
+            .process_key_event_batch(65, 38, 0, false, 0, call.header())
+            .await;
+        assert!(batch.is_empty());
+        assert!(!handled);
+    }
 
     #[tokio::test]
     async fn stalled_write_settles_current_and_later_keys_without_cancelling_the_frame() {

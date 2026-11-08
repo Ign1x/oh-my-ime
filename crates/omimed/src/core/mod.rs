@@ -1347,6 +1347,9 @@ impl Core {
     }
 
     fn deactivate_native(&mut self, engine: &str, ctx: ContextId) -> bool {
+        if let Some(connection) = self.engines.get(engine).and_then(|slot| slot.connection_id) {
+            engines::retire_text_releases(connection, Some(ctx));
+        }
         let Some(proxy) = self.engines.get(engine).and_then(|slot| slot.proxy.clone()) else {
             return true;
         };
@@ -1617,10 +1620,22 @@ impl Core {
                 call,
                 admission: _admission,
             } => {
-                if self.engines.get(&engine).is_some_and(|s| {
-                    s.connection_id == Some(connection_id) && matches!(s.state, EngineState::Ready)
-                }) {
+                let current_context = match &call {
+                    HostCall::Action { ctx, .. } => self
+                        .contexts
+                        .get(ctx)
+                        .is_some_and(|context| context.engine.as_deref() == Some(engine.as_str())),
+                    _ => true,
+                };
+                if current_context
+                    && self.engines.get(&engine).is_some_and(|s| {
+                        s.connection_id == Some(connection_id)
+                            && matches!(s.state, EngineState::Ready)
+                    })
+                {
                     self.on_host_call(&engine, call, out);
+                } else if let Some(admission) = &_admission {
+                    admission.retire_context();
                 }
             }
             CoreEvent::Reply { ctx, token, reply } => self.on_reply(ctx, token, reply, out),

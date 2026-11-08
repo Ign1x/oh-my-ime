@@ -203,6 +203,7 @@ struct TextBudget {
     total: TextUsage,
     engines: HashMap<u64, TextUsage>,
     contexts: HashMap<(u64, ContextId), TextUsage>,
+    releases: HashMap<(u64, ContextId, u32), usize>,
 }
 
 #[derive(Debug)]
@@ -213,6 +214,92 @@ pub(crate) struct TextAdmission {
     bytes: usize,
 }
 
+static TEXT_BUDGET: OnceLock<Arc<Mutex<TextBudget>>> = OnceLock::new();
+
+fn text_budget() -> Arc<Mutex<TextBudget>> {
+    TEXT_BUDGET.get_or_init(Arc::default).clone()
+}
+
+impl TextBudget {
+    fn reserve(&mut self, connection_id: u64, ctx: ContextId, bytes: usize, items: usize) -> bool {
+        let engine = self
+            .engines
+            .get(&connection_id)
+            .copied()
+            .unwrap_or_default();
+        let context = self
+            .contexts
+            .get(&(connection_id, ctx))
+            .copied()
+            .unwrap_or_default();
+        let fits = |usage: TextUsage, count, limit| {
+            usage.items <= count - items && bytes <= limit && usage.bytes <= limit - bytes
+        };
+        if !fits(self.total, 1024, 1024 * 1024)
+            || !fits(engine, 256, 256 * 1024)
+            || !fits(context, 64, 64 * 1024)
+        {
+            return false;
+        }
+        self.total.items += items;
+        self.total.bytes += bytes;
+        let usage = self.engines.entry(connection_id).or_default();
+        usage.items += items;
+        usage.bytes += bytes;
+        let usage = self.contexts.entry((connection_id, ctx)).or_default();
+        usage.items += items;
+        usage.bytes += bytes;
+        true
+    }
+
+    fn release(&mut self, connection_id: u64, ctx: ContextId, bytes: usize) {
+        self.total.items -= 1;
+        self.total.bytes -= bytes;
+        if let Some(usage) = self.engines.get_mut(&connection_id) {
+            usage.items -= 1;
+            usage.bytes -= bytes;
+            if usage.items == 0 {
+                self.engines.remove(&connection_id);
+            }
+        }
+        let key = (connection_id, ctx);
+        if let Some(usage) = self.contexts.get_mut(&key) {
+            usage.items -= 1;
+            usage.bytes -= bytes;
+            if usage.items == 0 {
+                self.contexts.remove(&key);
+            }
+        }
+    }
+
+    fn retire_releases(&mut self, connection_id: u64, ctx: Option<ContextId>) {
+        let retired: Vec<_> = self
+            .releases
+            .keys()
+            .copied()
+            .filter(|(connection, context, _)| {
+                *connection == connection_id && ctx.is_none_or(|ctx| ctx == *context)
+            })
+            .collect();
+        for key in retired {
+            if let Some(bytes) = self.releases.remove(&key) {
+                self.release(key.0, key.1, bytes);
+            }
+        }
+    }
+}
+
+/// Context/connection retirement no longer needs its reserved callback releases.
+/// Queued events keep their own admission until the actor consumes or drops them.
+pub(super) fn retire_text_releases(connection_id: u64, ctx: Option<ContextId>) {
+    if let Some(budget) = TEXT_BUDGET.get() {
+        budget
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retire_releases(connection_id, ctx);
+    }
+}
+
 impl TextAdmission {
     fn reserve(
         budget: Arc<Mutex<TextBudget>>,
@@ -220,34 +307,47 @@ impl TextAdmission {
         ctx: ContextId,
         bytes: usize,
     ) -> Option<Self> {
-        let mut state = budget.lock().unwrap_or_else(|e| e.into_inner());
-        let engine = state
-            .engines
-            .get(&connection_id)
-            .copied()
-            .unwrap_or_default();
-        let context = state
-            .contexts
-            .get(&(connection_id, ctx))
-            .copied()
-            .unwrap_or_default();
-        let fits = |usage: TextUsage, items, limit| {
-            usage.items < items && bytes <= limit && usage.bytes <= limit - bytes
-        };
-        if !fits(state.total, 1024, 1024 * 1024)
-            || !fits(engine, 256, 256 * 1024)
-            || !fits(context, 64, 64 * 1024)
-        {
-            return None;
+        let admitted =
+            budget
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reserve(connection_id, ctx, bytes, 1);
+        if admitted {
+            Some(Self {
+                budget,
+                connection_id,
+                ctx,
+                bytes,
+            })
+        } else {
+            None
         }
-        state.total.items += 1;
-        state.total.bytes += bytes;
-        let usage = state.engines.entry(connection_id).or_default();
-        usage.items += 1;
-        usage.bytes += bytes;
-        let usage = state.contexts.entry((connection_id, ctx)).or_default();
-        usage.items += 1;
-        usage.bytes += bytes;
+    }
+
+    fn forward(
+        budget: Arc<Mutex<TextBudget>>,
+        connection_id: u64,
+        ctx: ContextId,
+        keycode: u32,
+        pressed: bool,
+        bytes: usize,
+    ) -> Option<Self> {
+        let mut state = budget.lock().unwrap_or_else(|e| e.into_inner());
+        let key = (connection_id, ctx, keycode);
+        let bytes = if !pressed && let Some(reserved) = state.releases.remove(&key) {
+            // Transfer the already charged slot: releases cannot lose to new text.
+            reserved
+        } else {
+            let reserve_release = pressed && !state.releases.contains_key(&key);
+            let items = if reserve_release { 2 } else { 1 };
+            if !state.reserve(connection_id, ctx, bytes * items, items) {
+                return None;
+            }
+            if reserve_release {
+                state.releases.insert(key, bytes);
+            }
+            bytes
+        };
         drop(state);
         Some(Self {
             budget,
@@ -256,28 +356,21 @@ impl TextAdmission {
             bytes,
         })
     }
+
+    pub(super) fn retire_context(&self) {
+        self.budget
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retire_releases(self.connection_id, Some(self.ctx));
+    }
 }
 
 impl Drop for TextAdmission {
     fn drop(&mut self) {
-        let mut state = self.budget.lock().unwrap_or_else(|e| e.into_inner());
-        state.total.items -= 1;
-        state.total.bytes -= self.bytes;
-        if let Some(usage) = state.engines.get_mut(&self.connection_id) {
-            usage.items -= 1;
-            usage.bytes -= self.bytes;
-            if usage.items == 0 {
-                state.engines.remove(&self.connection_id);
-            }
-        }
-        let key = (self.connection_id, self.ctx);
-        if let Some(usage) = state.contexts.get_mut(&key) {
-            usage.items -= 1;
-            usage.bytes -= self.bytes;
-            if usage.items == 0 {
-                state.contexts.remove(&key);
-            }
-        }
+        self.budget
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .release(self.connection_id, self.ctx, self.bytes);
     }
 }
 
@@ -338,6 +431,111 @@ mod text_admission_tests {
         drop(event);
         assert!(TextAdmission::reserve(budget, 1, 1, 1).is_some());
     }
+
+    #[test]
+    fn forwarded_release_keeps_admission_when_text_callbacks_fill_the_queue() {
+        use omime_proto::engine::Action;
+        let (events, mut rx) = mpsc::unbounded_channel();
+        let host = HostObject {
+            engine: "release-admission-test".into(),
+            connection_id: u64::MAX,
+            events,
+        };
+        assert!(host.send(HostCall::Action {
+            ctx: 1,
+            action: Action::ForwardKey {
+                keycode: 30,
+                pressed: true
+            }
+        }));
+        drop(rx.try_recv().unwrap()); // The frontend already received the press.
+        let mut admitted = 0;
+        while host.send(HostCall::Action {
+            ctx: 1,
+            action: Action::Commit("x".into()),
+        }) {
+            admitted += 1;
+        }
+        assert!(admitted <= 64);
+        assert!(
+            host.send(HostCall::Action {
+                ctx: 1,
+                action: Action::ForwardKey {
+                    keycode: 30,
+                    pressed: false
+                }
+            }),
+            "a release of an admitted press cannot be dropped at the text admission limit"
+        );
+        let mut last = None;
+        while let Ok(event) = rx.try_recv() {
+            last = Some(event);
+        }
+        assert!(matches!(
+            last,
+            Some(CoreEvent::Host {
+                call: HostCall::Action {
+                    action: Action::ForwardKey { pressed: false, .. },
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn release_reservations_are_bounded_and_retire_with_context_or_connection() {
+        let budget = Arc::new(Mutex::new(TextBudget::default()));
+        for key in 0..64 {
+            drop(TextAdmission::forward(budget.clone(), 1, 1, key, true, 256));
+        }
+        // Each accepted press needs two free slots, even while one is delivered.
+        assert!(budget.lock().unwrap().releases.len() <= 64);
+        assert!(TextAdmission::forward(budget.clone(), 1, 1, 99, true, 256).is_none());
+        assert!(TextAdmission::forward(budget.clone(), 1, 1, 0, false, 256).is_some());
+        let other = TextAdmission::forward(budget.clone(), 2, 2, 1, true, 256).unwrap();
+        budget.lock().unwrap().retire_releases(1, Some(1));
+        assert_eq!(budget.lock().unwrap().releases.len(), 1);
+        other.retire_context();
+        assert!(budget.lock().unwrap().releases.is_empty());
+        drop(other);
+        assert_eq!(budget.lock().unwrap().total.items, 0);
+        assert_eq!(budget.lock().unwrap().total.bytes, 0);
+        assert!(budget.lock().unwrap().contexts.is_empty());
+        assert!(budget.lock().unwrap().engines.is_empty());
+
+        let (events, mut receiver) = mpsc::unbounded_channel();
+        let host = HostObject {
+            engine: "release-cleanup-test".into(),
+            connection_id: u64::MAX - 1,
+            events,
+        };
+        assert!(host.send(HostCall::Action {
+            ctx: 7,
+            action: omime_proto::engine::Action::ForwardKey {
+                keycode: 30,
+                pressed: true
+            }
+        }));
+        drop(receiver.try_recv().unwrap());
+        assert!(
+            text_budget()
+                .lock()
+                .unwrap()
+                .releases
+                .contains_key(&(host.connection_id, 7, 30))
+        );
+        let connection_id = host.connection_id;
+        drop(host);
+        assert!(
+            !text_budget()
+                .lock()
+                .unwrap()
+                .releases
+                .keys()
+                .any(|(connection, _, _)| *connection == connection_id)
+        );
+    }
 }
 
 /// `io.github.ign1x.OhMyIme.EngineHost1`, served to one engine.
@@ -347,9 +545,14 @@ struct HostObject {
     events: mpsc::UnboundedSender<CoreEvent>,
 }
 
+impl Drop for HostObject {
+    fn drop(&mut self) {
+        retire_text_releases(self.connection_id, None);
+    }
+}
+
 impl HostObject {
     fn send(&self, call: HostCall) -> bool {
-        static TEXT_BUDGET: OnceLock<Arc<Mutex<TextBudget>>> = OnceLock::new();
         let admission = if let HostCall::Action { ctx, action } = &call {
             use omime_proto::engine::Action;
             let bytes = std::mem::size_of::<CoreEvent>()
@@ -359,9 +562,19 @@ impl HostObject {
                     Action::Preedit(preedit) => preedit.text.capacity(),
                     _ => 0,
                 };
-            let budget = TEXT_BUDGET.get_or_init(Arc::default).clone();
-            let Some(admission) = TextAdmission::reserve(budget, self.connection_id, *ctx, bytes)
-            else {
+            let budget = text_budget();
+            let admission = match action {
+                Action::ForwardKey { keycode, pressed } => TextAdmission::forward(
+                    budget,
+                    self.connection_id,
+                    *ctx,
+                    *keycode,
+                    *pressed,
+                    bytes,
+                ),
+                _ => TextAdmission::reserve(budget, self.connection_id, *ctx, bytes),
+            };
+            let Some(admission) = admission else {
                 // A no-reply host call is rejected in full. Subsequent callbacks
                 // retry admission; dropping queued events releases every quota.
                 return false;
@@ -870,7 +1083,9 @@ impl EngineManager {
         let (kill_tx, kill_rx) = oneshot::channel();
         slot.kill = Some(kill_tx);
         slot.proxy = None;
-        slot.connection_id = None;
+        if let Some(connection) = slot.connection_id.take() {
+            retire_text_releases(connection, None);
+        }
         slot.input_modes.clear();
         let timeout = if hosted {
             HOSTED_STARTUP_TIMEOUT
@@ -1260,7 +1475,9 @@ impl EngineManager {
         }
         slot.proxy = None;
         slot.kill = None;
-        slot.connection_id = None;
+        if let Some(connection) = slot.connection_id.take() {
+            retire_text_releases(connection, None);
+        }
         slot.input_modes.clear();
         slot.mode_method = None;
         slot.status.input_mode = None;
@@ -1424,6 +1641,9 @@ impl EngineManager {
     /// Hand the live protocol connection to the supervisor along with the stop
     /// request, so sending Shutdown and waiting for exit share one deadline.
     fn request_stop(slot: &mut EngineSlot, how: Stop) {
+        if let Some(connection) = slot.connection_id {
+            retire_text_releases(connection, None);
+        }
         let proxy = slot.proxy.take();
         if let Some(kill) = slot.kill.take() {
             let _ = kill.send(StopRequest { how, proxy });

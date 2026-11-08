@@ -11,9 +11,11 @@ use zbus::message::{Builder, Header, Message};
 
 use super::{IcId, KeyAnswer, Outgoing, Signal};
 
-pub(super) const MAX_ITEMS: usize = 256;
+pub(super) const MAX_ITEMS: usize = 512;
 pub(super) const MAX_BYTES: usize = 256 * 1024;
-pub(super) const MAX_IC_ITEMS: usize = 64;
+pub(super) const MAX_IC_ITEMS: usize = 128;
+pub(super) const MAX_REPLIES: usize = 256;
+pub(super) const MAX_IC_REPLIES: usize = 64;
 pub(super) const MAX_IC_BYTES: usize = 64 * 1024;
 
 /// Metadata for every accepted key stays owned until its actual method return
@@ -249,7 +251,7 @@ pub(super) fn channel() -> (OutputQueue, Receiver) {
     let shared = Arc::new(Shared {
         state: Mutex::default(),
         ready: Notify::new(),
-        replies: Arc::new(Semaphore::new(MAX_ITEMS)),
+        replies: Arc::new(Semaphore::new(MAX_REPLIES)),
     });
     (OutputQueue(shared.clone()), Receiver(shared))
 }

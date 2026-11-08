@@ -543,7 +543,7 @@ impl FcitxFrontend {
                 .values()
                 .filter(|pending| pending.ic == ic)
                 .count()
-                >= output::MAX_IC_ITEMS
+                >= output::MAX_IC_REPLIES
         {
             self.fail_output(ic, Some(ctx));
             let _ = reply.send(KeyAnswer::default());
@@ -668,7 +668,7 @@ impl FcitxFrontend {
                 _ => 0,
             })
         });
-        if actions.len() >= output::MAX_IC_ITEMS
+        if actions.len() >= output::MAX_IC_REPLIES
             || text_bytes.is_none_or(|bytes| bytes > output::MAX_IC_BYTES / 2)
         {
             if let Some((ic, _)) = self.ics.iter().find(|(_, state)| state.ctx == Some(ctx)) {
@@ -815,7 +815,9 @@ impl FcitxFrontend {
         }
         self.settle_pending(ic);
         self.end_context(ic);
-        if let Some(state) = self.ics.get_mut(&ic) {
+        if ctx.is_some()
+            && let Some(state) = self.ics.get_mut(&ic)
+        {
             state.output_retired = true;
         }
         debug!(
@@ -849,7 +851,7 @@ fn push_batch(batch: &mut Vec<Batched>, signal: Signal) -> bool {
         .sum::<usize>()
         + output::signal_bytes(&signal)
         + batch.capacity().max(keep + 1) * std::mem::size_of::<Batched>();
-    if keep + 1 >= output::MAX_IC_ITEMS || bytes > output::MAX_IC_BYTES / 2 {
+    if keep + 1 >= output::MAX_IC_REPLIES || bytes > output::MAX_IC_BYTES / 2 {
         return false;
     }
     if replace {
@@ -1052,10 +1054,10 @@ mod tests {
     fn teardown_and_pending_key_limit_release_every_key() {
         let (mut frontend, _) = frontend();
         let mut pending = Vec::new();
-        for _ in 0..output::MAX_IC_ITEMS {
+        for _ in 0..output::MAX_IC_REPLIES {
             pending.push(pending_key(&mut frontend, false));
         }
-        assert_eq!(frontend.pending.len(), output::MAX_IC_ITEMS);
+        assert_eq!(frontend.pending.len(), output::MAX_IC_REPLIES);
         let mut overflow = pending_key(&mut frontend, false);
         assert!(!overflow.try_recv().unwrap().handled);
         for mut answer in pending {
@@ -1095,6 +1097,81 @@ mod tests {
             frontend.handle(Request::Capability { ic: 1, capability });
             assert!(frontend.ics[&1].ctx.is_none());
         }
+    }
+
+    #[test]
+    fn contextless_write_failures_do_not_latch_future_compositions() {
+        for focused_password in [false, true] {
+            let (mut frontend, _) = frontend();
+            frontend.handle(Request::FocusIn(1));
+            if focused_password {
+                frontend.handle(Request::Capability {
+                    ic: 1,
+                    capability: convert::capability::PASSWORD,
+                });
+            } else {
+                frontend.handle(Request::FocusOut(1));
+            }
+            frontend.handle(Request::OutputFailed { ic: 1, ctx: None });
+            assert!(
+                !frontend.ics[&1].output_retired,
+                "there was no composition to retire"
+            );
+            frontend.handle(Request::FocusIn(1));
+            frontend.handle(Request::Capability {
+                ic: 1,
+                capability: convert::capability::PASSWORD,
+            });
+            frontend.handle(Request::Capability {
+                ic: 1,
+                capability: 0,
+            });
+            assert!(
+                frontend.ics[&1].ctx.is_some(),
+                "normal composition must resume"
+            );
+        }
+    }
+
+    #[test]
+    fn one_admitted_callback_burst_has_room_for_generated_preedit_clears() {
+        let (mut frontend, mut outgoing) = frontend();
+        frontend.handle(Request::FocusIn(1));
+        let ctx = frontend.ics[&1].ctx.unwrap();
+        for _ in 0..32 {
+            frontend.apply_actions(
+                ctx,
+                &[Action::Preedit(omime_proto::engine::Preedit {
+                    text: "x".into(),
+                    cursor_begin: 1,
+                    cursor_end: 1,
+                })],
+                None,
+            );
+            frontend.apply_actions(ctx, &[Action::Commit("x".into())], None);
+        }
+        assert_eq!(
+            frontend.ics[&1].ctx,
+            Some(ctx),
+            "one 64-callback burst retired a healthy field"
+        );
+        let mut commits = 0;
+        while let Some(entry) = outgoing.try_recv() {
+            if matches!(
+                entry.item,
+                Outgoing::Signal {
+                    signal: Signal::Commit(_),
+                    ..
+                }
+            ) {
+                commits += 1;
+            }
+        }
+        assert_eq!(commits, 32);
+        frontend.apply_actions(ctx, &[Action::Commit("next key".into())], None);
+        assert!(
+            matches!(outgoing.try_recv(), Some(output::Entry { item: Outgoing::Signal { signal: Signal::Commit(text), .. }, .. }) if text == "next key")
+        );
     }
 
     #[test]

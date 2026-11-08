@@ -1,9 +1,9 @@
 //! Long-session resource regressions. Build the workspace first, then run one test:
 //! CARGO_HOME=/tmp/omime-cargo-home cargo test -p omime-e2e --locked \
-//!   --test review_growth -- --ignored FILTER --nocapture
+//!   --test release_fcitx_bounds -- --ignored FILTER --nocapture
 //!
-//! All fixtures use private headless sessions. Bounds below are proposed policies,
-//! not claims that the current implementation documents those limits.
+//! All fixtures use private headless sessions. These cover the documented Fcitx
+//! query/output bounds and keep the original G4/G5 probe bodies unchanged.
 
 use std::time::{Duration, Instant};
 
@@ -198,6 +198,49 @@ fn stalled_session_bus_does_not_retain_every_preedit() -> anyhow::Result<()> {
             after.saturating_sub(baseline) <= 8 * 1024,
             "8192 replacement preedits with a blocked bus retained {} KiB (budget 8192 KiB); ingress/Outgoing need byte budgets and backpressure or coalescing",
             after.saturating_sub(baseline)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "private headless compositor; build workspace first"]
+fn sdk_host_burst_keeps_the_healthy_field_typing() -> anyhow::Result<()> {
+    use futures_util::StreamExt as _;
+    let env = TestEnv::start(
+        &[TestEngine {
+            id: "review-input",
+            program: target_dir().join("omime-review-input-engine"),
+            args: vec!["host-burst".into()],
+            env: Vec::new(),
+            hosted: false,
+        }],
+        Some("review-input"),
+    )?;
+    env.wait_for_log("engine ready")?;
+    run(async {
+        let connection = bus(&env).await?;
+        let ic = context(&connection, "sdk-host-burst", "x11:").await?;
+        let mut commits = ic.receive_signal("CommitString").await?;
+        ic.call::<_, _, ()>("FocusIn", &()).await?;
+        assert!(ic.call::<_, _, bool>("ProcessKeyEvent", &KEY).await?);
+        for _ in 0..32 {
+            let message = tokio::time::timeout(Duration::from_secs(3), commits.next())
+                .await?
+                .context("commit stream ended")?;
+            assert_eq!(message.body().deserialize::<String>()?, "x");
+        }
+        // No refocus is needed: another ordinary native key still commits text.
+        let second = (0x62u32, 56u32, 0u32, false, 2u32);
+        assert!(ic.call::<_, _, bool>("ProcessKeyEvent", &second).await?);
+        let message = tokio::time::timeout(Duration::from_secs(3), commits.next())
+            .await?
+            .context("post-burst commit missing")?;
+        assert_eq!(message.body().deserialize::<String>()?, "ok");
+        assert!(!env.daemon_log().contains("Fcitx output limit reached"));
+        assert!(env.omime(&["status"]).is_ok());
+        eprintln!(
+            "SDK Host no-reply burst: 64 callbacks, 32 commits, next key committed ok without refocus"
         );
         Ok(())
     })

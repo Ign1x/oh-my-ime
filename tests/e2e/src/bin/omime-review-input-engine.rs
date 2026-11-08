@@ -74,6 +74,16 @@ impl Engine for Probe {
             return false;
         }
         match (self.mode.as_str(), key.text.as_str()) {
+            ("host-burst", "a") => {
+                // The SDK's fire-and-forget Host API spawns each no-reply call.
+                // Exercise one full 64-callback ingress burst on a healthy bus.
+                for _ in 0..32 {
+                    ctx.host()
+                        .set_preedit(ctx.id(), Preedit::with_cursor_at_end("x"));
+                    ctx.host().commit(ctx.id(), "x");
+                }
+            }
+            ("host-burst", "b") => ctx.commit("ok"),
             ("large-commit", "a") => ctx.commit(long_engine_text(self.bytes)),
             ("large-commit", "b") => ctx.commit("ok"),
             ("large-preedit", "a") => {
