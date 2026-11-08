@@ -832,6 +832,18 @@ fn xim_reply_forward_uses_the_in_flight_keys_modifiers() -> anyhow::Result<()> {
         ["forwarded 38 1", "key \"A\"", "forwarded 56 0", "key \"b\""]
     );
     assert_eq!(client.text(), "Ab");
+    let log = env.daemon_log();
+    let before_first_reply = log
+        .split_once("xim::x11rb: ->: ForwardEvent")
+        .context("the forwarding fixture sent no XIM reply")?
+        .0;
+    assert_eq!(
+        before_first_reply
+            .matches("xim::server::connection: <-: ForwardEvent")
+            .count(),
+        3,
+        "Shift, A and b must all arrive before the first reply to exercise the modifier snapshot"
+    );
     assert_eq!(env.count_in_log(SYNC_TIMEOUT), 0);
     Ok(())
 }
@@ -1213,6 +1225,174 @@ fn xim_timeout_discards_preedit_state_that_never_reached_the_client() -> anyhow:
         ),
         "the fresh preedit cannot replace characters the client never saw: {draw:?}"
     );
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+    Ok(())
+}
+
+fn create_sync_context(
+    conn: &RustConnection,
+    client: &mut X11rbClient<&RustConnection>,
+    peer: &ChurnPeer,
+    im: u16,
+) -> anyhow::Result<(u16, u16)> {
+    client.create_ic(im, Vec::new())?;
+    conn.flush()?;
+    let Request::CreateIcReply {
+        input_method_id,
+        input_context_id,
+    } = peer.next_request(conn)?
+    else {
+        anyhow::bail!("no CreateIcReply on the retained connection");
+    };
+    anyhow::ensure!(input_method_id == im, "CreateIcReply has the wrong IMID");
+    anyhow::ensure!(
+        matches!(peer.next_request(conn)?, Request::SetEventMask {
+        input_method_id, input_context_id: ic, ..
+    } if input_method_id == im && ic == input_context_id),
+        "the new context has no event mask"
+    );
+    Ok((im, input_context_id))
+}
+
+fn open_sync_context(
+    conn: &RustConnection,
+    client: &mut X11rbClient<&RustConnection>,
+    peer: &ChurnPeer,
+) -> anyhow::Result<(u16, u16)> {
+    client.open("en_US")?;
+    conn.flush()?;
+    let Request::OpenReply {
+        input_method_id: im,
+        ..
+    } = peer.next_request(conn)?
+    else {
+        anyhow::bail!("no OpenReply on the retained connection");
+    };
+    client.send_req(Request::EncodingNegotiation {
+        input_method_id: im,
+        encodings: vec!["COMPOUND_TEXT".into()],
+        encoding_infos: Vec::new(),
+    })?;
+    conn.flush()?;
+    anyhow::ensure!(
+        matches!(peer.next_request(conn)?, Request::EncodingNegotiationReply {
+        input_method_id, ..
+    } if input_method_id == im),
+        "no matching EncodingNegotiationReply"
+    );
+    create_sync_context(conn, client, peer, im)
+}
+
+fn finish_fresh_word(
+    conn: &RustConnection,
+    client: &mut X11rbClient<&RustConnection>,
+    peer: &ChurnPeer,
+    context: (u16, u16),
+) -> anyhow::Result<()> {
+    client.set_focus(context.0, context.1)?;
+    for character in ['c', ' '] {
+        forward_character(conn, client, context.0, context.1, character)?;
+    }
+    conn.flush()?;
+    expect_commit(&peer.next_request(conn)?, context.0, context.1, b"C")?;
+    sync_reply(client, context)?;
+    conn.flush()?;
+    expect_space(&peer.next_request(conn)?, context)?;
+    sync_reply(client, context)?;
+    conn.flush()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_destroying_awaited_context_recovers_stalled_client() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    let (conn, screen) = private_x11(&env)?;
+    let (mut client, peer, [context, unrelated]) = sync_client(&conn, screen)?;
+    forward_character(&conn, &mut client, context.0, context.1, ' ')?;
+    conn.flush()?;
+    expect_space(&peer.next_request(&conn)?, context)?;
+    env.wait_for_log(SYNC_TIMEOUT)?;
+
+    // Destroying a different IC must leave the awaited IC's suspension intact.
+    client.destroy_ic(unrelated.0, unrelated.1)?;
+    conn.flush()?;
+    anyhow::ensure!(
+        matches!(peer.next_request(&conn)?, Request::DestroyIcReply {
+        input_method_id, input_context_id
+    } if (input_method_id, input_context_id) == unrelated),
+        "wrong unrelated DestroyIcReply"
+    );
+    let next = create_sync_context(&conn, &mut client, &peer, context.0)?;
+    for character in ['b', ' '] {
+        forward_character(&conn, &mut client, next.0, next.1, character)?;
+    }
+    conn.flush()?;
+    no_text_output(&peer, &conn, Duration::from_millis(80))?;
+
+    // No SyncReply for the destroyed context can arrive. Its removal must be enough
+    // to let another IC on this same connection activate a fresh engine context.
+    client.destroy_ic(context.0, context.1)?;
+    conn.flush()?;
+    anyhow::ensure!(
+        matches!(peer.next_request(&conn)?, Request::DestroyIcReply {
+        input_method_id, input_context_id
+    } if (input_method_id, input_context_id) == context),
+        "wrong awaited DestroyIcReply"
+    );
+    finish_fresh_word(&conn, &mut client, &peer, next)?;
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_closing_awaited_input_method_recovers_stalled_client() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    let (conn, screen) = private_x11(&env)?;
+    let (other_conn, other_screen) = private_x11(&env)?;
+    let (mut client, peer, [context, _]) = sync_client(&conn, screen)?;
+    let unrelated = open_sync_context(&conn, &mut client, &peer)?;
+    let (mut other, other_peer, [other_context, _]) = sync_client(&other_conn, other_screen)?;
+    forward_character(&conn, &mut client, context.0, context.1, ' ')?;
+    conn.flush()?;
+    expect_space(&peer.next_request(&conn)?, context)?;
+    env.wait_for_log(SYNC_TIMEOUT)?;
+
+    // Neither another connection's Close with the same IDs nor another IM on this
+    // connection can recover the outstanding context.
+    other.close(other_context.0)?;
+    other_conn.flush()?;
+    anyhow::ensure!(
+        matches!(other_peer.next_request(&other_conn)?, Request::CloseReply {
+        input_method_id
+    } if input_method_id == other_context.0),
+        "wrong foreign CloseReply"
+    );
+    client.close(unrelated.0)?;
+    conn.flush()?;
+    anyhow::ensure!(
+        matches!(peer.next_request(&conn)?, Request::CloseReply {
+        input_method_id
+    } if input_method_id == unrelated.0),
+        "wrong unrelated CloseReply"
+    );
+    for character in ['b', ' '] {
+        forward_character(&conn, &mut client, context.0, context.1, character)?;
+    }
+    conn.flush()?;
+    no_text_output(&peer, &conn, Duration::from_millis(80))?;
+
+    client.close(context.0)?;
+    conn.flush()?;
+    anyhow::ensure!(
+        matches!(peer.next_request(&conn)?, Request::CloseReply {
+        input_method_id
+    } if input_method_id == context.0),
+        "wrong awaited CloseReply"
+    );
+    let next = open_sync_context(&conn, &mut client, &peer)?;
+    finish_fresh_word(&conn, &mut client, &peer, next)?;
     assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
     Ok(())
 }

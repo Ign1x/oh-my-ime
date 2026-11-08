@@ -179,8 +179,8 @@ know which frontend a key came from.
   waits for the application's `XIM_SYNC_REPLY` (300 ms at most) before the next. Replies
   must match the connection, input method and input context. On timeout, omimed discards
   that client's queued output and pending keys, ends its engine contexts and suspends
-  further input/output for it until the outstanding matching reply arrives or it
-  disconnects. Other clients can then continue; the next focus or key starts a fresh
+  further input/output for it until the outstanding matching reply arrives, the awaited
+  input context is destroyed, its input method is closed, or the client disconnects. Other clients can then continue; the next focus or key starts a fresh
   engine context without replaying the retired backlog. Queued output is limited to
   256 requests and 1 MiB per client (wire size plus request storage); exceeding either
   limit disconnects only that client. Keysyms come from the X server's core keyboard

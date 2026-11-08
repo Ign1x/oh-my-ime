@@ -141,8 +141,10 @@ struct Handler {
     ic_allocations: BTreeMap<u32, u16>,
     /// Connections already warned about their lifetime input context allocation limit.
     ic_limit_warned: BTreeSet<u32>,
-    /// Timed-out clients remain suspended until their outstanding IMID/ICID replies.
+    /// Timed-out clients stay suspended until their outstanding IC replies or ends.
     stalled: BTreeMap<u32, (u16, u16)>,
+    /// A validated DestroyIc/Close removed contexts since the last output cleanup.
+    destroyed_contexts: bool,
     keymap: Keymap,
     ics: BTreeMap<IcKey, Ic>,
     pending: BTreeMap<u64, Pending>,
@@ -310,6 +312,32 @@ impl Handler {
             self.clients.get(client) != Some(&com_win) || *expected != ids
         });
     }
+
+    fn destroy_ic(&mut self, key: IcKey) {
+        self.focus_out(key);
+        self.ics.remove(&key);
+        self.pending.retain(|_, pending| pending.ic != key);
+        // Close also invokes this callback for each of the IM's contexts. An ended
+        // IC can no longer acknowledge its output; unrelated ICs keep the wait.
+        if self.stalled.get(&key.0) == Some(&(key.1, key.2)) {
+            self.stalled.remove(&key.0);
+        }
+        self.destroyed_contexts = true;
+    }
+
+    fn discard_destroyed_output(
+        &mut self,
+        queue: &mut VecDeque<Queued>,
+        waiting: &mut Option<SyncWait>,
+    ) {
+        if !std::mem::take(&mut self.destroyed_contexts) {
+            return;
+        }
+        queue.retain(|queued| self.ics.contains_key(&queued.ic));
+        if waiting.is_some_and(|wait| !self.ics.contains_key(&wait.ic)) {
+            *waiting = None;
+        }
+    }
 }
 
 type Server = X11rbServer<RustConnection>;
@@ -373,10 +401,7 @@ impl ServerHandler<Server> for Handler {
         _server: &mut Server,
         user_ic: UserInputContext<()>,
     ) -> Result<(), ServerError> {
-        let key = ic_key(&user_ic.ic);
-        self.focus_out(key);
-        self.ics.remove(&key);
-        self.pending.retain(|_, pending| pending.ic != key);
+        self.destroy_ic(ic_key(&user_ic.ic));
         Ok(())
     }
 
@@ -596,6 +621,7 @@ impl XimFrontend {
                 ic_allocations: BTreeMap::new(),
                 ic_limit_warned: BTreeSet::new(),
                 stalled: BTreeMap::new(),
+                destroyed_contexts: false,
                 keymap,
                 ics: BTreeMap::new(),
                 pending: BTreeMap::new(),
@@ -683,6 +709,8 @@ impl XimFrontend {
                 true
             }
         };
+        self.handler
+            .discard_destroyed_output(&mut self.queue, &mut self.waiting);
         if let Some(com_win) = self.handler.com_win.take()
             && connected
             && (panicked || self.connections.get_connection(com_win).is_none())
@@ -1187,6 +1215,7 @@ mod tests {
             ic_allocations: BTreeMap::new(),
             ic_limit_warned: BTreeSet::new(),
             stalled: BTreeMap::new(),
+            destroyed_contexts: false,
             keymap: Keymap::default(),
             ics: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -1429,6 +1458,58 @@ mod tests {
         handler.stalled.insert(100, (2, 1));
         handler.forget_connection(10, &mut queue, &mut waiting);
         assert!(handler.stalled.is_empty());
+    }
+
+    #[test]
+    fn destroying_awaited_ic_recovers_other_contexts_without_releasing_other_clients() {
+        let (mut handler, mut queue, mut waiting) = active_connections();
+        let other = (100, 2, 2);
+        let unrelated = (100, 3, 1);
+        handler.ics.insert(other, Ic::default());
+        handler.ics.insert(unrelated, Ic::default());
+        handler.focus_in(other);
+        let old_ctx = handler.ics[&other].ctx.unwrap();
+        handler.retire_output(waiting.take().unwrap().ic, &mut queue);
+        let healthy_wait = Some(SyncWait {
+            since: Instant::now(),
+            ic: (200, 2, 1),
+        });
+        waiting = healthy_wait;
+
+        // Another IM on this connection cannot recover the awaited context.
+        handler.destroy_ic(unrelated);
+        handler.discard_destroyed_output(&mut queue, &mut waiting);
+        assert_eq!(handler.stalled.get(&100), Some(&(2, 1)));
+        handler.focus_in(other);
+        assert!(handler.ics[&other].ctx.is_none());
+        assert_eq!(waiting, healthy_wait);
+
+        handler.destroy_ic((100, 2, 1));
+        handler.discard_destroyed_output(&mut queue, &mut waiting);
+        assert!(handler.stalled.is_empty());
+        assert_eq!(waiting, healthy_wait);
+        handler.focus_in(other);
+        assert!(handler.ics[&other].ctx.is_some());
+        assert_ne!(handler.ics[&other].ctx, Some(old_ctx));
+    }
+
+    #[test]
+    fn destroying_awaited_ic_clears_its_live_wait_and_queued_output() {
+        let (mut handler, mut queue, mut waiting) = active_connections();
+        let wait = waiting;
+        handler.ics.insert((100, 2, 2), Ic::default());
+        handler.destroy_ic((100, 2, 2));
+        handler.discard_destroyed_output(&mut queue, &mut waiting);
+        assert_eq!(waiting, wait, "an unrelated IC released the wait");
+        assert_eq!(queue.len(), 2);
+
+        handler.destroy_ic((100, 2, 1));
+        handler.discard_destroyed_output(&mut queue, &mut waiting);
+        assert!(waiting.is_none());
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].ic, (200, 2, 1));
+        assert!(!handler.pending.contains_key(&1));
+        assert!(handler.pending.contains_key(&2));
     }
 
     #[test]

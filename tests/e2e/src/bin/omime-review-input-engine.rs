@@ -52,7 +52,9 @@ impl Engine for Probe {
                 | "forward-stroke"
                 | "forward-release-overflow" => {
                     if self.mode == "slow-forward" {
-                        std::thread::sleep(Duration::from_millis(80));
+                        // XIM forwards Shift plus both letters as three queued keys.
+                        // Keep all three replies inside the 200 ms arrival budget.
+                        std::thread::sleep(Duration::from_millis(40));
                     }
                     if self.mode == "forward-release-overflow" && key.released {
                         ctx.commit("x".repeat(65_537));
