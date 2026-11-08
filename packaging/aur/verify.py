@@ -90,6 +90,7 @@ def check_runtime():
         assert all(path.startswith("/usr/") for path in paths)
         assert not any("/hooks/" in path for path in paths)
         assert Path(f"/usr/share/licenses/{package}/LICENSE-MIT").is_file()
+        assert Path(f"/usr/share/doc/{package}/README.release").is_file()
         print(f"owned: {package}: {len(paths)} paths")
     assert not owned["oh-my-ime-bin"] & owned["oh-my-ime-rime-bin"]
     for name in (
@@ -134,6 +135,7 @@ def check_removal():
     assert Path("/usr/share/oh-my-ime/engines/echo/engine.toml").is_file()
     assert Path("/usr/lib/systemd/user/omimed.service").is_file()
     assert Path("/usr/share/licenses/oh-my-ime-bin/LICENSE-MIT").is_file()
+    assert Path("/usr/share/doc/oh-my-ime-bin/README.release").is_file()
     subprocess.run(["omimed", "--version"], check=True)
     subprocess.run(["omime", "help"], check=True, stdout=subprocess.DEVNULL)
     subprocess.run(["pacman", "-Qkk", "oh-my-ime-bin"], check=True)

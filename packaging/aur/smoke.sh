@@ -21,8 +21,18 @@ work=$(mktemp -d /tmp/oh-my-ime-aur.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$output"
 
-pacman_options=()
-if pacman -Syu --needed --noconfirm base-devel python 2>&1 | tee "$work/pacman.log"; then
+# The official Arch image excludes documentation. Restore only the files under
+# test and their parent directory, after the image's existing NoExtract rules.
+cp /etc/pacman.conf "$work/pacman.conf"
+cat >> "$work/pacman.conf" <<'PACMAN'
+
+[options]
+NoExtract = !usr/share/doc !usr/share/doc/
+NoExtract = !usr/share/doc/oh-my-ime-bin !usr/share/doc/oh-my-ime-bin/*
+NoExtract = !usr/share/doc/oh-my-ime-rime-bin !usr/share/doc/oh-my-ime-rime-bin/*
+PACMAN
+pacman_options=(--config "$work/pacman.conf")
+if pacman "${pacman_options[@]}" -Syu --needed --noconfirm base-devel python 2>&1 | tee "$work/pacman.log"; then
   :
 else
   status=$?
@@ -32,8 +42,7 @@ else
     exit "$status"
   fi
   printf '%s\n' 'AUR container: the host rejected the Landlock filesystem sandbox; retrying with DisableSandboxFilesystem in a temporary pacman config. Signature verification and the syscall sandbox remain enabled.' >&2
-  sed '/^\[options\]$/a DisableSandboxFilesystem' /etc/pacman.conf > "$work/pacman.conf"
-  pacman_options=(--config "$work/pacman.conf")
+  printf '\n[options]\nDisableSandboxFilesystem\n' >> "$work/pacman.conf"
   pacman "${pacman_options[@]}" -Syu --needed --noconfirm base-devel python
 fi
 python -m unittest discover -s "$scripts/../../scripts/tests" -p test_aur.py
@@ -58,7 +67,7 @@ python "$scripts/verify.py" metadata .SRCINFO "$output/makepkg.SRCINFO"
 runuser -u omime-build -- makepkg --cleanbuild --noconfirm
 pacman "${pacman_options[@]}" -U --noconfirm ./oh-my-ime-bin-*-x86_64.pkg.tar.zst ./oh-my-ime-rime-bin-*-x86_64.pkg.tar.zst
 pacman -Qi oh-my-ime-bin oh-my-ime-rime-bin
-pacman -Qkk oh-my-ime-bin oh-my-ime-rime-bin
+pacman "${pacman_options[@]}" -Qkk oh-my-ime-bin oh-my-ime-rime-bin
 python "$scripts/verify.py" runtime
 
 # These packages only copy release binaries. AArch64 packaging can therefore

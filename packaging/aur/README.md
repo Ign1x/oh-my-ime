@@ -37,6 +37,11 @@ not executed. It also reinstalls both packages and removes Rime while checking
 that platform files and user configuration remain intact. Set
 `OMIME_AUR_SMOKE_OUT` to choose the output directory.
 
+The official Arch image excludes documentation from installed packages. The
+smoke test uses a temporary pacman config that permits the two packages'
+documentation and its parent directory, preserving the image's other exclusions.
+This lets the package ownership checks verify the complete installation.
+
 If the container host rejects pacman's Landlock filesystem sandbox, the smoke
 test logs that specific failure and retries with `DisableSandboxFilesystem` in
 a temporary config. Package signature verification and the syscall sandbox stay
