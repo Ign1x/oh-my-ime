@@ -150,7 +150,8 @@ compositor's point of view, the input method's own surfaces.
   role is destroyed first.
 - **Failure handling.** Requests that compositors treat as fatal and that are easy to
   check (shm pools and buffers, viewport parameters and ownership, buffer scales and
-  transforms, bind versions, virtual objects) are validated, and a broken engine is
+  transforms, duplicate fractional-scale objects, bind versions, virtual objects)
+  are validated, and a broken engine is
   disconnected on its own. Retired shm pools are not destroyed again while awaiting
   `delete_id`. If an upstream protocol error closes the shared connection, the error
   object's owner is recorded before teardown and quarantined before reconnection.

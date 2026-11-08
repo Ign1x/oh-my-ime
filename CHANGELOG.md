@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Duplicate fractional-scale objects are rejected within the offending engine's
+  connection, keeping the shared compositor connection and other input working.
 - Removing an engine closes and unlinks its listeners and cancels unregistered
   peers. Native engine connections have a five-second authentication and
   registration deadline with at most 16 pending peers per engine. Descriptor

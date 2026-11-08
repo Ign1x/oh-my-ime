@@ -15,6 +15,113 @@ use omime_e2e::harness::{
     target_dir, wait_until, wait_until_within,
 };
 
+mod fractional_scale {
+    use super::*;
+    use wayland_client::globals::{GlobalListContents, registry_queue_init};
+    use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
+    use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
+    use wayland_protocols::wp::fractional_scale::v1::client::{
+        wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+    };
+
+    struct Probe;
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Probe {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+    delegate_noop!(Probe: ignore wl_compositor::WlCompositor);
+    delegate_noop!(Probe: ignore wl_surface::WlSurface);
+    delegate_noop!(Probe: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+    delegate_noop!(Probe: ignore wp_fractional_scale_v1::WpFractionalScaleV1);
+
+    struct Client {
+        queue: EventQueue<Probe>,
+        manager: wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        surface: wl_surface::WlSurface,
+    }
+
+    impl Client {
+        fn new(env: &TestEnv) -> anyhow::Result<Self> {
+            let socket =
+                std::os::unix::net::UnixStream::connect(env.dir().join("oh-my-ime/dummy/wayland"))?;
+            let connection = Connection::from_socket(socket)?;
+            let (globals, queue) = registry_queue_init::<Probe>(&connection)?;
+            let qh = queue.handle();
+            let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
+            let manager = globals.bind(&qh, 1..=1, ())?;
+            Ok(Self {
+                queue,
+                manager,
+                surface: compositor.create_surface(&qh, ()),
+            })
+        }
+
+        fn scale(&self) -> wp_fractional_scale_v1::WpFractionalScaleV1 {
+            self.manager
+                .get_fractional_scale(&self.surface, &self.queue.handle(), ())
+        }
+
+        fn sync(&mut self) -> anyhow::Result<()> {
+            self.queue.roundtrip(&mut Probe)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[ignore = "end-to-end test; see typing.rs"]
+    fn duplicate_fractional_scale_is_contained() -> anyhow::Result<()> {
+        let env = TestEnv::start(&[dummy(&["--hidden"]), echo_engine()], Some("dummy"))?;
+        env.wait_for_log("engine ready")?;
+        let mut bad = Client::new(&env)?;
+        let _first = bad.scale();
+        bad.sync()?;
+        let _duplicate = bad.scale();
+        assert!(
+            bad.sync().is_err(),
+            "duplicate object must disconnect its client"
+        );
+        env.wait_for_log("surface already has a fractional scale")?;
+        assert_eq!(env.count_in_log("lost the compositor connection"), 0);
+        // A different connection of the same engine and another engine still work.
+        let mut healthy = Client::new(&env)?;
+        let _scale = healthy.scale();
+        healthy.sync()?;
+        env.omime(&["switch", "echo"])?;
+        let editor = env.editor(&[])?;
+        env.type_text("ok ")?;
+        editor.wait_for_text("OK ")?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "end-to-end test; see typing.rs"]
+    fn a_fractional_scale_can_be_created_again_after_its_destruction() -> anyhow::Result<()> {
+        let env = TestEnv::start(&[dummy(&["--hidden"])], Some("dummy"))?;
+        env.wait_for_log("engine ready")?;
+        let mut client = Client::new(&env)?;
+        let first = client.scale();
+        client.sync()?;
+        first.destroy();
+        // No roundtrip between destroy and create: the bridge must retire the
+        // attachment immediately, even while the old object awaits delete_id.
+        let second = client.scale();
+        client.sync()?;
+        second.destroy();
+        client.sync()?;
+        assert_eq!(env.count_in_log("disconnecting a UI client"), 0);
+        assert_eq!(env.count_in_log("lost the compositor connection"), 0);
+        env.omime(&["status"])?;
+        Ok(())
+    }
+}
+
 fn saving_engine(args: &[&str]) -> TestEngine {
     TestEngine {
         id: "saver",

@@ -781,14 +781,26 @@ impl WpFractionalScaleManagerV1Handler for BridgeFractionalScaleManager {
         id: &Rc<WpFractionalScaleV1>,
         surface: &Rc<WlSurface>,
     ) {
+        let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() else {
+            return kill_client(&**slf, "fractional scale for an unknown surface");
+        };
+        if handler
+            .fractional_scale
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_some()
+        {
+            drop(handler);
+            return kill_client(&**slf, "surface already has a fractional scale");
+        }
+        handler.fractional_scale = Some(Rc::downgrade(id));
+        drop(handler);
         slf.send_get_fractional_scale(id, surface);
         id.set_handler(BridgeFractionalScale {
             shared: self.shared.clone(),
             preferred: None,
+            surface: Rc::downgrade(surface),
         });
-        if let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() {
-            handler.fractional_scale = Some(Rc::downgrade(id));
-        }
         if let Some(scale) = self.shared.borrow().last_scale {
             id.send_preferred_scale(scale);
         }
@@ -797,11 +809,21 @@ impl WpFractionalScaleManagerV1Handler for BridgeFractionalScaleManager {
 
 struct BridgeFractionalScale {
     shared: Shared,
+    surface: Weak<WlSurface>,
     /// The scale the compositor prefers for the engine's surface.
     preferred: Option<u32>,
 }
 
 impl WpFractionalScaleV1Handler for BridgeFractionalScale {
+    fn handle_destroy(&mut self, slf: &Rc<WpFractionalScaleV1>) {
+        if let Some(surface) = self.surface.upgrade()
+            && let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>()
+        {
+            handler.fractional_scale = None;
+        }
+        slf.send_destroy();
+    }
+
     fn handle_preferred_scale(&mut self, slf: &Rc<WpFractionalScaleV1>, scale: u32) {
         self.shared.borrow_mut().last_scale = Some(scale);
         self.preferred = Some(scale);
