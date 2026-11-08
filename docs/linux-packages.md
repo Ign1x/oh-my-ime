@@ -56,9 +56,20 @@ restart your existing daemon; package hooks do not interrupt typing automaticall
 
 ## AppImage
 
-The AppImage contains the platform, Rime, its standard dictionaries and non-system
-runtime libraries. It requires **glibc 2.39 or newer**, system fonts and suitable
-host graphics drivers. It does not bundle a compositor or GPU drivers.
+The AppImage contains the platform, Rime, its standard dictionaries and libraries
+used privately by Rime. It requires **glibc 2.39 or newer**, the host's C++ runtime,
+font and Wayland/OpenGL libraries, system fonts and suitable graphics drivers.
+Keeping that shared graphics stack on the host avoids loading old libraries into
+a newer Mesa driver. It does not bundle a compositor or GPU drivers.
+
+For Ubuntu/Debian, install the host runtime libraries if they are missing:
+
+```sh
+sudo apt install libgcc-s1 libstdc++6 libunwind8 libfontconfig1 libxkbcommon0 \
+  libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1 libgles2
+```
+
+The [AppImage guide](../packaging/appimage/README.md) lists Fedora/Arch equivalents.
 
 ```sh
 chmod +x oh-my-ime-0.5.0-x86_64.AppImage
@@ -75,9 +86,16 @@ copy under `$XDG_DATA_HOME/oh-my-ime/appimage` and creates launchers in
 launchers. Run setup through the installed launcher so autostart uses a durable
 path. Installation alone does not configure or start the input method.
 
-Without FUSE, use `./IMAGE.AppImage --appimage-extract-and-run --install`.
-The accompanying `.AppImage.build.json` records bundled library versions and source
-provenance. See [AppImage packaging](../packaging/appimage/README.md) for cache,
+Without FUSE, use a private temporary directory so extraction caches from another
+user cannot interfere:
+
+```sh
+install -d -m700 "${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-ime/tmp"
+TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-ime/tmp" ./IMAGE.AppImage --appimage-extract-and-run --install
+```
+
+The accompanying `.AppImage.build.json` records bundled library versions, host ABI
+requirements and source provenance. See [AppImage packaging](../packaging/appimage/README.md) for cache,
 upgrade and removal details.
 
 ## Arch Linux / AUR

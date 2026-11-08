@@ -60,8 +60,19 @@ container ubuntu:24.04 bash -euo pipefail -c '
     --artifacts /artifacts --system "$OMIME_PACKAGE_SYSTEM" --out /out
 '
 container ubuntu:24.04 bash -euo pipefail -c '
-  apt-get update
-  apt-get install -y --no-install-recommends python3 util-linux
+  bash /source/packaging/appimage/prepare-runtime.sh
+  apt-get install -y --no-install-recommends util-linux
   setpriv --reuid=1000 --regid=1000 --clear-groups \
     bash /source/packaging/appimage/smoke.sh /out
+'
+# Exercise the host Mesa/LLVM path on a newer distribution, including Rime's UI.
+# shellcheck disable=SC2016 # Expanded inside the container.
+container fedora:43 bash -euo pipefail -c '
+  bash /source/packaging/appimage/prepare-runtime.sh --graphics-test
+  dnf install -y --setopt=install_weak_deps=False util-linux
+  mkdir -p "/out/validation/$OMIME_PACKAGE_SYSTEM/fedora-egl"
+  chown 65534:65534 "/out/validation/$OMIME_PACKAGE_SYSTEM/fedora-egl"
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+    python3 /source/packaging/appimage/graphics-smoke.py /out \
+      "/out/validation/$OMIME_PACKAGE_SYSTEM/fedora-egl"
 '

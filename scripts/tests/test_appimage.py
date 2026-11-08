@@ -227,6 +227,41 @@ class AppRunTests(unittest.TestCase):
 
 
 class BuildIdentityTests(unittest.TestCase):
+    def test_host_graphics_dependencies_are_not_copied_into_the_image(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            appdir = root / "AppDir"
+            binaries = appdir / "usr/lib/oh-my-ime/bin"
+            binaries.mkdir(parents=True)
+            for program in appimage.ALL_PROGRAMS:
+                (binaries / f"{program}.bin").write_bytes(b"executable fixture")
+            prefix = root / "rime"
+            (prefix / "lib").mkdir(parents=True)
+            (prefix / "lib/librime.so.1").write_bytes(b"\x7fELF\x02\x01" + bytes(12) + b"\x3e\x00")
+
+            def output(*args):
+                if args[:2] == ("patchelf", "--print-needed"):
+                    if Path(args[2]).name == "librime.so.1":
+                        return "libstdc++.so.6\nlibunwind.so.8\nlibz.so.1\nlibexpat.so.1\nlibfuture-graphics.so.1"
+                    return "librime.so.1\nlibfontconfig.so.1\nlibgcc_s.so.1"
+                return "GLIBC_2.39 GLIBCXX_3.4.32 CXXABI_1.3.13 GCC_4.2.0"
+
+            with patch.object(appimage, "library_cache", return_value={}), patch.object(appimage, "command", side_effect=output), patch.object(appimage.subprocess, "run"):
+                bundled, external, _, abi = appimage.collect_libraries(appdir, "x86_64-linux", prefix)
+            self.assertEqual(set(bundled), {"librime.so.1"})
+            for name in ("libstdc++.so.6", "libgcc_s.so.1", "libunwind.so.8", "libz.so.1", "libexpat.so.1",
+                         "libfuture-graphics.so.1", "libfontconfig.so.1", "libwayland-client.so.0", "libEGL.so.1"):
+                self.assertIn(name, external)
+                self.assertFalse((binaries.parent / name).exists())
+            self.assertEqual(abi["GLIBCXX"], "3.4.32")
+
+            def too_new(*args):
+                return output(*args) if args[0] != "readelf" else "GLIBCXX_3.4.33"
+
+            with patch.object(appimage, "library_cache", return_value={}), patch.object(appimage, "command", side_effect=too_new), patch.object(appimage.subprocess, "run"):
+                with self.assertRaisesRegex(ValueError, "GLIBCXX_3.4.33"):
+                    appimage.collect_libraries(appdir, "x86_64-linux", prefix)
+
     def test_tree_identity_changes_when_same_version_libraries_change(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

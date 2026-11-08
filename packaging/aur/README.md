@@ -36,3 +36,8 @@ paths, libraries, and Rime schema deployment. AArch64 binaries are inspected but
 not executed. It also reinstalls both packages and removes Rime while checking
 that platform files and user configuration remain intact. Set
 `OMIME_AUR_SMOKE_OUT` to choose the output directory.
+
+If the container host rejects pacman's Landlock filesystem sandbox, the smoke
+test logs that specific failure and retries with `DisableSandboxFilesystem` in
+a temporary config. Package signature verification and the syscall sandbox stay
+enabled; the container's original pacman config and generated packages are unchanged.

@@ -20,14 +20,28 @@ from .common import PROGRAMS, SYSTEMS, sha256
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "packaging/appimage"
 ALL_PROGRAMS = (*PROGRAMS, "omime-rime")
-# glibc and the graphics driver stack must belong to the running host. The
-# Wayland client/egl adapter is not a GPU driver and can be bundled normally.
-HOST_LIBRARIES = re.compile(
-    r"^(?:ld-linux.*|lib(?:c|m|dl|pthread|rt|resolv|util|anl|BrokenLocale|nss_[^.]+)\.so\..*"
-    r"|lib(?:EGL|GL|GLX|GLdispatch|OpenGL|GLESv[12]|vulkan|drm[^.]*|gbm)\.so\..*)$"
+# Bundle only the engine's private dependencies. An older C++ runtime, Wayland,
+# fontconfig or compression/XML library loaded here would also satisfy the same
+# SONAME in a newer host Mesa/LLVM stack, even with a private ELF RUNPATH.
+# Everything outside this finite list belongs to the host, including newly
+# introduced transitive dependencies; it is recorded as a host requirement.
+PRIVATE_LIBRARIES = frozenset({
+    "librime.so.1", "libgflags.so.2.2", "libglog.so.1", "libleveldb.so.1d",
+    "libmarisa.so.0", "libopencc.so.1.1", "libsnappy.so.1", "libyaml-cpp.so.0.8",
+})
+# winit/glutin load the host graphics entry points with dlopen. GL/EGL's own
+# transitive dependencies are installed by the host's graphics-driver packages.
+DYNAMIC_LIBRARIES = (
+    "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
+    "libEGL.so.1", "libGL.so.1", "libGLESv2.so.2",
 )
-# winit loads these with dlopen, so DT_NEEDED alone is insufficient.
-DYNAMIC_LIBRARIES = ("libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1")
+HOST_RUNTIME_PACKAGES = {
+    "ubuntu": ["libgcc-s1", "libstdc++6", "libunwind8", "libfontconfig1", "libxkbcommon0",
+               "libwayland-client0", "libwayland-cursor0", "libwayland-egl1", "libegl1", "libgl1", "libgles2"],
+    "fedora": ["libgcc", "libstdc++", "libunwind", "fontconfig", "libxkbcommon", "libwayland-client",
+               "libwayland-cursor", "libwayland-egl", "libglvnd-egl", "libglvnd-glx", "libglvnd-gles"],
+    "arch": ["gcc-libs", "libunwind", "fontconfig", "libxkbcommon", "wayland", "libglvnd"],
+}
 RIME_FILES = ("default.yaml", "double_pinyin_flypy.schema.yaml", "luna_pinyin.schema.yaml", "luna_pinyin.dict.yaml")
 
 
@@ -119,7 +133,7 @@ def collect_libraries(appdir, system, prefix):
     destination = binary_dir.parent
     while pending:
         soname = pending.pop()
-        if HOST_LIBRARIES.fullmatch(soname):
+        if soname not in PRIVATE_LIBRARIES:
             external.add(soname)
             continue
         if soname in bundled:
@@ -142,11 +156,20 @@ def collect_libraries(appdir, system, prefix):
         subprocess.run(["patchelf", "--set-rpath", "$ORIGIN/..", str(binary_dir / f"{program}.bin")], check=True)
     # An accidental newer build host or local library must not silently increase
     # the advertised baseline. Version needs include every bundled transitive ELF.
+    abi = {}
+    # gcc 13's C++ ABI is the newest supported by the Ubuntu 24.04 baseline.
+    ceilings = {"GLIBC": (2, 39), "GLIBCXX": (3, 4, 32), "CXXABI": (1, 3, 14), "GCC": (13, 0, 0)}
     for path in [*(binary_dir / f"{p}.bin" for p in ALL_PROGRAMS), *(destination / name for name in bundled)]:
-        versions = {tuple(map(int, m)) for m in re.findall(r"\bGLIBC_(\d+)\.(\d+)\b", command("readelf", "--version-info", path))}
-        if versions and max(versions) > (2, 39):
-            raise ValueError(f"{path.name} requires glibc {max(versions)}, above 2.39")
-    return bundled, sorted(external), packages
+        information = command("readelf", "--version-info", path)
+        for namespace, ceiling in ceilings.items():
+            versions = {tuple(map(int, version.split(".")))
+                        for version in re.findall(rf"\b{namespace}_(\d+(?:\.\d+)+)\b", information)}
+            if versions:
+                required = max(versions)
+                if required > ceiling:
+                    raise ValueError(f"{path.name} requires {namespace}_{'.'.join(map(str, required))}, above the Ubuntu 24.04 baseline")
+                abi[namespace] = max(abi.get(namespace, ()), required)
+    return bundled, sorted(external), packages, {name: ".".join(map(str, value)) for name, value in sorted(abi.items())}
 
 
 def copy_data(source, destination):
@@ -229,7 +252,7 @@ def build(release, system, payloads, out):
         work = Path(directory)
         appdir = work / "AppDir"
         stage_payloads(payloads, appdir)
-        bundled, external, packages = collect_libraries(appdir, system, prefix)
+        bundled, external, packages, abi = collect_libraries(appdir, system, prefix)
         for required in RIME_FILES:
             if not (Path("/usr/share/rime-data") / required).is_file():
                 raise ValueError(f"missing Rime data {required}; install rime-data-double-pinyin and rime-data-luna-pinyin")
@@ -251,7 +274,10 @@ def build(release, system, payloads, out):
             "version": release["version"], "system": system, "revision": release["revision"],
             "release_artifacts": release["artifacts"][system], "runtime": runtime_record,
             "glibc_minimum": "2.39", "host_libraries": external,
-            "host_requirements": ["glibc >= 2.39", "supported Wayland compositor", "system fonts", "compatible graphics drivers for GPU rendering"],
+            "host_abi_requirements": abi, "host_runtime_packages": HOST_RUNTIME_PACKAGES,
+            "bundling_policy": "Rime-private-libraries-only",
+            "host_requirements": ["glibc >= 2.39 and recorded C++/GCC ABIs", "supported Wayland compositor",
+                                  "system fonts", "host graphics libraries and compatible drivers"],
             "bundled_libraries": dict(sorted(bundled.items())), "ubuntu_packages": package_records,
             "rime": rime,
             "tools": {tool: command(tool, flag).splitlines()[0] for tool, flag in (("patchelf", "--version"), ("mksquashfs", "-version"))},

@@ -21,7 +21,21 @@ work=$(mktemp -d /tmp/oh-my-ime-aur.XXXXXX)
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$output"
 
-pacman -Syu --needed --noconfirm base-devel python
+pacman_options=()
+if pacman -Syu --needed --noconfirm base-devel python 2>&1 | tee "$work/pacman.log"; then
+  :
+else
+  status=$?
+  # Some container hosts reject Landlock even though pacman supports it. Retry
+  # only that failure with a temporary config; retain signatures and seccomp.
+  if ! grep -Eq '^error: restricting filesystem access failed because the Landlock ruleset could not be applied: (Operation not permitted|Function not implemented|Operation not supported)$' "$work/pacman.log"; then
+    exit "$status"
+  fi
+  printf '%s\n' 'AUR container: the host rejected the Landlock filesystem sandbox; retrying with DisableSandboxFilesystem in a temporary pacman config. Signature verification and the syscall sandbox remain enabled.' >&2
+  sed '/^\[options\]$/a DisableSandboxFilesystem' /etc/pacman.conf > "$work/pacman.conf"
+  pacman_options=(--config "$work/pacman.conf")
+  pacman "${pacman_options[@]}" -Syu --needed --noconfirm base-devel python
+fi
 python -m unittest discover -s "$scripts/../../scripts/tests" -p test_aur.py
 if ! id omime-build >/dev/null 2>&1; then
   useradd --create-home omime-build
@@ -42,7 +56,7 @@ runuser -u omime-build -- makepkg --config "$work/makepkg-aarch64.conf" \
 runuser -u omime-build -- makepkg --printsrcinfo > "$output/makepkg.SRCINFO"
 python "$scripts/verify.py" metadata .SRCINFO "$output/makepkg.SRCINFO"
 runuser -u omime-build -- makepkg --cleanbuild --noconfirm
-pacman -U --noconfirm ./oh-my-ime-bin-*-x86_64.pkg.tar.zst ./oh-my-ime-rime-bin-*-x86_64.pkg.tar.zst
+pacman "${pacman_options[@]}" -U --noconfirm ./oh-my-ime-bin-*-x86_64.pkg.tar.zst ./oh-my-ime-rime-bin-*-x86_64.pkg.tar.zst
 pacman -Qi oh-my-ime-bin oh-my-ime-rime-bin
 pacman -Qkk oh-my-ime-bin oh-my-ime-rime-bin
 python "$scripts/verify.py" runtime
@@ -61,7 +75,7 @@ for package in ./*-aarch64.pkg.tar.zst; do
   done
 done
 # Reinstall the same version, then remove only the optional engine.
-pacman -U --noconfirm ./oh-my-ime-bin-*-x86_64.pkg.tar.zst ./oh-my-ime-rime-bin-*-x86_64.pkg.tar.zst
+pacman "${pacman_options[@]}" -U --noconfirm ./oh-my-ime-bin-*-x86_64.pkg.tar.zst ./oh-my-ime-rime-bin-*-x86_64.pkg.tar.zst
 python "$scripts/verify.py" removal
 cp ./*.pkg.tar.zst PKGBUILD .SRCINFO "$output/"
 printf 'AUR source, metadata, installation, and architecture checks passed.\n'

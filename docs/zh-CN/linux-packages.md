@@ -47,8 +47,18 @@ Rime 包要求相同版本的平台、librime ≥ 1.11 和 Rime 数据。安装�
 
 ## AppImage
 
-AppImage 包含平台、Rime、标准词库和非系统运行库，要求 **glibc 2.39 或更新版本**、系统字体
-和合适的宿主图形驱动；不内置合成器或 GPU 驱动。
+AppImage 包含平台、Rime、标准词库和 Rime 私有依赖库，要求 **glibc 2.39 或更新版本**，
+宿主的 C++ 运行库、字体及 Wayland/OpenGL 库、系统字体和合适的图形驱动。
+共享图形栈由宿主提供，避免旧库与较新的 Mesa 驱动混用；不内置合成器或 GPU 驱动。
+
+Ubuntu/Debian 缺少运行库时，可安装：
+
+```sh
+sudo apt install libgcc-s1 libstdc++6 libunwind8 libfontconfig1 libxkbcommon0 \
+  libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1 libgles2
+```
+
+Fedora/Arch 的对应依赖见 [AppImage 说明](../../packaging/appimage/README.md)。
 
 ```sh
 chmod +x oh-my-ime-0.5.0-x86_64.AppImage
@@ -63,8 +73,14 @@ ARM64 使用 `aarch64` 镜像。普通启动会使用持久缓存，让引擎和
 创建启动器；请将该目录加入 `PATH`。遇到无关的已有启动器会拒绝覆盖。
 通过安装后的启动器执行 setup，确保自启动指向持久路径。安装本身不会配置或启动输入法。
 
-没有 FUSE 时，可用 `./IMAGE.AppImage --appimage-extract-and-run --install`。
-随附的 `.AppImage.build.json` 记录打包库的版本和来源。缓存、升级和移除细节见
+没有 FUSE 时，使用当前用户的私有临时目录，避免其他用户留下的解压缓存相互干扰：
+
+```sh
+install -d -m700 "${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-ime/tmp"
+TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-ime/tmp" ./IMAGE.AppImage --appimage-extract-and-run --install
+```
+
+随附的 `.AppImage.build.json` 记录打包库的版本、宿主 ABI 要求和来源。缓存、升级和移除细节见
 [AppImage 打包说明](../../packaging/appimage/README.md)。
 
 ## Arch Linux / AUR

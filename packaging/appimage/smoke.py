@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test a real AppImage in temporary HOME/XDG locations without desktop access."""
+"""Test a real AppImage with documented host runtimes and private HOME/XDG paths."""
 
 import ctypes as c
 import hashlib
@@ -119,7 +119,11 @@ def rime_check(root, user):
                 rime.RimeDestroySession(session)
     finally:
         rime.RimeFinalize()
-    assert str(library) in Path("/proc/self/maps").read_text(), "librime was loaded from outside the bundle"
+    maps = Path("/proc/self/maps").read_text()
+    assert str(library) in maps, "librime was loaded from outside the bundle"
+    for soname in ("libstdc++.so", "libgcc_s", "libunwind.so"):
+        loaded = [line for line in maps.splitlines() if soname in line]
+        assert loaded and all(str(root) not in line for line in loaded), f"{soname} must come from the host"
 
 
 def main():
@@ -144,10 +148,12 @@ def main():
             "HOME": str(work / "home with spaces"), "XDG_CONFIG_HOME": str(work / "config"),
             "XDG_DATA_HOME": str(work / "data with spaces"), "XDG_CACHE_HOME": str(work / "cache"),
             "XDG_STATE_HOME": str(work / "state"), "XDG_RUNTIME_DIR": str(work / "runtime"),
+            "TMPDIR": str(work / "tmp"),
             "XDG_DATA_DIRS": "/usr/local/share:/usr/share",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(work / "absent-bus"),
         })
         Path(env["XDG_RUNTIME_DIR"]).mkdir(mode=0o700)
+        Path(env["TMPDIR"]).mkdir(mode=0o700)
         downloaded = work / "downloaded image.AppImage"
         shutil.copy2(artifact, downloaded)
         command = [downloaded, "--appimage-extract-and-run"]
@@ -180,6 +186,13 @@ def main():
             assert (launchers / program).resolve().is_file()
         for name in record["bundled_libraries"]:
             assert (root / "usr/lib/oh-my-ime" / name).is_file()
+        assert record["bundling_policy"] == "Rime-private-libraries-only"
+        for name in record["host_libraries"]:
+            assert not (root / "usr/lib/oh-my-ime" / name).exists(), f"host library was bundled: {name}"
+        for name in ("libstdc++.so.6", "libgcc_s.so.1", "libunwind.so.8", "libfontconfig.so.1", "libxkbcommon.so.0",
+                     "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1", "libEGL.so.1"):
+            assert name in record["host_libraries"], f"host requirement was omitted: {name}"
+        assert record["host_abi_requirements"]["GLIBCXX"]
         assert (root / "usr/share/licenses/librime/LICENSE").is_file()
         assert (root / "usr/share/licenses/appimage-runtime/runtime-LICENSE.txt").is_file()
         for component in ("libfuse", "mimalloc", "musl", "squashfuse", "zlib", "zstd"):
