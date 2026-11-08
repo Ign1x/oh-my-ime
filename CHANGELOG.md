@@ -50,6 +50,11 @@ All notable changes to this project are documented here. The format follows
   their reservation through the actual D-Bus write, and capability updates cannot
   bypass overload retirement before the field loses and regains focus.
 
+- An XIM application that stops acknowledging output no longer delays other
+  applications with repeated 300 ms waits. Its queued output and pending keys are
+  retired after the first timeout; only its matching connection/context reply resumes
+  input, without replaying old work. Replies from other contexts cannot release a wait.
+  Per-client output queues are bounded; exceeding a limit disconnects that client.
 - Fcitx5-module fields discard surrounding text on focus-out, when marked sensitive,
   or when surrounding-text support is removed. Text sent while sensitive is never
   cached, and deletion waits for fresh text so bytes cannot be mistaken for characters.

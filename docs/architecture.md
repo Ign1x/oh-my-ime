@@ -176,14 +176,21 @@ know which frontend a key came from.
   presses pass through XIM; releases reach the application directly. libX11 puts a commit
   or a key sent back at the front of the application's event queue, so two in a row would
   arrive in the wrong order: omimed sends them one at a time as synchronous requests and
-  waits for the application's `XIM_SYNC_REPLY` (300 ms at most) before the next. Keysyms
-  come from the X server's core keyboard mapping. Each connection may allocate at most
+  waits for the application's `XIM_SYNC_REPLY` (300 ms at most) before the next. Replies
+  must match the connection, input method and input context. On timeout, omimed discards
+  that client's queued output and pending keys, ends its engine contexts and suspends
+  further input/output for it until the outstanding matching reply arrives or it
+  disconnects. Other clients can then continue; the next focus or key starts a fresh
+  engine context without replaying the retired backlog. Queued output is limited to
+  256 requests and 1 MiB per client (wire size plus request storage); exceeding either
+  limit disconnects only that client. Keysyms come from the X server's core keyboard
+  mapping. Each connection may allocate at most
   65,534 input contexts over its lifetime, including contexts already destroyed. Further
   CreateIc requests receive `XIM_ERROR` (`BadAlloc`), so libX11's `XCreateIC` returns NULL.
   The connection and its existing contexts keep working, including pending keys and
   queued output. New contexts need a new XIM connection, for example by restarting
   the application. omimed warns once per connection about the limit.
-  Only a panic in the XIM protocol handler drops a connection as fault containment,
+  A panic in the XIM protocol handler also drops a connection as fault containment,
   releasing that connection's contexts, pending keys and queued output. Input-method
   ID exhaustion from repeated Open/Close requests is one such panic; libX11 never
   causes it because it opens one input method per connection. Other clients keep

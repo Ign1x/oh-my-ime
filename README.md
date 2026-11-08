@@ -74,7 +74,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   next to the native engines, with their menus in the tray.
 - 🛡️ **Resilient.** Keys go back to the application when an engine is slow, crashed engines
   restart, a misbehaving engine is stopped, and password fields that applications report
-  bypass engines.
+  bypass engines. A stalled XIM application loses its queued output after 300 ms so
+  other applications can keep typing.
 - 🧭 **A platform UI.** A settings app, a tray menu, a switcher, desktop notifications, the
   `omime` command line and a D-Bus API. The input method can be remembered per application.
 - 🌐 **English and Simplified Chinese.**

@@ -40,7 +40,7 @@ use xim::x11rb::{HasConnection as _, X11rbServer};
 use xim::{
     CommitData, ErrorCode, Feedback, ForwardEventFlag, InputContext, InputStyle, PreeditDrawStatus,
     Request, Server as _, ServerCore as _, ServerError, ServerHandler, UserInputContext, XEvent,
-    XimConnections,
+    XimConnections, XimWrite as _,
 };
 
 use crate::daemon::{PollFd, watch};
@@ -64,9 +64,11 @@ const XIM_CREATE_IC: u8 = 50;
 /// `xim` increments its ID before storing a context, and panics when it reaches zero.
 /// Count all allocations on a connection, including contexts already destroyed.
 const MAX_IC_ALLOCATIONS: u16 = u16::MAX - 1;
-/// How long to wait for an application to consume a commit or key before sending the
-/// next one anyway.
+/// How long to wait before retiring an unresponsive application's output.
 const SYNC_TIMEOUT: Duration = Duration::from_millis(300);
+/// Bound output retained while another request is waiting for its acknowledgement.
+const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
+const MAX_QUEUED_BYTES_PER_CLIENT: usize = 1024 * 1024;
 /// How long omimed waits for the X server when it starts. Later attempts do not wait:
 /// they would hold up keyboard input.
 pub const STARTUP_CONNECT_WAIT: Duration = Duration::from_secs(3);
@@ -94,8 +96,10 @@ struct Ic {
     /// Whether the application draws the preedit (on-the-spot input style).
     preedit_callbacks: bool,
     preedit_started: bool,
-    /// Characters of the preedit the application shows.
+    /// Characters of the preedit after the queued draws have been sent.
     preedit_len: usize,
+    /// Last preedit actually sent, before any queued changes that a timeout can drop.
+    sent_preedit: Option<usize>,
     /// The last key the application forwarded, a template for keys sent to it.
     last_event: Option<XEvent>,
     /// Where the application draws text, in X screen coordinates (the start of the
@@ -137,6 +141,8 @@ struct Handler {
     ic_allocations: BTreeMap<u32, u16>,
     /// Connections already warned about their lifetime input context allocation limit.
     ic_limit_warned: BTreeSet<u32>,
+    /// Timed-out clients remain suspended until their outstanding IMID/ICID replies.
+    stalled: BTreeMap<u32, (u16, u16)>,
     keymap: Keymap,
     ics: BTreeMap<IcKey, Ic>,
     pending: BTreeMap<u64, Pending>,
@@ -192,7 +198,7 @@ impl Handler {
         &mut self,
         com_win: u32,
         queue: &mut VecDeque<Queued>,
-        waiting: &mut Option<(Instant, u32)>,
+        waiting: &mut Option<SyncWait>,
     ) {
         self.ic_allocations.remove(&com_win);
         self.ic_limit_warned.remove(&com_win);
@@ -213,15 +219,19 @@ impl Handler {
                 self.ics.remove(&key);
             }
             self.pending.retain(|_, pending| pending.ic.0 != client);
-            queue.retain(|queued| queued.client_win != client);
-            if waiting.is_some_and(|(_, waiting_for)| waiting_for == client) {
+            queue.retain(|queued| queued.ic.0 != client);
+            if waiting.is_some_and(|waiting| waiting.ic.0 == client) {
                 *waiting = None;
             }
+            self.stalled.remove(&client);
             self.clients.remove(&client);
         }
     }
 
     fn focus_in(&mut self, key: IcKey) {
+        if self.stalled.contains_key(&key.0) {
+            return;
+        }
         let Some(ic) = self.ics.get_mut(&key) else {
             return;
         };
@@ -264,6 +274,41 @@ impl Handler {
             debug!(ctx, "XIM text field left");
             self.events.push_back(FrontendEvent::Deactivated { ctx });
         }
+    }
+
+    fn retire_output(&mut self, key: IcKey, queue: &mut VecDeque<Queued>) {
+        let (client, im, ic) = key;
+        self.stalled.insert(client, (im, ic));
+        queue.retain(|queued| queued.ic.0 != client);
+        self.pending.retain(|_, pending| pending.ic.0 != client);
+        // End the core contexts too: a late engine reply must not repopulate the
+        // retired queue after recovery. A new focus or key activates a fresh context.
+        let keys: Vec<_> = self
+            .ics
+            .keys()
+            .filter(|key| key.0 == client)
+            .copied()
+            .collect();
+        for key in keys {
+            self.focus_out(key);
+            if let Some(ic) = self.ics.get_mut(&key) {
+                ic.preedit_started = ic.sent_preedit.is_some();
+                ic.preedit_len = ic.sent_preedit.unwrap_or_default();
+            }
+        }
+    }
+
+    fn sync_reply(&mut self, com_win: u32, ids: (u16, u16), waiting: &mut Option<SyncWait>) {
+        if waiting.is_some_and(|wait| {
+            self.clients.get(&wait.ic.0) == Some(&com_win) && (wait.ic.1, wait.ic.2) == ids
+        }) {
+            *waiting = None;
+        }
+        // A delayed reply can recover its own suspended client while an unrelated
+        // application's synchronous request remains outstanding.
+        self.stalled.retain(|client, expected| {
+            self.clients.get(client) != Some(&com_win) || *expected != ids
+        });
     }
 }
 
@@ -345,6 +390,7 @@ impl ServerHandler<Server> for Handler {
             // The application drops the preedit it shows.
             ic.preedit_started = false;
             ic.preedit_len = 0;
+            ic.sent_preedit = None;
             if let Some(ctx) = ic.ctx {
                 self.events.push_back(FrontendEvent::Updated {
                     ctx,
@@ -391,6 +437,11 @@ impl ServerHandler<Server> for Handler {
         xev: &KeyPressEvent,
     ) -> Result<bool, ServerError> {
         let key = ic_key(&user_ic.ic);
+        if self.stalled.contains_key(&key.0) {
+            // Do not build new engine work or let the crate forward keys around the
+            // outstanding synchronous request while this client is suspended.
+            return Ok(true);
+        }
         // Applications usually say when a field gets focus, but a key means it has.
         self.focus_in(key);
         let Some(ic) = self.ics.get_mut(&key) else {
@@ -452,18 +503,44 @@ pub struct XimFrontend {
     /// The monitors of the screen, as RandR describes them.
     monitors: Vec<Monitor>,
     queue: VecDeque<Queued>,
-    /// Since when a synchronous request waits for `XIM_SYNC_REPLY`, and from which
-    /// client window.
-    waiting: Option<(Instant, u32)>,
+    waiting: Option<SyncWait>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SyncWait {
+    since: Instant,
+    ic: IcKey,
 }
 
 /// A request waiting for its turn.
 #[derive(Debug)]
 struct Queued {
-    client_win: u32,
+    ic: IcKey,
     request: Request,
     /// Whether what follows waits until the application consumed this.
     sync: bool,
+}
+
+/// The wire size includes preedit feedback as well as text; also count the fixed
+/// request storage so small messages cannot evade the byte budget.
+fn enqueue(queue: &mut VecDeque<Queued>, queued: Queued) -> bool {
+    let bytes = |queued: &Queued| {
+        queued
+            .request
+            .size()
+            .saturating_add(std::mem::size_of::<Queued>())
+    };
+    let (count, bytes) = queue
+        .iter()
+        .filter(|other| other.ic.0 == queued.ic.0)
+        .fold((1, bytes(&queued)), |(count, total), other| {
+            (count + 1, total.saturating_add(bytes(other)))
+        });
+    if count > MAX_QUEUED_REQUESTS_PER_CLIENT || bytes > MAX_QUEUED_BYTES_PER_CLIENT {
+        return false;
+    }
+    queue.push_back(queued);
+    true
 }
 
 impl std::fmt::Debug for XimFrontend {
@@ -518,6 +595,7 @@ impl XimFrontend {
                 clients: BTreeMap::new(),
                 ic_allocations: BTreeMap::new(),
                 ic_limit_warned: BTreeSet::new(),
+                stalled: BTreeMap::new(),
                 keymap,
                 ics: BTreeMap::new(),
                 pending: BTreeMap::new(),
@@ -575,9 +653,10 @@ impl XimFrontend {
                 self.handler.com_win = Some(msg.window);
                 if let Some(header) = protocol_header(self.server.conn(), msg) {
                     self.handler.create_ic_im = create_ic_im(&header);
-                    // The `xim` crate ignores this answer; it lets the next request out.
-                    if header[0] == XIM_SYNC_REPLY {
-                        self.waiting = None;
+                    // The `xim` crate ignores this answer. Only its connection and
+                    // matching context may release a synchronous output request.
+                    if let Some(ids) = sync_reply_ids(&header) {
+                        self.handler.sync_reply(msg.window, ids, &mut self.waiting);
                     }
                 }
             }
@@ -635,25 +714,33 @@ impl XimFrontend {
 
     /// When to give up on an application that did not answer a synchronous request.
     pub fn deadline(&self) -> Option<Instant> {
-        self.waiting.map(|(since, _)| since + SYNC_TIMEOUT)
+        self.waiting.map(|wait| wait.since + SYNC_TIMEOUT)
     }
 
     pub fn on_timer(&mut self, now: Instant) -> anyhow::Result<()> {
-        if self.deadline().is_some_and(|deadline| deadline <= now) {
+        if self.deadline().is_some_and(|deadline| deadline <= now)
+            && let Some(wait) = self.waiting.take()
+        {
             debug!("XIM: an application did not answer in time");
-            self.waiting = None;
+            self.handler.retire_output(wait.ic, &mut self.queue);
         }
         self.process()
     }
 
-    /// Queues `request` for `client_win`, for [`Self::process`] to send. A `sync` request
+    /// Queues `request` for `ic`, for [`Self::process`] to send. A `sync` request
     /// holds back what follows until the application consumed it.
-    fn send(&mut self, client_win: u32, request: Request, sync: bool) {
-        self.queue.push_back(Queued {
-            client_win,
-            request,
-            sync,
-        });
+    fn send(&mut self, ic: IcKey, request: Request, sync: bool) {
+        if self.handler.stalled.contains_key(&ic.0) || !self.handler.ics.contains_key(&ic) {
+            return;
+        }
+        if !enqueue(&mut self.queue, Queued { ic, request, sync })
+            && let Some(&com_win) = self.handler.clients.get(&ic.0)
+        {
+            // No acknowledgement may be outstanding for an over-budget client.
+            // Disconnect it rather than leave an incomplete output sequence alive.
+            warn!("XIM: output queue limit reached; disconnecting client");
+            self.disconnect_client(com_win);
+        }
     }
 
     /// Sends queued requests up to the next synchronous one. Returns whether it sent any.
@@ -664,12 +751,27 @@ impl XimFrontend {
                 break;
             };
             sent = true;
-            if let Err(e) = self.server.send_req(queued.client_win, queued.request) {
+            // draw_preedit sends full replacements with one feedback per character.
+            let preedit = match &queued.request {
+                Request::PreeditStart { .. } => Some(Some(0)),
+                Request::PreeditDraw { feedbacks, .. } => Some(Some(feedbacks.len())),
+                Request::PreeditDone { .. } => Some(None),
+                _ => None,
+            };
+            if let Err(e) = self.server.send_req(queued.ic.0, queued.request) {
                 debug!("XIM: {e}");
                 continue;
             }
+            if let Some(preedit) = preedit
+                && let Some(ic) = self.handler.ics.get_mut(&queued.ic)
+            {
+                ic.sent_preedit = preedit;
+            }
             if queued.sync {
-                self.waiting = Some((Instant::now(), queued.client_win));
+                self.waiting = Some(SyncWait {
+                    since: Instant::now(),
+                    ic: queued.ic,
+                });
             }
         }
         sent
@@ -744,7 +846,7 @@ impl XimFrontend {
             flag: ForwardEventFlag::SYNCHRONOUS,
             xev,
         };
-        self.send(client_win, request, true);
+        self.send((client_win, im, ic), request, true);
     }
 
     /// Applies an engine's actions to the field `ctx`.
@@ -798,7 +900,7 @@ impl XimFrontend {
                             syncronous: true,
                         },
                     };
-                    self.send(client_win, request, true);
+                    self.send((client_win, im, ic), request, true);
                 }
                 Action::Preedit(preedit) => self.draw_preedit(key, preedit),
                 // XIM has no way to tell about text around the cursor.
@@ -917,7 +1019,7 @@ impl XimFrontend {
             ic.preedit_len = len;
         }
         for request in requests {
-            self.send(client_win, request, false);
+            self.send((client_win, im, icid), request, false);
         }
     }
 }
@@ -1015,6 +1117,19 @@ fn create_ic_im(header: &[u8]) -> Option<NonZeroU16> {
     NonZeroU16::new(u16::from_ne_bytes(header.get(4..6)?.try_into().ok()?))
 }
 
+fn sync_reply_ids(header: &[u8]) -> Option<(u16, u16)> {
+    // A SyncReply has exactly four body bytes (one protocol length unit). Reject
+    // malformed headers before interpreting the inline transport's padding as IDs.
+    if header.get(..2)? != [XIM_SYNC_REPLY, 0]
+        || u16::from_ne_bytes(header.get(2..4)?.try_into().ok()?) != 1
+    {
+        return None;
+    }
+    let im = NonZeroU16::new(u16::from_ne_bytes(header.get(4..6)?.try_into().ok()?))?;
+    let ic = NonZeroU16::new(u16::from_ne_bytes(header.get(6..8)?.try_into().ok()?))?;
+    Some((im.get(), ic.get()))
+}
+
 /// The monitors of the screen of `root`, or none if RandR cannot tell.
 fn load_monitors(conn: &RustConnection, root: u32) -> Vec<Monitor> {
     let Ok(reply) = conn
@@ -1071,6 +1186,7 @@ mod tests {
             clients: BTreeMap::new(),
             ic_allocations: BTreeMap::new(),
             ic_limit_warned: BTreeSet::new(),
+            stalled: BTreeMap::new(),
             keymap: Keymap::default(),
             ics: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -1146,10 +1262,13 @@ mod tests {
         );
     }
 
-    fn active_connections() -> (Handler, VecDeque<Queued>, Option<(Instant, u32)>) {
+    fn active_connections() -> (Handler, VecDeque<Queued>, Option<SyncWait>) {
         let mut handler = handler();
         let mut queue = VecDeque::new();
-        let waiting = Some((Instant::now(), 100));
+        let waiting = Some(SyncWait {
+            since: Instant::now(),
+            ic: (100, 2, 1),
+        });
         let event = serialize_event(&KeyPressEvent::default());
         for (client, connection, id) in [(100, 10, 1), (200, 20, 2)] {
             let key = (client, 2, 1);
@@ -1164,7 +1283,7 @@ mod tests {
                 },
             );
             queue.push_back(Queued {
-                client_win: client,
+                ic: key,
                 request: Request::Commit {
                     input_method_id: 2,
                     input_context_id: 1,
@@ -1188,7 +1307,7 @@ mod tests {
         let (mut handler, queue, waiting) = active_connections();
         let mut replies = Replies::default();
         let ctx = handler.ics[&(100, 2, 1)].ctx;
-        let since = waiting.unwrap().0;
+        let since = waiting.unwrap().since;
         // Repeated requests from the same connection keep receiving errors without
         // ending existing contexts or discarding their work.
         for _ in 0..3 {
@@ -1209,8 +1328,14 @@ mod tests {
                 "refusal must not deactivate a context"
             );
             assert_eq!(queue.len(), 2);
-            assert_eq!(queue.front().unwrap().client_win, 100);
-            assert_eq!(waiting, Some((since, 100)));
+            assert_eq!(queue.front().unwrap().ic.0, 100);
+            assert_eq!(
+                waiting,
+                Some(SyncWait {
+                    since,
+                    ic: (100, 2, 1)
+                })
+            );
         }
         assert_eq!(replies.0.len(), 3);
         assert!(replies.0.iter().all(|(client, request)| *client == 100
@@ -1243,15 +1368,140 @@ mod tests {
         assert!(handler.pending.contains_key(&2));
         assert_eq!(handler.ics[&(200, 2, 1)].ctx, Some(surviving_ctx));
         assert_eq!(queue.len(), 1);
-        assert_eq!(queue.front().unwrap().client_win, 200);
+        assert_eq!(queue.front().unwrap().ic.0, 200);
         assert!(waiting.is_none());
         assert!(!handler.ic_allocations.contains_key(&10));
         assert!(!handler.ic_limit_warned.contains(&10));
         assert!(handler.reserve_ic(20));
         // Repeated cleanup is harmless and preserves another client's sync wait.
-        waiting = Some((Instant::now(), 200));
+        waiting = Some(SyncWait {
+            since: Instant::now(),
+            ic: (200, 2, 1),
+        });
         handler.forget_connection(10, &mut queue, &mut waiting);
         assert!(waiting.is_some());
         assert!(handler.events.is_empty());
+    }
+
+    #[test]
+    fn timeout_retires_only_its_client_and_matching_reply_starts_a_fresh_context() {
+        let (mut handler, mut queue, mut waiting) = active_connections();
+        let old_ctx = handler.ics[&(100, 2, 1)].ctx.unwrap();
+        let ic = handler.ics.get_mut(&(100, 2, 1)).unwrap();
+        ic.sent_preedit = Some(2);
+        ic.preedit_started = true;
+        ic.preedit_len = 5;
+        handler.retire_output(waiting.take().unwrap().ic, &mut queue);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].ic.0, 200);
+        assert_eq!(handler.pending.len(), 1);
+        assert!(handler.pending.contains_key(&2));
+        assert!(handler.ics[&(100, 2, 1)].ctx.is_none());
+        assert!(handler.ics[&(100, 2, 1)].preedit_started);
+        assert_eq!(handler.ics[&(100, 2, 1)].preedit_len, 2);
+        assert!(
+            matches!(handler.events.pop_front(), Some(FrontendEvent::Deactivated { ctx }) if ctx == old_ctx)
+        );
+        handler.focus_in((100, 2, 1));
+        assert!(handler.ics[&(100, 2, 1)].ctx.is_none());
+
+        let healthy_wait = Some(SyncWait {
+            since: Instant::now(),
+            ic: (200, 2, 1),
+        });
+        waiting = healthy_wait;
+        for (connection, ids) in [(20, (2, 2)), (10, (3, 1)), (10, (2, 2))] {
+            handler.sync_reply(connection, ids, &mut waiting);
+            assert_eq!(waiting, healthy_wait);
+            assert!(handler.stalled.contains_key(&100));
+        }
+        handler.sync_reply(10, (2, 1), &mut waiting);
+        assert_eq!(
+            waiting, healthy_wait,
+            "the recovered client's reply released a different wait"
+        );
+        assert!(handler.stalled.is_empty());
+        handler.focus_in((100, 2, 1));
+        assert_ne!(handler.ics[&(100, 2, 1)].ctx, Some(old_ctx));
+        assert!(handler.ics[&(100, 2, 1)].ctx.is_some());
+        handler.sync_reply(20, (2, 1), &mut waiting);
+        assert!(waiting.is_none());
+        handler.stalled.insert(100, (2, 1));
+        handler.forget_connection(10, &mut queue, &mut waiting);
+        assert!(handler.stalled.is_empty());
+    }
+
+    #[test]
+    fn only_complete_sync_reply_headers_have_matching_ids() {
+        let wire = xim::write_to_vec(Request::SyncReply {
+            input_method_id: 0x1234,
+            input_context_id: 0x5678,
+        });
+        assert_eq!(sync_reply_ids(&wire), Some((0x1234, 0x5678)));
+        for length in 0..8 {
+            assert_eq!(sync_reply_ids(&wire[..length]), None);
+        }
+        for (offset, value) in [(0, XIM_CREATE_IC), (1, 1)] {
+            let mut malformed = wire.clone();
+            malformed[offset] = value;
+            assert_eq!(sync_reply_ids(&malformed), None);
+        }
+        for length in [0_u16, 2, u16::MAX] {
+            let mut malformed = wire.clone();
+            malformed[2..4].copy_from_slice(&length.to_ne_bytes());
+            assert_eq!(sync_reply_ids(&malformed), None);
+        }
+        for ids in [(0, 1), (1, 0)] {
+            assert_eq!(
+                sync_reply_ids(&xim::write_to_vec(Request::SyncReply {
+                    input_method_id: ids.0,
+                    input_context_id: ids.1,
+                })),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn output_admission_bounds_each_clients_count_and_text_with_feedback() {
+        let small = |client| Queued {
+            ic: (client, 1, 1),
+            request: Request::PreeditStart {
+                input_method_id: 1,
+                input_context_id: 1,
+            },
+            sync: false,
+        };
+        let mut queue = VecDeque::new();
+        for _ in 0..MAX_QUEUED_REQUESTS_PER_CLIENT {
+            assert!(enqueue(&mut queue, small(100)));
+        }
+        assert!(!enqueue(&mut queue, small(100)));
+        assert!(
+            enqueue(&mut queue, small(200)),
+            "another client has its own budget"
+        );
+        assert_eq!(queue.len(), MAX_QUEUED_REQUESTS_PER_CLIENT + 1);
+
+        let large = || Queued {
+            ic: (300, 1, 1),
+            request: Request::PreeditDraw {
+                input_method_id: 1,
+                input_context_id: 1,
+                chg_first: 0,
+                chg_length: 0,
+                caret: 0,
+                preedit_string: vec![b'x'; 150_000],
+                feedbacks: vec![Feedback::UNDERLINE; 150_000],
+                status: PreeditDrawStatus::empty(),
+            },
+            sync: false,
+        };
+        assert!(enqueue(&mut queue, large()));
+        assert!(
+            !enqueue(&mut queue, large()),
+            "feedback must count against the byte budget too"
+        );
+        assert!(enqueue(&mut queue, small(400)));
     }
 }

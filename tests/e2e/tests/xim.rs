@@ -835,3 +835,384 @@ fn xim_reply_forward_uses_the_in_flight_keys_modifiers() -> anyhow::Result<()> {
     assert_eq!(env.count_in_log(SYNC_TIMEOUT), 0);
     Ok(())
 }
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn one_unresponsive_xim_client_does_not_hold_other_clients_output() -> anyhow::Result<()> {
+    use omime_e2e::harness::{target_dir, wait_until, wait_until_within};
+    use std::io::{BufRead as _, BufReader};
+    use std::process::{Child, Stdio};
+    use std::sync::{Arc, Mutex};
+
+    struct StopOnDrop(Child);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let engine = omime_e2e::harness::TestEngine {
+        id: "review",
+        program: omime_e2e::harness::target_dir().join("omime-review-growth-engine"),
+        args: vec!["xim-burst".into()],
+        env: Vec::new(),
+        hosted: false,
+    };
+    let env = TestEnv::start_with_x11(&[engine], Some("review"))?;
+    env.configure("[engine]\nkey_timeout_ms = 2000\n")?;
+    env.wait_for_log("engine ready")?;
+    let mut slow = StopOnDrop(
+        env.command(target_dir().join("omime-xim-client"))
+            .stdout(Stdio::piped())
+            .spawn()?,
+    );
+    let stdout = slow.0.stdout.take().context("client has no stdout")?;
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            sink.lock().unwrap().push(line);
+        }
+    });
+    wait_until("first XIM client", || {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l == "ready")
+            .then_some(())
+    })?;
+    env.type_on_seat("seat0", "a")?;
+    let slow_pid = rustix::process::Pid::from_child(&slow.0);
+    rustix::process::kill_process(slow_pid, rustix::process::Signal::STOP)?;
+    let resume = PausedEngine(slow_pid);
+    // The first client has 20 commits queued and never acknowledges them.
+    env.wait_for_log("XIM: an application did not answer in time")?;
+    let healthy = env.xim_client(&[])?;
+    let start = Instant::now();
+    env.type_on_seat("seat0", "b")?;
+    let delivered = wait_until_within(Duration::from_secs(1), "healthy XIM client's key", || {
+        (healthy.text() == "b").then_some(())
+    });
+    eprintln!(
+        "unacknowledged_commits=20, healthy_client_wait={:?}",
+        start.elapsed()
+    );
+    assert!(
+        delivered.is_ok(),
+        "one XIM client's 300ms timeouts are being applied serially to the global output queue: {delivered:?}"
+    );
+    // Only the first commit was sent before the deadline. Its delayed matching
+    // reply recovers the connection without replaying the other nineteen commits.
+    drop(resume);
+    wait_until("the commit already sent to the resumed client", || {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l == "commit \"x\"")
+            .then_some(())
+    })?;
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("commit "))
+            .count(),
+        1,
+        "the retired burst replayed after the delayed SyncReply"
+    );
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+    Ok(())
+}
+
+/// Two real ICs on one connection let the tests distinguish a wrong context reply
+/// from a reply coming from an entirely different application.
+#[derive(Default)]
+struct SyncContexts {
+    ids: Vec<(u16, u16)>,
+    preedit_callbacks: bool,
+}
+
+impl<C: Client> ClientHandler<C> for SyncContexts {
+    fn handle_connect(&mut self, client: &mut C) -> Result<(), ClientError> {
+        client.open("en_US")
+    }
+
+    fn handle_open(&mut self, client: &mut C, im: u16) -> Result<(), ClientError> {
+        let attributes = if self.preedit_callbacks {
+            client
+                .build_ic_attributes()
+                .push(
+                    xim::AttributeName::InputStyle,
+                    xim::InputStyle::PREEDIT_CALLBACKS | xim::InputStyle::STATUS_NOTHING,
+                )
+                .build()
+        } else {
+            Vec::new()
+        };
+        client.create_ic(im, attributes)
+    }
+
+    fn handle_create_ic(&mut self, client: &mut C, im: u16, ic: u16) -> Result<(), ClientError> {
+        self.ids.push((im, ic));
+        if self.ids.len() < 2 {
+            client.create_ic(im, Vec::new())?;
+        }
+        Ok(())
+    }
+}
+
+type SyncSetup<'a> = (X11rbClient<&'a RustConnection>, ChurnPeer, [(u16, u16); 2]);
+
+fn sync_client(conn: &RustConnection, screen: usize) -> anyhow::Result<SyncSetup<'_>> {
+    sync_client_with_preedit(conn, screen, false)
+}
+
+fn sync_client_with_preedit(
+    conn: &RustConnection,
+    screen: usize,
+    preedit_callbacks: bool,
+) -> anyhow::Result<SyncSetup<'_>> {
+    let xconnect = conn.intern_atom(false, b"_XIM_XCONNECT")?.reply()?.atom;
+    let protocol = conn.intern_atom(false, b"_XIM_PROTOCOL")?.reply()?.atom;
+    let mut client = X11rbClient::init(conn, screen, Some("omime"))?;
+    let mut handler = SyncContexts {
+        preedit_callbacks,
+        ..SyncContexts::default()
+    };
+    let mut peer = None;
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        anyhow::ensure!(Instant::now() < deadline, "XIM sync client did not connect");
+        let Some(event) = conn.poll_for_event()? else {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        };
+        let mut ready = false;
+        if let Event::ClientMessage(msg) = &event {
+            if msg.type_ == xconnect {
+                peer = Some(ChurnPeer {
+                    client_win: msg.window,
+                    com_win: msg.data.as_data32()[0],
+                    protocol,
+                });
+            } else if msg.type_ == protocol {
+                // Consume the second context's final setup message too, leaving only
+                // output generated by the test for next_request below.
+                ready = matches!(wire_request(conn, msg)?, Request::SetEventMask {
+                    input_method_id, input_context_id, ..
+                } if handler.ids.len() == 2 && handler.ids[1] == (input_method_id, input_context_id));
+            }
+        }
+        client.filter_event(&event, &mut handler)?;
+        conn.flush()?;
+        if ready {
+            return Ok((
+                client,
+                peer.context("no XIM transport")?,
+                handler
+                    .ids
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("expected two XIM contexts"))?,
+            ));
+        }
+    }
+}
+
+fn private_x11(env: &TestEnv) -> anyhow::Result<(RustConnection, usize)> {
+    let display = env.command("printenv").arg("DISPLAY").output()?;
+    let display = String::from_utf8(display.stdout)?;
+    anyhow::ensure!(!display.trim().is_empty(), "no private XWayland display");
+    Ok(RustConnection::connect(Some(display.trim()))?)
+}
+
+fn sync_reply(
+    client: &mut X11rbClient<&RustConnection>,
+    (im, ic): (u16, u16),
+) -> anyhow::Result<()> {
+    client.send_req(Request::SyncReply {
+        input_method_id: im,
+        input_context_id: ic,
+    })?;
+    Ok(())
+}
+
+fn no_text_output(
+    peer: &ChurnPeer,
+    conn: &RustConnection,
+    duration: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + duration;
+    loop {
+        if let Some(event) = conn.poll_for_event()? {
+            if let Some(request) = peer.take_request(conn, &event)? {
+                anyhow::ensure!(
+                    !matches!(
+                        request,
+                        Request::Commit { .. } | Request::ForwardEvent { .. }
+                    ),
+                    "unexpected output while its SyncReply was withheld: {request:?}"
+                );
+            }
+        } else if Instant::now() >= deadline {
+            return Ok(());
+        } else {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+fn expect_space(request: &Request, (im, ic): (u16, u16)) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        matches!(request, Request::ForwardEvent {
+        input_method_id, input_context_id, flag, xev, ..
+    } if *input_method_id == im && *input_context_id == ic
+        && flag.contains(ForwardEventFlag::SYNCHRONOUS) && xev.response_type & 0x7f == 2),
+        "the queued key did not follow its acknowledged commit: {request:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_sync_replies_match_the_connection_and_context() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    let (conn, screen) = private_x11(&env)?;
+    let (other_conn, other_screen) = private_x11(&env)?;
+    let (mut client, peer, [context, other_context]) = sync_client(&conn, screen)?;
+    let (mut other, _, _) = sync_client(&other_conn, other_screen)?;
+    for character in ['a', 'b', ' '] {
+        forward_character(&conn, &mut client, context.0, context.1, character)?;
+    }
+    conn.flush()?;
+    expect_commit(&peer.next_request(&conn)?, context.0, context.1, b"AB")?;
+
+    sync_reply(&mut other, context)?;
+    other_conn.flush()?;
+    sync_reply(&mut client, other_context)?;
+    sync_reply(&mut client, (context.0 + 1, context.1))?;
+    conn.flush()?;
+    no_text_output(&peer, &conn, Duration::from_millis(80))?;
+
+    sync_reply(&mut client, context)?;
+    conn.flush()?;
+    expect_space(&peer.next_request(&conn)?, context)?;
+    sync_reply(&mut client, context)?;
+    conn.flush()?;
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_timeout_retires_pending_work_until_its_matching_reply() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    env.configure("engines = [\"echo\"]\n[engine]\nkey_timeout_ms = 2000\n")?;
+    let (conn, screen) = private_x11(&env)?;
+    let (other_conn, other_screen) = private_x11(&env)?;
+    let (mut client, peer, [context, other_context]) = sync_client(&conn, screen)?;
+    let (mut other, other_peer, [healthy_context, _]) = sync_client(&other_conn, other_screen)?;
+    for character in ['a', 'b', ' '] {
+        forward_character(&conn, &mut client, context.0, context.1, character)?;
+    }
+    conn.flush()?;
+    expect_commit(&peer.next_request(&conn)?, context.0, context.1, b"AB")?;
+    let paused = PausedEngine::echo(&env)?;
+    forward_character(&conn, &mut client, context.0, context.1, 'c')?;
+    conn.flush()?;
+    env.wait_for_log(SYNC_TIMEOUT)?;
+
+    // Neither another application nor another IC on this connection recovers it.
+    sync_reply(&mut other, context)?;
+    other_conn.flush()?;
+    sync_reply(&mut client, other_context)?;
+    conn.flush()?;
+    drop(paused);
+    forward_character(&conn, &mut client, context.0, context.1, ' ')?;
+    conn.flush()?;
+    no_text_output(&peer, &conn, Duration::from_millis(400))?;
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+
+    // A late reply from the retired client must not release a healthy client's wait.
+    for character in ['e', 'f', ' '] {
+        forward_character(
+            &other_conn,
+            &mut other,
+            healthy_context.0,
+            healthy_context.1,
+            character,
+        )?;
+    }
+    other_conn.flush()?;
+    expect_commit(
+        &other_peer.next_request(&other_conn)?,
+        healthy_context.0,
+        healthy_context.1,
+        b"EF",
+    )?;
+    sync_reply(&mut client, context)?;
+    conn.flush()?;
+    no_text_output(&other_peer, &other_conn, Duration::from_millis(80))?;
+    sync_reply(&mut other, healthy_context)?;
+    other_conn.flush()?;
+    expect_space(&other_peer.next_request(&other_conn)?, healthy_context)?;
+    sync_reply(&mut other, healthy_context)?;
+    other_conn.flush()?;
+
+    // Recovery keeps the connection and gives the field a fresh engine context.
+    // The pending c and queued space from before the timeout cannot reappear.
+    for character in ['d', ' '] {
+        forward_character(&conn, &mut client, context.0, context.1, character)?;
+    }
+    conn.flush()?;
+    expect_commit(&peer.next_request(&conn)?, context.0, context.1, b"D")?;
+    sync_reply(&mut client, context)?;
+    conn.flush()?;
+    expect_space(&peer.next_request(&conn)?, context)?;
+    sync_reply(&mut client, context)?;
+    conn.flush()?;
+    no_text_output(&peer, &conn, Duration::from_millis(80))?;
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn xim_timeout_discards_preedit_state_that_never_reached_the_client() -> anyhow::Result<()> {
+    let env = TestEnv::start_with_x11(&[echo_engine()], Some("echo"))?;
+    let (conn, screen) = private_x11(&env)?;
+    let (mut client, peer, [context, _]) = sync_client_with_preedit(&conn, screen, true)?;
+    forward_character(&conn, &mut client, context.0, context.1, ' ')?;
+    conn.flush()?;
+    expect_space(&peer.next_request(&conn)?, context)?;
+    // The preedit start/draw are generated behind the unacknowledged space.
+    forward_character(&conn, &mut client, context.0, context.1, 'a')?;
+    conn.flush()?;
+    env.wait_for_log(SYNC_TIMEOUT)?;
+    sync_reply(&mut client, context)?;
+    forward_character(&conn, &mut client, context.0, context.1, 'b')?;
+    conn.flush()?;
+    let start = peer.next_request(&conn)?;
+    anyhow::ensure!(
+        matches!(start, Request::PreeditStart { .. }),
+        "the fresh preedit must start; the retired start never reached the client: {start:?}"
+    );
+    let draw = peer.next_request(&conn)?;
+    anyhow::ensure!(
+        matches!(
+            draw,
+            Request::PreeditDraw {
+                chg_first: 0,
+                chg_length: 0,
+                ..
+            }
+        ),
+        "the fresh preedit cannot replace characters the client never saw: {draw:?}"
+    );
+    assert_eq!(env.count_in_log(SYNC_TIMEOUT), 1);
+    Ok(())
+}
