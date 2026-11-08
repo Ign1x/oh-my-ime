@@ -51,7 +51,7 @@ use xkbcommon::xkb;
 
 const USAGE: &str = "Usage: omime-im-client [--color RRGGBB] [--size WxH] [--log FILE] \
      [--keep-releases] [--slow-ms MS] [--commit-bytes N] [--forward-strokes N] \
-     [--tray ICON|TITLE|LABEL] [--spawn PROGRAM]";
+     [--tray ICON|TITLE|LABEL] [--spawn PROGRAM] [--surrounding]";
 
 /// Where `--log` sends the output.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -113,6 +113,8 @@ struct App {
     commit_bytes: Option<usize>,
     /// Forward the triggering press, then this many F2 strokes after the commit.
     forward_strokes: usize,
+    /// Record synthetic surrounding text for privacy regression tests.
+    surrounding: bool,
 }
 
 impl App {
@@ -345,6 +347,11 @@ impl Dispatch<ZwpInputMethodV2, usize> for App {
                 say("unavailable");
                 seat.im = None;
             }
+            zwp_input_method_v2::Event::SurroundingText {
+                text,
+                cursor,
+                anchor,
+            } if app.surrounding => say(&format!("surrounding {text:?} {cursor} {anchor}")),
             _ => {}
         }
     }
@@ -474,6 +481,7 @@ fn main() -> anyhow::Result<()> {
     let mut slow = std::time::Duration::ZERO;
     let mut commit_bytes = None;
     let mut forward_strokes = 0;
+    let mut surrounding = false;
     let mut tray = None;
     let mut spawn = None;
     let mut args = std::env::args().skip(1);
@@ -490,6 +498,7 @@ fn main() -> anyhow::Result<()> {
             "--slow-ms" => slow = std::time::Duration::from_millis(value()?.parse()?),
             "--commit-bytes" => commit_bytes = Some(value()?.parse()?),
             "--forward-strokes" => forward_strokes = value()?.parse()?,
+            "--surrounding" => surrounding = true,
             "--tray" => tray = Some(omime_e2e::tray_item::TrayItem::parse(&value()?)?),
             "--spawn" => spawn = Some(value()?),
             "--log" => {
@@ -520,6 +529,7 @@ fn main() -> anyhow::Result<()> {
         slow,
         commit_bytes,
         forward_strokes,
+        surrounding,
         ..App::default()
     };
     queue.roundtrip(&mut app)?;

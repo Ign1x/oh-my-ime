@@ -6,7 +6,7 @@
 //! cargo build --workspace && cargo test -p omime-e2e -- --ignored
 //! ```
 
-use omime_e2e::harness::{TestEnv, echo_engine, wait_until};
+use omime_e2e::harness::{TestEnv, dummy_engine, echo_engine, wait_until};
 
 #[test]
 #[ignore = "end-to-end test; see the module docs"]
@@ -100,6 +100,33 @@ fn password_fields_bypass_engines() -> anyhow::Result<()> {
     editor.wait_for_text("secret")?;
     assert!(editor.preedits().iter().all(String::is_empty));
     assert!(!env.daemon_log().contains("keyboard grabbed"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn wayland_sensitive_purposes_and_hints_bypass_engines() -> anyhow::Result<()> {
+    // Password, PIN, hidden_text and sensitive_data all bypass the engine.
+    for args in [
+        ["--purpose", "8"],
+        ["--purpose", "9"],
+        ["--hints", "64"],
+        ["--hints", "128"],
+    ] {
+        let env = TestEnv::start(
+            &[dummy_engine(&["--hidden", "--surrounding"])],
+            Some("dummy"),
+        )?;
+        env.wait_for_log("engine ready")?;
+        let editor = env.editor(&args)?;
+        env.type_text("secret")?;
+        editor.wait_for_text("secret")?;
+        assert!(editor.preedits().iter().all(String::is_empty));
+        let log = env.daemon_log();
+        assert!(!log.contains("activate frontend="), "{args:?}: {log}");
+        assert!(!log.contains("surrounding-context"), "{args:?}: {log}");
+        assert!(!log.contains("keyboard grabbed"), "{args:?}: {log}");
+    }
     Ok(())
 }
 

@@ -11,6 +11,7 @@ pub mod capability {
     /// The application shows the preedit.
     pub const PREEDIT: u64 = 1 << 1;
     pub const PASSWORD: u64 = 1 << 3;
+    pub const SURROUNDING_TEXT: u64 = 1 << 6;
     pub const EMAIL: u64 = 1 << 7;
     pub const DIGIT: u64 = 1 << 8;
     pub const UPPERCASE: u64 = 1 << 9;
@@ -106,22 +107,16 @@ pub fn char_count(text: &str, bytes: u32) -> u32 {
 }
 
 /// `DeleteSurroundingText` arguments, relative to the cursor and in characters, for
-/// deleting `before` and `after` bytes around the cursor. `surrounding` is the text and
-/// cursor (in characters) the application reported; without it, a byte is taken for a
-/// character.
-pub fn delete_surrounding(surrounding: Option<(&str, u32)>, before: u32, after: u32) -> (i32, u32) {
-    let (before, after) = match surrounding {
-        Some((text, cursor)) => {
-            let cursor = byte_offset(text, cursor);
-            let start = cursor.saturating_sub(before);
-            let end = cursor.saturating_add(after).min(text.len() as u32);
-            let start_chars = char_count(text, start);
-            let cursor_chars = char_count(text, cursor);
-            let end_chars = char_count(text, end);
-            (cursor_chars - start_chars, end_chars - cursor_chars)
-        }
-        None => (before, after),
-    };
+/// deleting `before` and `after` bytes around the cursor. Requires the text and
+/// cursor (in characters) the application reported to convert byte counts safely.
+pub fn delete_surrounding(text: &str, cursor: u32, before: u32, after: u32) -> (i32, u32) {
+    let cursor = byte_offset(text, cursor);
+    let start = cursor.saturating_sub(before);
+    let end = cursor.saturating_add(after).min(text.len() as u32);
+    let start_chars = char_count(text, start);
+    let cursor_chars = char_count(text, cursor);
+    let end_chars = char_count(text, end);
+    let (before, after) = (cursor_chars - start_chars, end_chars - cursor_chars);
     (
         -i32::try_from(before).unwrap_or(i32::MAX),
         before.saturating_add(after),
@@ -170,9 +165,8 @@ mod tests {
     #[test]
     fn deletions_count_characters() {
         // Cursor after "中" (character 2): delete "中" (3 bytes) and "b" (1 byte).
-        assert_eq!(delete_surrounding(Some(("a中b", 2)), 3, 1), (-1, 2));
-        assert_eq!(delete_surrounding(Some(("ab", 2)), 9, 0), (-2, 2));
-        assert_eq!(delete_surrounding(None, 2, 0), (-2, 2));
+        assert_eq!(delete_surrounding("a中b", 2, 3, 1), (-1, 2));
+        assert_eq!(delete_surrounding("ab", 2, 9, 0), (-2, 2));
     }
 
     #[test]

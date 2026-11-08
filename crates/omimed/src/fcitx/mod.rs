@@ -159,6 +159,9 @@ struct Ic {
     /// The core's context while the field has focus and is not sensitive.
     ctx: Option<ContextId>,
     surrounding: Option<Surrounding>,
+    /// Keep an explicit empty buffer in every update of this live context until
+    /// fresh text arrives, including when hosted delivery is waiting for a grab.
+    surrounding_cleared: bool,
     preedit_shown: bool,
     /// The modifiers of the last key, which keys engines send back carry too.
     last_mods: u32,
@@ -325,6 +328,7 @@ impl FcitxFrontend {
                         focused: false,
                         ctx: None,
                         surrounding: None,
+                        surrounding_cleared: false,
                         preedit_shown: false,
                         last_mods: 0,
                     },
@@ -353,9 +357,15 @@ impl FcitxFrontend {
                 let Some(state) = self.ics.get_mut(&ic) else {
                     return;
                 };
+                let dropped_surrounding = state.capability & convert::capability::SURROUNDING_TEXT
+                    != 0
+                    && capability & convert::capability::SURROUNDING_TEXT == 0;
                 state.capability = capability;
                 // Becoming a password field (or no longer) starts or ends the context.
                 let sensitive = convert::content_type(capability).is_sensitive();
+                if (sensitive || dropped_surrounding) && state.surrounding.take().is_some() {
+                    state.surrounding_cleared = state.ctx.is_some();
+                }
                 if state.focused && sensitive == state.ctx.is_some() {
                     if sensitive {
                         self.end_context(ic);
@@ -375,8 +385,14 @@ impl FcitxFrontend {
                 let Some(state) = self.ics.get_mut(&ic) else {
                     return;
                 };
+                if convert::content_type(state.capability).is_sensitive() {
+                    return;
+                }
                 state.surrounding = match (text, state.surrounding.take()) {
-                    (Some(text), _) => Some(Surrounding::new(text, cursor, anchor)),
+                    (Some(text), _) => {
+                        state.surrounding_cleared = false;
+                        Some(Surrounding::new(text, cursor, anchor))
+                    }
                     (None, Some(mut surrounding)) => {
                         surrounding.set_position(cursor, anchor);
                         Some(surrounding)
@@ -438,6 +454,10 @@ impl FcitxFrontend {
         let Some(state) = self.ics.get_mut(&ic) else {
             return;
         };
+        // A toolkit may reuse its IC for another field. This also clears an
+        // unfocused or sensitive IC, which has no core context to deactivate.
+        state.surrounding = None;
+        state.surrounding_cleared = false;
         if let Some(ctx) = state.ctx.take() {
             debug!(ic, ctx, "text field left");
             state.preedit_shown = false;
@@ -604,14 +624,15 @@ impl FcitxFrontend {
                     clear_preedit = false;
                 }
                 Action::DeleteSurrounding { before, after } => {
-                    if state.surrounding.as_ref().is_some_and(|s| !s.valid) {
+                    let Some(surrounding) = state.surrounding.as_ref().filter(|s| s.valid) else {
                         continue;
-                    }
-                    let surrounding = state
-                        .surrounding
-                        .as_ref()
-                        .map(|s| (s.text.as_str(), s.cursor));
-                    let (offset, size) = convert::delete_surrounding(surrounding, *before, *after);
+                    };
+                    let (offset, size) = convert::delete_surrounding(
+                        &surrounding.text,
+                        surrounding.cursor,
+                        *before,
+                        *after,
+                    );
                     signals.push(Signal::Delete(offset, size));
                 }
                 Action::ForwardKey { keycode, pressed } => {
@@ -690,13 +711,19 @@ fn info(state: &Ic) -> ContextInfo {
     ContextInfo {
         app_id: state.program.clone(),
         content_type: convert::content_type(state.capability),
-        surrounding: state.surrounding.as_ref().map(|s| {
-            (
-                s.text.clone(),
-                convert::byte_offset(&s.text, s.cursor),
-                convert::byte_offset(&s.text, s.anchor),
-            )
-        }),
+        surrounding: state
+            .surrounding
+            .as_ref()
+            .map(|s| {
+                (
+                    s.text.clone(),
+                    convert::byte_offset(&s.text, s.cursor),
+                    convert::byte_offset(&s.text, s.anchor),
+                )
+            })
+            // Absent update fields preserve engine values. Hosted delivery can use
+            // later context info, so keep the clear until text or the field changes.
+            .or_else(|| state.surrounding_cleared.then_some((String::new(), 0, 0))),
         cursor_rect: None,
         frontend: Some("fcitx".into()),
         client_preedit: state.capability & convert::capability::PREEDIT != 0,
@@ -916,6 +943,187 @@ mod tests {
         assert!(
             matches!(outgoing.try_recv(), Ok(Outgoing::Signal { signal: Signal::Delete(offset, size), .. }) if offset == -(cursor as i32) && size == chars)
         );
+    }
+
+    #[test]
+    fn sensitive_surrounding_is_never_cached() {
+        for capability in [
+            convert::capability::PASSWORD,
+            convert::capability::SENSITIVE,
+        ] {
+            for focused in [false, true] {
+                let (mut frontend, _) = frontend();
+                frontend.handle(Request::Capability { ic: 1, capability });
+                if focused {
+                    frontend.handle(Request::FocusIn(1));
+                }
+                for text in [Some("private text".into()), None] {
+                    frontend.handle(Request::Surrounding {
+                        ic: 1,
+                        text,
+                        cursor: 12,
+                        anchor: 12,
+                    });
+                    assert!(frontend.ics[&1].surrounding.is_none());
+                    assert!(frontend.take_events().is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cleared_surrounding_cannot_be_restored_by_position_updates() {
+        for focused in [false, true] {
+            for clear in [
+                Request::FocusOut(1),
+                Request::Capability {
+                    ic: 1,
+                    capability: convert::capability::PASSWORD,
+                },
+                Request::Capability {
+                    ic: 1,
+                    capability: convert::capability::SENSITIVE,
+                },
+                Request::Capability {
+                    ic: 1,
+                    capability: 0,
+                },
+            ] {
+                let (mut frontend, _) = frontend();
+                frontend.handle(Request::Capability {
+                    ic: 1,
+                    capability: 1 << 6,
+                });
+                frontend.handle(Request::Surrounding {
+                    ic: 1,
+                    text: Some("a中b".into()),
+                    cursor: 2,
+                    anchor: 1,
+                });
+                if focused {
+                    frontend.handle(Request::FocusIn(1));
+                }
+                frontend.handle(clear);
+                assert!(frontend.ics[&1].surrounding.is_none());
+                frontend.take_events();
+                frontend.handle(Request::Surrounding {
+                    ic: 1,
+                    text: None,
+                    cursor: 2,
+                    anchor: 1,
+                });
+                assert!(frontend.ics[&1].surrounding.is_none());
+                assert!(frontend.take_events().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn reactivation_has_no_surrounding_until_fresh_text_arrives() {
+        let (mut frontend, _) = frontend();
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("previous field".into()),
+            cursor: 14,
+            anchor: 14,
+        });
+        frontend.handle(Request::FocusIn(1));
+        let old = frontend.ics[&1].ctx;
+        frontend.handle(Request::FocusOut(1));
+        frontend.take_events();
+        frontend.handle(Request::FocusIn(1));
+        assert_ne!(frontend.ics[&1].ctx, old);
+        assert!(
+            matches!(frontend.take_events().as_slice(), [FrontendEvent::Activated { info, .. }] if info.surrounding.is_none())
+        );
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("a中b".into()),
+            cursor: 2,
+            anchor: 1,
+        });
+        assert!(
+            matches!(frontend.take_events().as_slice(), [FrontendEvent::Updated { info, .. }] if info.surrounding == Some(("a中b".into(), 4, 1)))
+        );
+    }
+
+    #[test]
+    fn dropping_surrounding_capability_explicitly_clears_engine_text() {
+        let (mut frontend, _) = frontend();
+        frontend.handle(Request::Capability {
+            ic: 1,
+            capability: 1 << 6,
+        });
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("previous text".into()),
+            cursor: 13,
+            anchor: 13,
+        });
+        frontend.handle(Request::FocusIn(1));
+        frontend.take_events();
+        frontend.handle(Request::Capability {
+            ic: 1,
+            capability: 0,
+        });
+        assert!(
+            matches!(frontend.take_events().as_slice(), [FrontendEvent::Updated { info, .. }] if info.surrounding == Some((String::new(), 0, 0)))
+        );
+        assert!(frontend.ics[&1].surrounding.is_none());
+        // Hosted delivery may wait for a keyboard grab, then use the latest
+        // context info rather than the first queued update's dictionary.
+        for request in [
+            Request::Reset(1),
+            Request::Capability {
+                ic: 1,
+                capability: convert::capability::PREEDIT,
+            },
+            Request::Capability {
+                ic: 1,
+                capability: convert::capability::SURROUNDING_TEXT,
+            },
+        ] {
+            frontend.handle(request);
+            assert!(
+                matches!(frontend.take_events().as_slice(), [FrontendEvent::Updated { info, .. }] if info.surrounding == Some((String::new(), 0, 0)))
+            );
+            assert!(frontend.ics[&1].surrounding.is_none());
+        }
+        frontend.handle(Request::Surrounding {
+            ic: 1,
+            text: Some("fresh".into()),
+            cursor: 5,
+            anchor: 5,
+        });
+        assert!(
+            matches!(frontend.take_events().as_slice(), [FrontendEvent::Updated { info, .. }] if info.surrounding == Some(("fresh".into(), 5, 5)))
+        );
+        frontend.handle(Request::Capability {
+            ic: 1,
+            capability: 0,
+        });
+        frontend.handle(Request::FocusOut(1));
+        frontend.take_events();
+        frontend.handle(Request::FocusIn(1));
+        assert!(
+            matches!(frontend.take_events().as_slice(), [FrontendEvent::Activated { info, .. }] if info.surrounding.is_none())
+        );
+    }
+
+    #[test]
+    fn delete_surrounding_without_cached_text_sends_no_signal() {
+        let (mut frontend, mut outgoing) = frontend();
+        frontend.handle(Request::FocusIn(1));
+        let ctx = frontend.ics[&1].ctx.expect("focused context");
+        frontend.apply_actions(
+            ctx,
+            &[Action::DeleteSurrounding {
+                before: 3,
+                after: 4,
+            }],
+            None,
+        );
+        assert!(outgoing.try_recv().is_err());
     }
 
     #[test]

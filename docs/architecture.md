@@ -210,6 +210,15 @@ know which frontend a key came from.
   edge. Position-only updates keep their original character offsets. If the cursor
   leaves the retained window, engines receive an empty buffer with zero cursor and
   anchor offsets, and deletion requests are ignored until a full-text update arrives.
+  Password and sensitive fields never cache surrounding text. Leaving a field,
+  marking it sensitive, or removing its `SurroundingText` capability clears the cache;
+  removing the capability also clears the active engine's copy. Refocusing starts
+  without surrounding text until the application sends fresh text. Position-only
+  updates cannot restore a cleared cache, and deletion requires valid cached text
+  to convert engine byte counts into application character counts.
+  The GTK 4 Fcitx5 module may suppress unchanged text after refocusing, and Qt 6 may
+  remove surrounding-text support during widget updates. Operations that need this
+  text remain unavailable until the application sends it again and keeps it valid.
 - **Engine windows.** Compositors show input popups only for Wayland text fields. While an
   X11 application has focus and no Wayland text field does, the bridge shows the active
   engine's window on a layer surface of its own, a *mirror*: layer `overlay`, namespace

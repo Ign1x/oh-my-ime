@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use omime_e2e::harness::{FcitxClient, TIMEOUT, TestEnv, dummy_engine, echo_engine};
+use omime_e2e::harness::{
+    FcitxClient, TIMEOUT, TestEnv, dummy_engine, echo_engine, hosted_engine, wait_until,
+};
 
 #[derive(Clone, Copy, Debug)]
 struct Key {
@@ -187,6 +189,66 @@ fn password_fields_are_not_composed() -> anyhow::Result<()> {
         client.lines()
     );
     Ok(())
+}
+
+fn sensitive_surrounding(hosted: bool, capability: u64) -> anyhow::Result<()> {
+    let engine = if hosted {
+        hosted_engine(&["--surrounding"])
+    } else {
+        dummy_engine(&["--hidden", "--surrounding"])
+    };
+    let id = engine.id;
+    let env = TestEnv::start(&[engine], Some(id))?;
+    env.wait_for_log("engine ready")?;
+    let observations = || {
+        if hosted {
+            env.hosted_lines().join("\n")
+        } else {
+            env.daemon_log()
+        }
+    };
+    let client = env.fcitx_client(&[])?;
+    send(&client, &format!("caps {capability}"))?;
+    send(&client, "focus-in")?;
+    send(&client, "surrounding 20 20 AUDIT_PRIVATE_PHRASE")?;
+    assert_lines(&key_event(&client, A, 0, false)?, &["reply false"]);
+    assert!(!observations().contains("AUDIT_PRIVATE_PHRASE"));
+
+    // The same IC now belongs to an ordinary widget, which has not sent its text.
+    send(&client, "focus-out")?;
+    send(&client, "caps 0")?;
+    send(&client, "focus-in")?;
+    if hosted {
+        env.wait_for_hosted("the ordinary widget's activation", |line| {
+            line == "activate"
+        })?;
+    } else {
+        env.wait_for_log("activate frontend=fcitx")?;
+    }
+    // A fresh ordinary update is a positive control and an ordering barrier: the
+    // observer must have processed the preceding activation and surrounding events.
+    send(&client, "surrounding 19 19 PUBLIC_FRESH_PHRASE")?;
+    wait_until("fresh ordinary text reaches the engine", || {
+        observations().contains("PUBLIC_FRESH_PHRASE").then_some(())
+    })?;
+    let observed = observations();
+    assert!(
+        !observed.contains("AUDIT_PRIVATE_PHRASE"),
+        "sensitive text escaped after IC reuse:\n{observed}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn fcitx_password_surrounding_does_not_reach_native_engine() -> anyhow::Result<()> {
+    sensitive_surrounding(false, 1 << 3)
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn fcitx_sensitive_surrounding_does_not_reach_hosted_engine() -> anyhow::Result<()> {
+    sensitive_surrounding(true, 1 << 36)
 }
 
 #[test]
@@ -427,7 +489,7 @@ fn moving_outside_the_surrounding_window_clears_engine_text_and_blocks_deletion(
                 .await?;
             let _: () = ic.call("FocusOut", &()).await?;
             let _: () = ic.call("FocusIn", &()).await?;
-            assert_eq!(surrounding_key(&ic, true).await?, ("0:0:0".into(), vec![]));
+            assert_eq!(surrounding_key(&ic, true).await?, ("none".into(), vec![]));
 
             let _: () = ic
                 .call("SetSurroundingText", &(text.as_str(), 11u32, 10u32))
@@ -441,6 +503,156 @@ fn moving_outside_the_surrounding_window_clears_engine_text_and_blocks_deletion(
         }
         anyhow::Ok(())
     })
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn cleared_surrounding_blocks_deletion_until_fresh_text() -> anyhow::Result<()> {
+    let env = TestEnv::start(
+        &[dummy_engine(&["--hidden", "--surrounding"])],
+        Some("dummy"),
+    )?;
+    env.wait_for_log("engine ready")?;
+    runtime()?.block_on(async {
+        for name in [MAIN, PORTAL] {
+            let conn = connect(&env).await?;
+            let ic = context(&conn, name, create_ic(&conn, name).await?).await?;
+            assert_eq!(surrounding_key(&ic, true).await?, ("none".into(), vec![]));
+            for clear in ["FocusOut", "Password", "Sensitive", "DropCapability"] {
+                let _: () = ic.call("SetCapability", &(1u64 << 6)).await?;
+                let _: () = ic.call("SetSurroundingText", &("a中b", 2u32, 1u32)).await?;
+                assert_eq!(
+                    surrounding_key(&ic, true).await?,
+                    ("5:4:1".into(), vec![(-1, 1)])
+                );
+                match clear {
+                    "FocusOut" => {
+                        let _: () = ic.call("FocusOut", &()).await?;
+                        let _: () = ic.call("FocusIn", &()).await?;
+                    }
+                    "Password" | "Sensitive" => {
+                        let flag = if clear == "Password" {
+                            1u64 << 3
+                        } else {
+                            1u64 << 36
+                        };
+                        let _: () = ic.call("SetCapability", &flag).await?;
+                        let _: () = ic.call("SetCapability", &0u64).await?;
+                    }
+                    _ => {
+                        let _: () = ic.call("SetCapability", &0u64).await?;
+                    }
+                }
+                let _: () = ic.call("SetSurroundingTextPosition", &(2u32, 1u32)).await?;
+                let expected = if clear == "DropCapability" {
+                    "0:0:0"
+                } else {
+                    "none"
+                };
+                assert_eq!(
+                    surrounding_key(&ic, true).await?,
+                    (expected.into(), vec![]),
+                    "{clear}"
+                );
+            }
+            let _: () = ic.call("DestroyIC", &()).await?;
+        }
+        anyhow::Ok(())
+    })
+}
+
+/// Resumes the test engine on every exit path, including assertion failures.
+struct Resume(rustix::process::Pid);
+
+impl Drop for Resume {
+    fn drop(&mut self) {
+        let _ = rustix::process::kill_process(self.0, rustix::process::Signal::CONT);
+    }
+}
+
+fn hosted_surrounding_clear(followup: Option<&str>) -> anyhow::Result<()> {
+    let env = TestEnv::start(&[hosted_engine(&["--surrounding"])], Some("hosted"))?;
+    env.wait_for_hosted("the input method to be ready", |line| line == "ready")?;
+    let pid = i32::try_from(
+        env.engine_pid("hosted")
+            .context("hosted engine is not running")?,
+    )?;
+    let pid = rustix::process::Pid::from_raw(pid).context("invalid hosted pid")?;
+    // Delay the activation's keyboard grab so the first key holds later updates.
+    rustix::process::kill_process(pid, rustix::process::Signal::STOP)?;
+    let resume = Resume(pid);
+    runtime()?.block_on(async {
+        let conn = connect(&env).await?;
+        let ic = context(&conn, MAIN, create_ic(&conn, MAIN).await?).await?;
+        let _: () = ic.call("SetCapability", &(1u64 << 6)).await?;
+        let _: () = ic
+            .call("SetSurroundingText", &("OLD_CONTEXT", 11u32, 11u32))
+            .await?;
+        let _: () = ic.call("FocusIn", &()).await?;
+        let key = ic.call::<_, _, bool>("ProcessKeyEvent", &(0x61u32, 38u32, 0u32, false, 1u32));
+        let updates = async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let _: () = ic.call("SetCapability", &0u64).await?;
+            match followup {
+                Some("Reset") => {
+                    let _: () = ic.call("Reset", &()).await?;
+                }
+                Some("SetCapability") => {
+                    let _: () = ic.call("SetCapability", &(1u64 << 1)).await?;
+                }
+                _ => {}
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            drop(resume);
+            anyhow::Ok(())
+        };
+        let (key, updates) = tokio::join!(key, updates);
+        updates?;
+        let _ = key?;
+        // A second key is an ordering barrier after the queued context updates.
+        let _: bool = ic
+            .call("ProcessKeyEvent", &(0x62u32, 56u32, 0u32, false, 2u32))
+            .await?;
+        env.wait_for_hosted("the key after the surrounding clear", |line| {
+            line == "key b pressed"
+        })?;
+        let observed = env.hosted_lines();
+        let old = observed
+            .iter()
+            .position(|line| line == "surrounding \"OLD_CONTEXT\" 11 11")
+            .context("the hosted engine did not receive the original text")?;
+        assert!(
+            observed[old + 1..]
+                .iter()
+                .any(|line| line == "surrounding \"\" 0 0"),
+            "hosted engine kept its previous text after {followup:?}: {observed:?}"
+        );
+        let _: () = ic
+            .call("SetSurroundingText", &("FRESH", 5u32, 5u32))
+            .await?;
+        env.wait_for_hosted("fresh text after the clear", |line| {
+            line == "surrounding \"FRESH\" 5 5"
+        })?;
+        anyhow::Ok(())
+    })
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn hosted_surrounding_clear_reaches_a_delayed_grab() -> anyhow::Result<()> {
+    hosted_surrounding_clear(None)
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn hosted_surrounding_clear_survives_a_queued_reset() -> anyhow::Result<()> {
+    hosted_surrounding_clear(Some("Reset"))
+}
+
+#[test]
+#[ignore = "end-to-end test; see the module docs"]
+fn hosted_surrounding_clear_survives_a_queued_capability_update() -> anyhow::Result<()> {
+    hosted_surrounding_clear(Some("SetCapability"))
 }
 
 #[test]

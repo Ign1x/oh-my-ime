@@ -18,7 +18,8 @@
 //! engine that passes every key through, after `--slow-ms` milliseconds if given. It
 //! asks for its window to be shown when a text field is focused, unless `--hidden`.
 //! With `--surrounding`, keys report the surrounding length and offsets as preedit;
-//! Backspace also requests deletion of three bytes before the cursor.
+//! Backspace also requests deletion of three bytes before the cursor. Activation and
+//! updates log the synthetic test context so privacy tests see every delivered buffer.
 
 use std::time::{Duration, Instant};
 
@@ -97,9 +98,16 @@ impl omime_sdk::Engine for PassThrough {
             info.frontend.as_deref().unwrap_or("?"),
             info.client_preedit
         );
+        self.update(ctx);
         std::thread::sleep(self.slow_activate);
         if self.show {
             ctx.host().set_popup_visible(true);
+        }
+    }
+
+    fn update(&mut self, ctx: &mut omime_sdk::Context<'_>) {
+        if self.surrounding {
+            println!("surrounding-context {:?}", ctx.info().surrounding);
         }
     }
 
