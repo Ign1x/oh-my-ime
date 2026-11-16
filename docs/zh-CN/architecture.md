@@ -156,6 +156,8 @@ omimed 在会话总线上发布一个托盘项（`org.kde.StatusNotifierItem`，
 
 它通过 `omime-overlay` 用 Slint 绘制。`omime-overlay` 是一个小库，把图层表面（`zwlr_layer_shell_v1`，smithay-client-toolkit）作为 Slint 的平台：Slint 的软件渲染器绘制到共享内存中，表面不接收输入，由应用以所需的尺寸显示或隐藏它。引擎的浮动面板也用它，并接收指针（`Pointer::Take`）：例如 Sparkle 的最近使用表情面板，它是连接合成器 display 的独立进程，把彩色 emoji 作为图片绘制（软件渲染器只用一种颜色绘制字形）。omimed、命令行工具、协议 crate 和 SDK 都不依赖 Slint。
 
+Slint 用 OpenGL 绘制的窗口（设置程序、Rime 和 Sparkle 的窗口）共用 `omime-ui`，一个没有依赖的小库：OpenGL 无法启动时，Slint 要到创建窗口时才发现，而且那时已经没有别的渲染器可换，所以程序改用软件渲染器重新启动（`omime_ui::renderer::restart_in_software`）。引擎先显示窗口，等窗口创建好之后才从事件循环里向 omimed 注册：omimed 不会看到一个一启动就退出的引擎。软件渲染的窗口不能半透明，这时引擎的窗口填满各自的矩形。
+
 `omime choose` 请求同一面板进程打开交互式选择器。浏览不改变当前输入法；确认时应用选择，开启 `apps.remember` 时也为原来的应用记住它。取消、失去焦点或守护进程退出时，选择器关闭且不切换。打开期间使用接收键盘输入的图层表面，关闭时释放焦点，启用列表变化时同步更新内容。
 
 ## 设置程序

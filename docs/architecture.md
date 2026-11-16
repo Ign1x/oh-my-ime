@@ -571,6 +571,14 @@ compositor's display, which draws color emoji as images (the software renderer d
 glyph in one color only).
 Slint stays out of omimed, the command line tool, the protocol crate and the SDK.
 
+The windows that Slint draws with OpenGL (the settings, Rime's and Sparkle's) share
+`omime-ui`, a library without dependencies: where OpenGL cannot start, Slint finds out
+only when it makes the window and has no other renderer to turn to, so the program
+starts again with the software renderer (`omime_ui::renderer::restart_in_software`).
+An engine shows its window first and registers with omimed from the event loop, once
+the window is made: omimed never sees an engine that ends at once. Drawn in software, a
+window cannot be translucent; the engines' windows then fill their rectangles.
+
 `omime choose` asks the same panel process to open an interactive chooser. Browsing
 does not change the current method; confirmation applies the selection and remembers
 it for the original application when `apps.remember` is enabled. Cancel, focus loss

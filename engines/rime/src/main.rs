@@ -22,6 +22,7 @@ mod settings;
 mod style;
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -54,6 +55,16 @@ slint::slint! {
         out property <color> faint: self.dark ? #ffffff8c : #0000008c;
         out property <color> accent: self.dark ? #0a84ff : #007aff;
         out property <color> hover: self.dark ? #ffffff14 : #0000000d;
+        // The window cannot be translucent (Slint's software renderer): the panel
+        // fills it, without a margin or round corners, which would come out black.
+        in-out property <bool> opaque;
+        out property <length> margin: self.opaque ? 0px : 4px;
+        out property <color> panel: self.dark
+            ? (self.opaque ? #2c2c2e : #2c2c2ef2)
+            : (self.opaque ? #fbfbfd : #fbfbfdf5);
+        out property <color> border: self.dark
+            ? (self.opaque ? #48484a : #ffffff1f)
+            : (self.opaque ? #d1d1d6 : #0000001f);
     }
 
     // A candidate, which a click picks.
@@ -120,7 +131,7 @@ slint::slint! {
     export component Candidates inherits Window {
         title: "Rime";
         no-frame: true;
-        background: transparent;
+        background: Look.opaque ? Look.panel : transparent;
 
         // The preedit, when the application does not show it.
         in property <string> preedit;
@@ -133,18 +144,18 @@ slint::slint! {
         callback turn(bool);
 
         // How large the window has to be, for the engine to resize it.
-        out property <length> wanted-width: panel.preferred-width + 8px;
-        out property <length> wanted-height: panel.preferred-height + 8px;
+        out property <length> wanted-width: panel.preferred-width + 2 * Look.margin;
+        out property <length> wanted-height: panel.preferred-height + 2 * Look.margin;
 
         panel := Rectangle {
-            x: 4px;
-            y: 4px;
+            x: Look.margin;
+            y: Look.margin;
             width: self.preferred-width;
             height: self.preferred-height;
-            border-radius: 10px;
-            background: Look.dark ? #2c2c2ef2 : #fbfbfdf5;
+            border-radius: Look.opaque ? 0px : 10px;
+            background: Look.panel;
             border-width: 1px;
-            border-color: Look.dark ? #ffffff1f : #0000001f;
+            border-color: Look.border;
 
             // The wheel turns pages. Under the candidates, which take the clicks.
             TouchArea {
@@ -792,6 +803,10 @@ fn on_window(
     refresh(&mut state, ui);
 }
 
+/// Whether a window of this program came up. Until then an error is about the window
+/// itself, most likely OpenGL that cannot start: see [`omime_ui::renderer`].
+static WINDOW_UP: AtomicBool = AtomicBool::new(false);
+
 fn main() -> std::process::ExitCode {
     let result = if std::env::args().nth(1).as_deref() == Some("--settings") {
         settings::run()
@@ -801,10 +816,22 @@ fn main() -> std::process::ExitCode {
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
+            if !WINDOW_UP.load(Ordering::Relaxed)
+                && let Some(again) = omime_ui::renderer::restart_in_software(&e)
+            {
+                eprintln!("omime-rime: cannot start again with the software renderer: {again}");
+            }
             eprintln!("omime-rime: {e}");
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Notes that the window is up, once Slint's event loop has made it: what is queued
+/// before the loop starts runs after its windows are made. A program with a window
+/// calls this before it runs the loop.
+fn note_window_up() {
+    let _ = slint::invoke_from_event_loop(|| WINDOW_UP.store(true, Ordering::Relaxed));
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -818,18 +845,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         style::Appearance::Dark => 2,
     });
     look.set_font_size(f32::from(u16::try_from(style.font_size).unwrap_or(18)));
+    look.set_opaque(omime_ui::renderer::software());
     let state = Arc::new(Mutex::new(State::default()));
-    let result = run_engine(&ui, &state);
+
+    // The window is always "shown" for the toolkit; the platform decides when the user
+    // sees it. It comes first: the engine starts once the event loop has made the
+    // window. If it cannot (no OpenGL), the program starts again in software before the
+    // platform has heard of an engine that would end at once.
+    ui.show()?;
+    let (started, start) = mpsc::channel();
+    let weak = ui.as_weak();
+    let engine_state = state.clone();
+    slint::invoke_from_event_loop(move || {
+        WINDOW_UP.store(true, Ordering::Relaxed);
+        let result = match weak.upgrade() {
+            Some(ui) => start_engine(&ui, &engine_state).map_err(|e| e.to_string()),
+            None => Err("the window is gone".to_owned()),
+        };
+        if result.is_err() {
+            let _ = slint::quit_event_loop();
+        }
+        let _ = started.send(result);
+    })?;
+    let ran = slint::run_event_loop_until_quit();
+    // The host kept the engine with the platform until here.
+    let failed = match start.try_recv() {
+        Ok(Ok(host)) => {
+            drop(host);
+            None
+        }
+        Ok(Err(e)) => Some(e),
+        Err(_) => None,
+    };
     // The SDK, UI callbacks and notice thread also own the state. Finalize under
     // their lock on every return path, before C++ static teardown at process exit.
     lock(&state).rime = None;
-    result
+    ran?;
+    failed.map_or(Ok(()), |e| Err(e.into()))
 }
 
-fn run_engine(
+/// Starts Rime and the engine, on the thread of the window. The host it returns keeps
+/// the engine with the platform.
+fn start_engine(
     ui: &Candidates,
     state: &Arc<Mutex<State>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Host, Box<dyn std::error::Error>> {
     // Start Rime first: a deployment can take a while, and it runs in its own thread.
     let (notices, noticed) = mpsc::channel();
     match (data::shared_dir(), data::user_dir()) {
@@ -928,13 +988,7 @@ fn run_engine(
             let _ = slint::quit_event_loop();
         });
     });
-
-    // The window is always "shown" for the toolkit; the platform decides when the user
-    // sees it.
-    ui.show()?;
-    slint::run_event_loop_until_quit()?;
-    drop(host);
-    Ok(())
+    Ok(host)
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 omime-proto.workspace = true
+omime-ui.workspace = true
 anyhow.workspace = true
 futures-util = { version = "0.3", default-features = false }
 tokio = { workspace = true, features = ["rt"] }

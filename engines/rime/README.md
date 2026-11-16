@@ -12,7 +12,10 @@ of its own at the text cursor.
 - **The candidate window** follows the text cursor, numbered as Rime numbers them
   (`1`–`5`, or the schema's own keys), in a row or a column, light or dark. Click a
   candidate to pick it; the arrows and the wheel turn pages. Applications that leave the
-  preedit to the input method, such as xterm, see it in the window.
+  preedit to the input method, such as xterm, see it in the window. Where OpenGL cannot
+  start (a virtual machine, a remote desktop), the engine and its settings start again
+  by themselves with the software renderer; the window is then a plain rectangle,
+  without round corners or translucency.
 - **One composition per text field**; Chinese or English letters are the same in all.
 - **A menu** (the tray, or `omime properties` and `omime activate <id>`): English
   letters (`ascii_mode`), full width (`full_shape`), simplified characters

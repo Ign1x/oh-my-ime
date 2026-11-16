@@ -32,6 +32,9 @@ prints every text-input event. Nothing touches your desktop session.
 Commands in these private sessions use `SLINT_BACKEND=winit-software`, including
 daemons launched by `setup --start` and engine settings windows. The Sparkle setup
 test disables EGL vendor discovery to exercise startup on runners without OpenGL.
+Tests named `…where_opengl_cannot_start` go further: they leave the renderer for Slint
+to choose and disable EGL (`harness::without_opengl`), and check that Rime, Sparkle and
+the settings start again in software by themselves and fill their windows.
 
 The X11 tests also start XWayland (`TestEnv::start_with_x11`), which the dev shells
 provide. `xim.rs` types into `omime-xim-client`, an X11 client that uses XIM, and

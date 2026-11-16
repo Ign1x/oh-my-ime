@@ -39,13 +39,16 @@ Sparkle 随平台安装，但默认不启用。使用 `omime switch sparkle` 即
 
 ## 渲染
 
-Slint 默认使用 OpenGL（femtovg）渲染，通过 UI 桥传递 GPU 缓冲区。
-若 OpenGL 不可用，请在启动 omimed 前，在其环境中设置 `SLINT_BACKEND=winit-software`
-显式选择软件渲染。
+Slint 用 OpenGL（femtovg）绘制卡片，通过 UI 桥传递 GPU 缓冲区。OpenGL 无法启动时
+（虚拟机、远程桌面、驱动损坏），Sparkle 会在平台得知它之前，自行改用 Slint 的软件渲染器
+重新启动。软件渲染的窗口不能半透明，所以这时卡片填满整个矩形，没有阴影、圆角和箭头。
+在 omimed 的环境中设置 `SLINT_BACKEND`（例如 `winit-software`）可以固定渲染器，Sparkle
+不会再改用别的。
 
-安装了“Noto Color Emoji”字体时，表情使用该字体。面板始终使用 Slint 的软件渲染器，
-而它只能以单色绘制字形，因此面板通过 swash 将表情绘制成图片，会查找 Noto Color Emoji、
-Twemoji 等字体。
+卡片和面板里的表情都是图片：Sparkle 查找系统的 emoji 字体（Noto Color Emoji、Twemoji
+等），用 swash 把每个表情画成彩色图片。始终绘制面板的软件渲染器只能以单色绘制字形；
+而文本样式的表情（❤）作为文字绘制时，两种渲染器画出来都是黑色。没有 emoji 字体时，
+卡片把表情显示为文字。
 
 ## 许可证
 

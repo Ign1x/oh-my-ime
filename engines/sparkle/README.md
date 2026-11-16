@@ -44,14 +44,19 @@ Everything else you type passes through untouched.
 
 ## Rendering
 
-Slint uses OpenGL (femtovg) by default, passing GPU buffers through the bridge.
-If OpenGL is unavailable, select the software renderer explicitly by setting
-`SLINT_BACKEND=winit-software` in omimed's environment before starting it.
+Slint draws the deck with OpenGL (femtovg), passing GPU buffers through the bridge.
+Where OpenGL cannot start (a virtual machine, a remote desktop, a broken driver),
+Sparkle starts again by itself with Slint's software renderer, before the platform has
+heard of it. A window drawn in software cannot be translucent, so the deck then fills
+its rectangle, without its shadow, round corners and arrow. `SLINT_BACKEND` in omimed's
+environment chooses a renderer for good, for example `winit-software`; Sparkle then
+does not choose another.
 
-Emoji glyphs use the "Noto Color Emoji" font when it is installed. The panel always
-uses Slint's software renderer, which draws a glyph in one color only, so it draws its
-emoji with swash into images (Noto Color Emoji, Twemoji and a few others are looked
-for).
+The emoji are pictures, in the deck and in the panel: Sparkle looks for the system's
+emoji font (Noto Color Emoji, Twemoji and a few others) and draws each emoji in color
+with swash. Slint's software renderer, which always draws the panel, draws a glyph in
+one color only, and emoji with a text presentation (❤) came out black as text with
+either renderer. Without an emoji font the deck shows them as text.
 
 ## License
 

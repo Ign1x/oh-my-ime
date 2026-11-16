@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use omime_e2e::harness::{FcitxClient, TestEnv, dummy_engine, sparkle_engine};
+use omime_e2e::harness::{FcitxClient, TestEnv, dummy_engine, sparkle_engine, without_opengl};
 
 /// The dummy engine's window: red, 100 × 40 (with a darker 3-pixel border).
 const ARGS: [&str; 4] = ["--color", "ff0000", "--size", "100x40"];
@@ -18,7 +18,7 @@ const CENTRE: (u32, u32) = (12 + 50, 20 + 18 + 20);
 #[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_open_below_the_text_cursor() -> anyhow::Result<()> {
     let env = TestEnv::start(&[dummy_engine(&ARGS)], Some("dummy"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     let _editor = env.editor(&[])?;
     env.wait_for_pixel(CENTRE.0, CENTRE.1, RED)
 }
@@ -29,7 +29,7 @@ fn engine_windows_stay_hidden_until_the_engine_asks() -> anyhow::Result<()> {
     let mut args = ARGS.to_vec();
     args.push("--hidden");
     let env = TestEnv::start(&[dummy_engine(&args)], Some("dummy"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     let _editor = env.editor(&[])?;
     // Long enough for the window to appear, as in the test above.
     std::thread::sleep(Duration::from_millis(500));
@@ -47,7 +47,7 @@ fn below(x: u32, y: u32, height: u32) -> (u32, u32) {
 #[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_follow_the_text_cursor_of_x11_applications() -> anyhow::Result<()> {
     let env = TestEnv::start(&[dummy_engine(&ARGS)], Some("dummy"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     // No Wayland text field has focus, so the window goes where the X11 application
     // says its text cursor is.
     let client = env.fcitx_client(&["--display", "x11:"])?;
@@ -75,7 +75,7 @@ fn engine_windows_follow_the_text_cursor_of_x11_applications() -> anyhow::Result
 #[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_follow_wayland_applications_using_the_fcitx_module() -> anyhow::Result<()> {
     let env = TestEnv::start(&[dummy_engine(&ARGS)], Some("dummy"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     // Two windows without text-input side by side; the one on the right has focus. Its
     // application talks to omimed through the Fcitx5 module, with the text cursor
     // relative to its window, as Wayland applications have it.
@@ -101,7 +101,7 @@ fn engine_windows_follow_wayland_applications_using_the_fcitx_module() -> anyhow
 #[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_follow_xim_applications() -> anyhow::Result<()> {
     let env = TestEnv::start_with_x11(&[dummy_engine(&ARGS)], Some("dummy"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     // The client's window fills the output, so its spot is a position on the output too.
     // XIM gives where the text's baseline starts; omimed assumes a line around it.
     let client = env.xim_client(&["--spot", "200,300"])?;
@@ -133,7 +133,7 @@ fn type_keys(client: &FcitxClient, keys: &[(u32, u32, u32)]) -> anyhow::Result<(
 #[ignore = "end-to-end test; see typing.rs"]
 fn engine_windows_of_x11_applications_take_clicks() -> anyhow::Result<()> {
     let env = TestEnv::start(&[sparkle_engine()], Some("sparkle"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     let client = env.fcitx_client(&["--display", "x11:"])?;
     client.send("focus-in")?;
     client.send("cursor 100 100 2 20")?;
@@ -163,5 +163,33 @@ fn engine_windows_of_x11_applications_take_clicks() -> anyhow::Result<()> {
             .any(|l| l.starts_with("commit \"") && !l.contains(':'))
             .then_some(())
     })?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn sparkle_draws_its_deck_where_opengl_cannot_start() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[without_opengl(sparkle_engine())], Some("sparkle"))?;
+    env.wait_for_engine_window()?;
+    let editor = env.editor(&[])?;
+    env.type_text(":heart")?;
+    editor.wait_for("the :heart preedit", |l| {
+        l.starts_with("preedit \":heart\"")
+    })?;
+    // The deck is below the text cursor (x = 12, y = 20, height 18). Drawn in software
+    // it fills its window, from the corner on: the border, where a window with a
+    // shadow and round corners would be black.
+    env.wait_for_pixel(12, 20 + 18, 0x6a5fb0)?;
+    env.key(&[], "Return")?;
+    editor.wait_for("an emoji", |l| {
+        l.starts_with("commit \"") && !l.contains(':')
+    })?;
+    assert_eq!(
+        env.count_in_log("starting again with the software renderer"),
+        1,
+        "{}",
+        env.daemon_log()
+    );
+    assert_eq!(env.count_in_log("engine exited unexpectedly"), 0);
     Ok(())
 }

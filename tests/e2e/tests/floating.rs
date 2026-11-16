@@ -17,7 +17,7 @@ fn tile(i: u32) -> (u32, u32) {
 #[ignore = "end-to-end test; see typing.rs"]
 fn sparkles_panel_inserts_recent_emoji_with_a_click() -> anyhow::Result<()> {
     let env = TestEnv::start(&[sparkle_engine()], Some("sparkle"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     // Inside the panel, in its padding.
     let inside = (PANEL.0 + 4, PANEL.1 + 30);
     let empty = env.pixel(inside.0, inside.1)?;

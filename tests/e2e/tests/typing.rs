@@ -167,7 +167,7 @@ fn sparkle_inserts_emoji_with_keys_and_clicks() -> anyhow::Result<()> {
     use omime_e2e::harness::sparkle_engine;
 
     let env = TestEnv::start(&[sparkle_engine()], Some("sparkle"))?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     let editor = env.editor(&[])?;
 
     env.type_text(":rocket")?;

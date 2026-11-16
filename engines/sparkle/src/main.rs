@@ -17,7 +17,9 @@ mod emoji;
 mod panel;
 mod search;
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use compose::{Composer, Effects, PAGE, View};
@@ -29,15 +31,21 @@ slint::slint! {
     export struct Card {
         glyph: string,
         label: string,
+        // The emoji in color, when there is an emoji font (see emoji.rs).
+        picture: image,
+        painted: bool,
     }
 
     export component Popup inherits Window {
         title: "Sparkle";
         in property <string> hint;
+        // The window cannot be translucent (Slint's software renderer): the deck fills
+        // it, without its shadow, round corners and arrow, which would come out black.
+        in property <bool> opaque;
         no-frame: true;
-        background: transparent;
-        width: 584px;
-        height: 150px;
+        background: root.opaque ? #2a2260 : transparent;
+        width: root.opaque ? 576px : 584px;
+        height: root.opaque ? 132px : 150px;
 
         in property <[Card]> cards;
         in property <int> selected;
@@ -54,17 +62,21 @@ slint::slint! {
         property <length> panel-top: root.above-text ? 4px : 14px;
 
         panel := Rectangle {
-            x: 4px;
-            y: root.panel-top;
-            width: parent.width - 8px;
-            height: parent.height - 18px;
-            border-radius: 18px;
-            background: @linear-gradient(115deg, #1f1b46 0%, #352a73 55%, #6f45c9 100%);
+            x: root.opaque ? 0px : 4px;
+            y: root.opaque ? 0px : root.panel-top;
+            width: 576px;
+            height: 132px;
+            border-radius: root.opaque ? 0px : 18px;
+            // The software renderer draws a dark line where a gradient has a stop in
+            // the middle: two colors there.
+            background: root.opaque
+                ? @linear-gradient(115deg, #1f1b46 0%, #5a3cae 100%)
+                : @linear-gradient(115deg, #1f1b46 0%, #352a73 55%, #6f45c9 100%);
             border-width: 1px;
-            border-color: #ffffff26;
-            drop-shadow-blur: 8px;
+            border-color: root.opaque ? #6a5fb0 : #ffffff26;
+            drop-shadow-blur: root.opaque ? 0px : 8px;
             drop-shadow-color: #0000005a;
-            drop-shadow-offset-y: 2px;
+            drop-shadow-offset-y: root.opaque ? 0px : 2px;
 
             Text {
                 x: 18px;
@@ -105,7 +117,20 @@ slint::slint! {
                 background: touch.has-hover ? #ffffff1c : transparent;
                 animate background { duration: 100ms; }
 
-                Text {
+                // The emoji as a picture, in color with every renderer; the one chosen
+                // is a little larger.
+                if card.painted: Image {
+                    property <length> size: i == root.selected ? 42px : 37px;
+                    x: (parent.width - self.width) / 2;
+                    y: 31px - self.height / 2;
+                    width: self.size;
+                    height: self.size;
+                    source: card.picture;
+                    image-fit: contain;
+                    animate size { duration: 150ms; easing: ease-out-back; }
+                }
+                // Without an emoji font to paint with, as text.
+                if !card.painted: Text {
                     y: 8px;
                     width: parent.width;
                     horizontal-alignment: center;
@@ -134,7 +159,7 @@ slint::slint! {
         }
 
         // An arrow from the deck to the text cursor.
-        Path {
+        if !root.opaque: Path {
             x: max(20px, min(root.width - 44px, root.cursor-x - 12px));
             y: root.above-text ? root.height - 15px : 4px;
             width: 24px;
@@ -223,9 +248,14 @@ fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
     let _ = ui.upgrade_in_event_loop(move |ui| {
         let cards: Vec<Card> = cards
             .into_iter()
-            .map(|(glyph, label)| Card {
-                glyph: glyph.into(),
-                label: label.into(),
+            .map(|(glyph, label)| {
+                let picture = picture(&glyph);
+                Card {
+                    glyph: glyph.into(),
+                    label: label.into(),
+                    painted: picture.is_some(),
+                    picture: picture.unwrap_or_default(),
+                }
             })
             .collect();
         ui.set_cards(ModelRc::new(VecModel::from(cards)));
@@ -237,6 +267,35 @@ fn refresh(shared: &mut Shared, host: &Host, ui: &slint::Weak<Popup>) {
             ui.set_above_text(y > 0);
         }
     });
+}
+
+/// How large the deck's emoji are painted, in pixels: enough for a scale of 2, and
+/// Slint draws them smaller.
+const PAINTED: u32 = 96;
+
+/// What paints the deck's emoji, on the thread of the window: the system's emoji font,
+/// looked for when the first emoji is wanted, and the emoji painted before.
+#[derive(Default)]
+struct Pictures {
+    painter: Option<Option<emoji::Painter>>,
+    painted: HashMap<String, Option<slint::Image>>,
+}
+
+thread_local! {
+    static PICTURES: RefCell<Pictures> = RefCell::new(Pictures::default());
+}
+
+/// `glyph` in color, if there is an emoji font that has it.
+fn picture(glyph: &str) -> Option<slint::Image> {
+    PICTURES.with_borrow_mut(|pictures| {
+        if let Some(known) = pictures.painted.get(glyph) {
+            return known.clone();
+        }
+        let painter = pictures.painter.get_or_insert_with(emoji::Painter::new);
+        let painted = painter.as_mut().and_then(|p| p.paint(glyph, PAINTED));
+        pictures.painted.insert(glyph.to_owned(), painted.clone());
+        painted
+    })
 }
 
 impl Sparkle {
@@ -390,6 +449,10 @@ fn host_display() -> Option<String> {
         .filter(|d| !d.is_empty())
 }
 
+/// Whether the window came up. Until then an error is about the window itself, most
+/// likely OpenGL that cannot start: see [`omime_ui::renderer`].
+static WINDOW_UP: AtomicBool = AtomicBool::new(false);
+
 fn main() -> std::process::ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--panel") {
         return match panel::run() {
@@ -403,6 +466,11 @@ fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
+            if !WINDOW_UP.load(Ordering::Relaxed)
+                && let Some(again) = omime_ui::renderer::restart_in_software(&e)
+            {
+                eprintln!("omime-sparkle: cannot start again with the software renderer: {again}");
+            }
             eprintln!("omime-sparkle: {e}");
             std::process::ExitCode::FAILURE
         }
@@ -412,6 +480,41 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ui = Popup::new()?;
     ui.set_hint(omime_proto::i18n::text("⇥ choose   ⏎ insert   esc keep text").into());
+    ui.set_opaque(omime_ui::renderer::software());
+
+    // The window is always "shown" for the toolkit; the platform decides when the user
+    // sees it. It comes first: the engine starts once the event loop has made the
+    // window. If it cannot (no OpenGL), the program starts again in software before the
+    // platform has heard of an engine that would end at once.
+    ui.show()?;
+    let (started, start) = std::sync::mpsc::channel();
+    let weak = ui.as_weak();
+    slint::invoke_from_event_loop(move || {
+        WINDOW_UP.store(true, Ordering::Relaxed);
+        let result = match weak.upgrade() {
+            Some(ui) => start_engine(&ui).map_err(|e| e.to_string()),
+            None => Err("the window is gone".to_owned()),
+        };
+        if result.is_err() {
+            let _ = slint::quit_event_loop();
+        }
+        let _ = started.send(result);
+    })?;
+    slint::run_event_loop_until_quit()?;
+    // The host kept the engine with the platform until here.
+    match start.try_recv() {
+        Ok(Ok(host)) => {
+            drop(host);
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Starts the engine, on the thread of the window. The host it returns keeps the
+/// engine with the platform.
+fn start_engine(ui: &Popup) -> Result<Host, Box<dyn std::error::Error>> {
     let shared = Arc::new(Mutex::new(Shared {
         saved: panel::Saved::load(),
         ..Shared::default()
@@ -452,11 +555,5 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = slint::quit_event_loop();
         });
     });
-
-    // The window is always "shown" for the toolkit; the platform decides when the user
-    // sees it.
-    ui.show()?;
-    slint::run_event_loop_until_quit()?;
-    drop(host);
-    Ok(())
+    Ok(host)
 }

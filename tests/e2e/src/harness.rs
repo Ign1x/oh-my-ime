@@ -143,6 +143,22 @@ pub fn rime_engine() -> anyhow::Result<TestEngine> {
     })
 }
 
+/// `engine` as on a machine where OpenGL cannot start: it finds no EGL driver, and the
+/// renderer is left for Slint to choose, where the tests otherwise choose the software
+/// renderer (see [`TestEnv::command`]).
+pub fn without_opengl(mut engine: TestEngine) -> TestEngine {
+    engine.env.extend(no_opengl());
+    engine
+}
+
+/// The environment of a program for which OpenGL cannot start (see [`without_opengl`]).
+pub fn no_opengl() -> [(String, String); 2] {
+    [
+        ("SLINT_BACKEND".into(), String::new()),
+        ("__EGL_VENDOR_LIBRARY_FILENAMES".into(), "/dev/null".into()),
+    ]
+}
+
 /// `omime-dummy-ui`, an engine that draws a window of one color and consumes nothing.
 pub fn dummy_engine(args: &[&str]) -> TestEngine {
     TestEngine {
@@ -675,6 +691,14 @@ impl TestEnv {
     /// How often omimed's log contains `needle`.
     pub fn count_in_log(&self, needle: &str) -> usize {
         self.daemon_log().matches(needle).count()
+    }
+
+    /// Waits until an engine is with the platform and has its window. Either may come
+    /// first: Sparkle and Rime make their window before they register (see
+    /// `omime_ui::renderer`), other engines register first.
+    pub fn wait_for_engine_window(&self) -> anyhow::Result<()> {
+        self.wait_for_log("engine ready")?;
+        self.wait_for_log("engine window created")
     }
 
     /// Waits until omimed's log contains `needle`.

@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 omime-proto.workspace = true
+omime-ui.workspace = true
 omime-sdk.workspace = true
 # The candidate window's settings, rime.toml.
 serde.workspace = true

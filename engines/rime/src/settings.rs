@@ -477,6 +477,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    crate::note_window_up();
     window.run()?;
     Ok(())
 }

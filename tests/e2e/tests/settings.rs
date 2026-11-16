@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::process::{Child, Stdio};
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TestEnv, echo_engine, program_dir, sparkle_engine, wait_until};
+use omime_e2e::harness::{
+    TestEnv, echo_engine, no_opengl, program_dir, sparkle_engine, wait_until,
+};
 
 /// The settings' application id, which compositors see.
 const APP_ID: &str = "io.github.ign1x.OhMyIme.Settings";
@@ -22,12 +24,22 @@ struct Settings {
 impl Settings {
     /// Opens the settings with `program` (`omime settings`, or `omime-settings PAGE`).
     fn open(env: &TestEnv, program: &str, args: &[&str]) -> anyhow::Result<Self> {
+        Self::open_with(env, program, args, [])
+    }
+
+    /// Opens the settings with `variables` in their environment.
+    fn open_with(
+        env: &TestEnv,
+        program: &str,
+        args: &[&str],
+        variables: impl IntoIterator<Item = (String, String)>,
+    ) -> anyhow::Result<Self> {
         let log = env.dir().join(format!("{program}.log"));
         let child = env
             .command(program_dir().join(program))
             .args(args)
             .env("OMIME_LOG", "info")
-            .env("SLINT_BACKEND", "winit-software")
+            .envs(variables)
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&log)?)
             .spawn()
@@ -70,6 +82,24 @@ fn the_settings_show_omimed_and_follow_it_as_it_stops_and_starts() -> anyhow::Re
     settings.wait_for_log("omimed is not running", 1)?;
     settings.wait_for_log("read the settings input_methods=", 2)?;
     assert!(env.has_window(APP_ID)?, "the window stays open");
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn the_settings_open_where_opengl_cannot_start() -> anyhow::Result<()> {
+    let env = TestEnv::start(&[echo_engine()], None)?;
+    let settings = Settings::open_with(&env, "omime-settings", &[], no_opengl())?;
+    settings.wait_for_log("read the settings input_methods=", 1)?;
+    assert_eq!(
+        settings
+            .log()
+            .matches("starting again with the software renderer")
+            .count(),
+        1,
+        "{}",
+        settings.log()
+    );
     Ok(())
 }
 

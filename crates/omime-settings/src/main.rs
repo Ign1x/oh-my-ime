@@ -13,6 +13,7 @@ mod ui;
 use std::cell::RefCell;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::ComponentHandle as _;
 use tracing_subscriber::EnvFilter;
@@ -76,11 +77,21 @@ fn main() -> ExitCode {
     match run(page) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            // Before the window came up, the error is about the window itself, most
+            // likely OpenGL that cannot start: the settings start again in software.
+            if !WINDOW_UP.load(Ordering::Relaxed)
+                && let Some(again) = omime_ui::renderer::restart_in_software(&format!("{e:#}"))
+            {
+                eprintln!("omime-settings: cannot start again with the software renderer: {again}");
+            }
             eprintln!("omime-settings: {e:#}");
             ExitCode::FAILURE
         }
     }
 }
+
+/// Whether the window came up (see [`omime_ui::renderer`]).
+static WINDOW_UP: AtomicBool = AtomicBool::new(false);
 
 fn run(page: usize) -> anyhow::Result<()> {
     let window = SettingsWindow::new()?;
@@ -107,6 +118,8 @@ fn run(page: usize) -> anyhow::Result<()> {
                 });
             });
         })?;
+    // What is queued before the event loop starts runs once it has made the window.
+    slint::invoke_from_event_loop(|| WINDOW_UP.store(true, Ordering::Relaxed))?;
     window.run()?;
     Ok(())
 }

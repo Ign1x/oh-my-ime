@@ -75,7 +75,7 @@ fn a_python_gtk4_engine_composes_shows_a_window_and_commits() -> anyhow::Result<
     let env = TestEnv::start(&[engine], None)?;
     env.omime(&["switch", "shout"])?;
     env.wait_for_log("engine ready")?;
-    env.wait_for_log("engine window created")?;
+    env.wait_for_engine_window()?;
     let editor = env.editor(&[])?;
 
     env.type_text("hello")?;

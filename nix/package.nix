@@ -65,6 +65,7 @@ rustPlatform.buildRustPackage {
       "omime-proto"
       "omime-sdk"
       "omime-overlay"
+      "omime-ui"
     ]
   );
 

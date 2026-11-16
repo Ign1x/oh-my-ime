@@ -1007,7 +1007,7 @@ fn failed_state_write_preserves_previous_sparkle_state() -> anyhow::Result<()> {
             std::fs::write(&path, previous)?;
             env.launch_daemon()?;
             env.omime(&["switch", "sparkle"])?;
-            env.wait_for_log("engine window created")?;
+            env.wait_for_engine_window()?;
             let editor = env.editor(&[])?;
             env.type_text(":unicorn")?;
             editor.wait_for("unicorn preedit", |line| {

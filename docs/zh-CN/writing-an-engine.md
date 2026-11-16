@@ -119,6 +119,7 @@ PATH=$PWD/target/debug:$PATH OMIME_ENGINE_PATH=$PWD/engines omimed --engine echo
 - 在调用 `Host::set_popup_visible(true)` 之前，窗口一直隐藏。不要通过隐藏或关闭窗口来让它消失；调用 `set_popup_visible(false)`，由平台取消映射。
 - 窗口上的点击会照常到达你的引擎。通过 `omime_sdk::spawn`（或 `ctx.host()`）得到的 `Host` 来响应它们，例如 `host.commit(ctx_id, text)`。
 - 对于自己占用主线程的工具包：用 `omime_sdk::spawn` 运行引擎，它会在引擎注册完成后返回。
+- 没有 OpenGL 的机器（虚拟机、远程桌面）上，你的窗口也必须能显示：引擎一启动就退出，用户就没有输入法可用了。有的工具包要到创建窗口时才发现 OpenGL 不可用，这需要你来处理。Sparkle 和 Rime 先显示 Slint 窗口，等窗口创建好之后，再从 Slint 的事件循环里启动引擎；窗口创建不了时，它们改用软件渲染器重新启动（`omime_ui::renderer`）。软件渲染的窗口不能半透明，所以它们改为填满整个矩形。
 - 对于不应当作为弹窗的普通窗口（例如设置对话框），改为连接 `$OMIME_HOST_WAYLAND_DISPLAY` 中的 display，例如从一个独立进程连接。
 - 清单里的设置程序就是 `omime settings <id>` 和托盘菜单打开的东西，它以普通窗口出现在桌面上：
 

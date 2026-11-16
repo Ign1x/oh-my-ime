@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use omime_e2e::harness::{
-    TestEngine, TestEnv, rime_engine, target_dir, wait_until, wait_until_within,
+    TestEngine, TestEnv, rime_engine, target_dir, wait_until, wait_until_within, without_opengl,
 };
 
 fn rime() -> anyhow::Result<Option<TestEngine>> {
@@ -250,6 +250,42 @@ fn rime_types_xiaohe_and_pinyin() -> anyhow::Result<()> {
     env.wait_for_status_starting("rime/luna_pinyin")?;
     env.type_text("zhongguo ")?;
     editor.wait_for_text("你好中国")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn rime_types_where_opengl_cannot_start() -> anyhow::Result<()> {
+    let Some(engine) = rime()? else {
+        return Ok(());
+    };
+    let env = TestEnv::start(&[without_opengl(engine)], Some("rime"))?;
+    wait_for_rime(&env)?;
+    env.omime(&["switch", "rime/luna_pinyin"])?;
+    env.wait_for_status_starting("rime/luna_pinyin")?;
+    let editor = env.editor(&[])?;
+    env.wait_until_composing(&editor)?;
+    env.type_text("zhongguo")?;
+
+    // The window is below the text cursor (x = 12, y = 20, height 18). Drawn in
+    // software it cannot be translucent: it fills its rectangle, the border first and
+    // the panel within, where a window with a margin and round corners would be black.
+    let (x, y) = (12, 20 + 18);
+    env.wait_for_pixel(x + 3, y + 3, 0xfbfbfd)
+        .with_context(|| env.daemon_log())?;
+    assert_eq!(env.pixel(x, y)?, 0xd1d1d6, "the corner of the window");
+
+    env.type_text(" ")?;
+    editor.wait_for_text("中国")?;
+    // It started once, drawing with OpenGL, and again in software before the platform
+    // knew it: no engine ended on the platform.
+    assert_eq!(
+        env.count_in_log("starting again with the software renderer"),
+        1,
+        "{}",
+        env.daemon_log()
+    );
+    assert_eq!(env.count_in_log("engine exited unexpectedly"), 0);
     Ok(())
 }
 

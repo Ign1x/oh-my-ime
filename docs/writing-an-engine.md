@@ -207,6 +207,13 @@ text cursor whenever your engine is the active one.
   you get from `omime_sdk::spawn` (or `ctx.host()`), e.g. `host.commit(ctx_id, text)`.
 - Toolkits that own the main thread: run the engine with `omime_sdk::spawn`, which
   returns once the engine is registered.
+- Your window must come up on machines without OpenGL too (virtual machines, remote
+  desktops): an engine that ends when it starts leaves its users without their input
+  method. A toolkit that finds out only when it makes the window needs your help.
+  Sparkle and Rime show their Slint window first and start the engine from Slint's
+  event loop, once the window is made; if it cannot be made, they start again with the
+  software renderer (`omime_ui::renderer`), which has no translucent windows, and fill
+  their rectangle instead.
 - For an ordinary window that should not be a popup (a settings dialog), connect to the
   display in `$OMIME_HOST_WAYLAND_DISPLAY` instead, e.g. from a separate process.
 - A settings program in the manifest is what `omime settings <id>` and the tray menu

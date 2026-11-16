@@ -1,0 +1,14 @@
+[package]
+name = "omime-ui"
+description = "What oh-my-ime's windows share: starting again with the software renderer where OpenGL cannot start"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# No dependencies, and none on Slint: the programs with windows bring their own.
+
+[lints]
+workspace = true

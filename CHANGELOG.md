@@ -13,8 +13,22 @@ All notable changes to this project are documented here. The format follows
   recipes. Packaging checks install the native packages in isolated containers;
   existing release archives can also be packaged without replacing published assets.
 
+### Changed
+
+- Sparkle draws the emoji of its deck as pictures, as its panel does: emoji with a text
+  presentation (❤) are in color now instead of black.
+
 ### Fixed
 
+- Rime, Sparkle, the settings and Rime's settings work where OpenGL cannot start (a
+  virtual machine, a remote desktop, a broken driver). They ended with "Error creating
+  OpenGL display"; omimed started the engine again and again and then gave up, and
+  nothing could be typed with it. Now each starts again by itself with the software
+  renderer, an engine before omimed has heard of it. Drawn in software, a window
+  cannot be translucent: Rime's candidates and Sparkle's deck then fill their
+  rectangles, where round corners and shadows came out as a black box (also with
+  `SLINT_BACKEND=winit-software` set by hand). `SLINT_BACKEND` still chooses a
+  renderer for good.
 - Rime's settings window shows what is chosen for Shift, the layout and the appearance
   again; the three lists were blank. A Shift setting the window does not offer, such
   as Rime's own `inline_ascii` or a different one for each Shift key, is shown as
