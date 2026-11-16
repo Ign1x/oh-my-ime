@@ -176,7 +176,8 @@ fn choosing_with_pointer_and_reopening_does_not_start_two_choosers() -> anyhow::
         .arg("choose")
         .status()?;
     assert!(status.success());
-    // Two rows: 196px high, centered. Direct input is the first row.
+    // Two rows: the chooser is 191 pixels high in the middle of the output, its rows
+    // 48 pixels high from 42 pixels below its top. Direct input is the first row.
     env.click(640, 328)?;
     chooser.finished()?;
     assert_eq!(env.omime(&["status"])?.trim(), "direct input");

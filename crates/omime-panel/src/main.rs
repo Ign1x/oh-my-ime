@@ -18,66 +18,7 @@ use tracing_subscriber::EnvFilter;
 use zbus::OwnedVariant;
 
 slint::slint! {
-    export struct Choice {
-        label: string,
-        name: string,
-        current: bool,
-    }
-
-    export component Switcher inherits Window {
-        in property <[Choice]> choices;
-        in property <bool> dark: true;
-        // Fades the switcher in and out.
-        in property <bool> shown;
-        property <length> tile: 88px;
-        property <length> gap: 6px;
-        property <length> pad: 10px;
-        out property <length> panel-width:
-            max(1, choices.length) * tile + max(0, choices.length - 1) * gap + 2 * pad;
-        out property <length> panel-height: tile + 2 * pad;
-        background: transparent;
-
-        Rectangle {
-            border-radius: 18px;
-            // (Rust cannot take #202124ee in a macro: it reads an exponent.)
-            background: root.dark ? rgba(32, 33, 36, 0.93) : #f8f8faf2;
-            border-width: 1px;
-            border-color: root.dark ? #ffffff1a : #0000001a;
-            opacity: root.shown ? 1 : 0;
-            animate opacity { duration: 150ms; easing: ease-out; }
-
-            HorizontalLayout {
-                padding: root.pad;
-                spacing: root.gap;
-                for choice in root.choices: Rectangle {
-                    width: root.tile;
-                    height: root.tile;
-                    border-radius: 13px;
-                    background: choice.current ? #3478f6 : transparent;
-
-                    VerticalLayout {
-                        alignment: center;
-                        padding: 6px;
-                        spacing: 3px;
-                        Text {
-                            text: choice.label;
-                            font-size: 30px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            color: choice.current ? #ffffff : (root.dark ? #f1f1f3 : #1d1d1f);
-                        }
-                        Text {
-                            text: choice.name;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            overflow: elide;
-                            color: choice.current ? #ffffffde : (root.dark ? #b9b9be : #6c6c71);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    export { Choice, Look, Switcher } from "../ui/switcher.slint";
 }
 
 /// How long the switcher stays after the last switch.
@@ -216,7 +157,7 @@ impl View {
             })
             .collect();
         self.ui.set_choices(ModelRc::new(VecModel::from(model)));
-        self.ui.set_dark(dark);
+        self.ui.global::<Look<'_>>().set_dark(dark);
         let width = self.ui.get_panel_width().ceil() as u32;
         let height = self.ui.get_panel_height().ceil() as u32;
         self.overlay.show(width, height);

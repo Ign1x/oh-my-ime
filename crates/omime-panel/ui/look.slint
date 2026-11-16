@@ -1,0 +1,21 @@
+// The colors of the switcher and the chooser, which float over whatever is on the
+// screen: dark or light as the desktop prefers, and dark without a preference.
+
+export global Look {
+    in-out property <bool> dark: true;
+    out property <color> panel: self.dark ? rgba(32, 33, 36, 0.93) : #f8f8faf2;
+    out property <color> border: self.dark ? #ffffff1a : #0000001a;
+    out property <color> divider: self.dark ? #ffffff14 : #00000012;
+    out property <color> text: self.dark ? #f1f1f3 : #1d1d1f;
+    out property <color> secondary: self.dark ? #b9b9be : #6c6c71;
+    // What marks the input method in use, and the text on it.
+    out property <color> accent: #3478f6;
+    out property <color> on-accent: #ffffff;
+    out property <color> on-accent-secondary: #ffffffde;
+    // Behind an input method's label, under the pointer, and behind a key.
+    out property <color> badge: self.dark ? #ffffff1a : #0000000f;
+    out property <color> badge-on-accent: #ffffff33;
+    out property <color> hover: self.dark ? #ffffff12 : #0000000a;
+    out property <color> keycap: self.dark ? #ffffff12 : #0000000a;
+    out property <color> danger: self.dark ? #ffb4ab : #b3261e;
+}

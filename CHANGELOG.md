@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `omime choose` looks like the switcher it belongs with: each input method has its
+  badge and, beside it, its engine's name where that is another (小鹤双拼 · Rime); the
+  input method in use has a check mark, the pointer highlights the row under it, and
+  the keys are drawn as keys. It is as high as its rows need, in light and dark.
 - Sparkle draws the emoji of its deck as pictures, as its panel does: emoji with a text
   presentation (❤) are in color now instead of black.
 

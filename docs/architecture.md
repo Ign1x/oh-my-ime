@@ -582,8 +582,10 @@ window cannot be translucent; the engines' windows then fill their rectangles.
 `omime choose` asks the same panel process to open an interactive chooser. Browsing
 does not change the current method; confirmation applies the selection and remembers
 it for the original application when `apps.remember` is enabled. Cancel, focus loss
-or daemon exit closes it without switching. The chooser uses a keyboard-interactive layer surface while open, releases
-focus when dismissed, and updates its list when enabled methods change.
+or daemon exit closes it without switching. The chooser uses a keyboard-interactive
+layer surface while open, releases focus when dismissed, and updates its list when
+enabled methods change. The switcher and the chooser share their colors and shapes
+(`crates/omime-panel/ui`): each input method with its badge, the one in use marked.
 
 ## Settings
 

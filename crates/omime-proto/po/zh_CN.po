@@ -1128,8 +1128,11 @@ msgstr "无法打开输入法选择器；omimed 是否正在运行？"
 msgid "Choose input method"
 msgstr "选择输入法"
 
-msgid "↑ ↓  Browse    Enter  Select    Esc  Cancel"
-msgstr "↑ ↓  浏览    Enter  选择    Esc  取消"
+msgid "Browse"
+msgstr "浏览"
+
+msgid "Select"
+msgstr "选择"
 
 msgid "the daemon did not confirm the selection"
 msgstr "守护进程未确认所选输入法"
