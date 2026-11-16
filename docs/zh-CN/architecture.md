@@ -176,6 +176,8 @@ Slint 用 OpenGL 绘制的窗口（设置程序、Rime 和 Sparkle 的窗口）�
 
 界面文字以英文写成，译文来自 `crates/omime-settings/po` 中的 gettext 目录，编译进程序。`omime settings` 和托盘菜单中的“设置…”都能打开它；桌面文件 `io.github.ign1x.OhMyIme.Settings`（也是它的应用 id）让它出现在启动器里。
 
+第一页帮助新用户上手，同样不保存任何东西。已启用的输入法里没有用户语言的输入法时（按 locale 判断，只针对需要输入法才能输入的语言），它推荐最多三个可以一键添加的输入法，用户所用文字（简体或繁体）的排在前面；一个都没有安装时，说明该安装什么。它还显示用来切换的按键，并在键盘被另一个输入法占用时首先说明。
+
 ## 通知
 
 有些问题原本只记在 omimed 的日志里，现在 omimed 会用桌面通知（`org.freedesktop.Notifications`，有事要说时才连接）告诉用户：

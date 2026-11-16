@@ -266,6 +266,67 @@ pub fn catalog<'a>(
     entries
 }
 
+/// The languages that are typed with an input method rather than with the keyboard
+/// alone: those of users to whom the window offers one while they have none.
+const COMPOSED: [&str; 20] = [
+    "zh", "ja", "ko", "vi", "th", "hi", "bn", "ta", "te", "kn", "ml", "gu", "pa", "mr", "ne", "si",
+    "my", "km", "lo", "am",
+];
+
+/// How many input methods the window suggests.
+const SUGGESTED: usize = 3;
+
+/// What the page of input methods offers a user who has no input method of their
+/// language yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Start<'a> {
+    /// Nothing: they have one, or their language is typed with the keyboard alone.
+    Nothing,
+    /// Input methods of their language that can be added, those of its group
+    /// (`language`, as [`language_group`] makes it) first.
+    Suggest {
+        language: String,
+        methods: Vec<&'a InputMethod>,
+    },
+    /// No input method of their language is installed.
+    Install { language: String },
+}
+
+/// What to offer the user of `locale` with the input methods omimed has.
+pub fn start<'a>(methods: &'a [InputMethod], locale: &str) -> Start<'a> {
+    let own = language_group(locale);
+    let language = own.split('-').next().unwrap_or_default();
+    if !COMPOSED.contains(&language) {
+        return Start::Nothing;
+    }
+    let of_language =
+        |m: &&InputMethod| language_group(&m.language).split('-').next() == Some(language);
+    if methods.iter().filter(of_language).any(|m| m.enabled) {
+        return Start::Nothing;
+    }
+    let mut suggested: Vec<&InputMethod> = methods.iter().filter(of_language).collect();
+    if suggested.is_empty() {
+        return Start::Install { language: own };
+    }
+    // Those of the user's own group (simplified or traditional characters) first, then
+    // those for the language as a whole, each in the order omimed has them.
+    suggested.sort_by_key(|m| {
+        let group = language_group(&m.language);
+        if group == own {
+            0
+        } else if group == language {
+            1
+        } else {
+            2
+        }
+    });
+    suggested.truncate(SUGGESTED);
+    Start::Suggest {
+        language: own,
+        methods: suggested,
+    }
+}
+
 /// The key timeouts to choose from, in milliseconds.
 pub const TIMEOUTS: [u64; 6] = [100, 200, 300, 500, 1000, 2000];
 
@@ -431,5 +492,69 @@ mod tests {
         let (choices, index) = timeouts(250);
         assert_eq!(choices[index], 250);
         assert_eq!(choices.len(), TIMEOUTS.len() + 1);
+    }
+
+    #[test]
+    fn users_without_an_input_method_of_their_language_are_offered_one() {
+        let methods = [
+            method("echo", "Echo", "en", true),
+            method("fcitx5/cangjie", "倉頡", "zh_HK", false),
+            method("rime/double_pinyin_flypy", "小鹤双拼", "zh_CN", false),
+            method("rime/luna_pinyin", "朙月拼音", "zh", false),
+            method("fcitx5/pinyin", "拼音", "zh_CN", false),
+            method("fcitx5/mozc", "Mozc", "ja", false),
+        ];
+        // Simplified Chinese first, in omimed's order, then Chinese as a whole, and
+        // traditional Chinese last.
+        let Start::Suggest {
+            language,
+            methods: suggested,
+        } = start(&methods, "zh_CN.UTF-8")
+        else {
+            panic!("nothing suggested");
+        };
+        assert_eq!(language, "zh-Hans");
+        let ids: Vec<&str> = suggested.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "rime/double_pinyin_flypy",
+                "fcitx5/pinyin",
+                "rime/luna_pinyin"
+            ]
+        );
+        let Start::Suggest {
+            methods: suggested, ..
+        } = start(&methods, "zh_TW")
+        else {
+            panic!("nothing suggested");
+        };
+        assert_eq!(suggested[0].id, "fcitx5/cangjie");
+
+        // Nothing installed for Korean; English and German need no input method.
+        assert_eq!(
+            start(&methods, "ko_KR.UTF-8"),
+            Start::Install {
+                language: "ko".to_owned()
+            }
+        );
+        for locale in ["en_US.UTF-8", "de_DE.UTF-8", "C", ""] {
+            assert_eq!(start(&methods, locale), Start::Nothing, "{locale}");
+        }
+    }
+
+    #[test]
+    fn users_with_an_input_method_of_their_language_are_left_alone() {
+        let methods = [
+            method("fcitx5/cangjie", "倉頡", "zh_HK", true),
+            method("fcitx5/pinyin", "拼音", "zh_CN", false),
+        ];
+        assert_eq!(start(&methods, "zh_CN.UTF-8"), Start::Nothing);
+        assert_eq!(
+            start(&methods, "ja_JP.UTF-8"),
+            Start::Install {
+                language: "ja".to_owned()
+            }
+        );
     }
 }

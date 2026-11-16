@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format follows
   a portable AppImage with persistent launchers, and checksum-pinned AUR split-package
   recipes. Packaging checks install the native packages in isolated containers;
   existing release archives can also be packaged without replacing published assets.
+- The settings help a new user start. While you have no input method of your language
+  (Chinese, Japanese, Korean and the other languages typed with one, after your
+  locale), the first page suggests up to three to add with one click, those of your
+  script first, or says what to install when there is none. It shows the keys that
+  switch between your input methods, and says when another input method holds the
+  keyboard so that oh-my-ime cannot type yet.
 
 ### Changed
 

@@ -603,6 +603,12 @@ gettext catalogs in `crates/omime-settings/po`, which are built in. `omime setti
 and "Settings…" in the tray menu open it, and the desktop entry
 `io.github.ign1x.OhMyIme.Settings` (also its application id) puts it in launchers.
 
+The first page helps a new user without keeping anything either. While none of the
+enabled input methods is of the user's language (the locale's, for the languages typed
+with an input method), it suggests up to three that can be added with one click, those
+of the user's script first; when none is installed, it says what to install. It shows
+the keys that switch, and says first when another input method holds the keyboard.
+
 ## Notifications
 
 omimed tells the user about trouble that would otherwise only be in its log, with

@@ -87,6 +87,18 @@ msgstr "{}的设置"
 msgid "Remove {}"
 msgstr "移除{}"
 
+msgid "Suggested for {}"
+msgstr "{}的推荐输入法"
+
+msgid "No input method for {} is installed. Install oh-my-ime's Rime engine, or Fcitx 5 or IBus with their input methods: they show here once they are installed."
+msgstr "还没有安装{}输入法。请安装 oh-my-ime 的 Rime 引擎，或者 Fcitx 5、IBus 及其输入法：装好后会显示在这里。"
+
+msgid "No input method for {} is installed. Install Fcitx 5 or IBus with an input method for it: it shows here once it is installed."
+msgstr "还没有安装{}输入法。请安装 Fcitx 5 或 IBus 以及相应的输入法：装好后会显示在这里。"
+
+msgid "Another input method holds the keyboard, so oh-my-ime cannot type yet. The About page says which seat."
+msgstr "键盘正被另一个输入法占用，oh-my-ime 暂时无法输入。“关于”页面会说明是哪个座位。"
+
 msgid "No input methods yet"
 msgstr "还没有输入法"
 

@@ -72,6 +72,14 @@ export global Backend {
     callback remove-input-method(int);
     callback add-input-method(string);
     callback open-settings(string);
+    // For a user without an input method of their language: up to three that can be
+    // added, of the language group `suggested-language` (see Texts.language); or the
+    // group in `missing-language` when none is installed. Otherwise both are empty.
+    in property <[CatalogEntry]> suggestions;
+    in property <string> suggested-language;
+    in property <string> missing-language;
+    // Whether another input method holds the keyboard of a seat.
+    in property <bool> seat-taken;
 
     // Hotkeys: the keys of each, such as ["Ctrl", "Space"]; none when it is off.
     in property <[string]> toggle-keys;

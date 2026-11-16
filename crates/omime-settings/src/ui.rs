@@ -28,6 +28,8 @@ pub struct Controller {
     window: slint::Weak<SettingsWindow>,
     commands: UnboundedSender<Command>,
     snapshot: RefCell<Option<Snapshot>>,
+    /// The user's locale: their language comes first in what the window offers.
+    locale: String,
     search: RefCell<String>,
     /// The ids of `app-choices`.
     app_choices: RefCell<Vec<String>>,
@@ -52,10 +54,20 @@ fn with<A>(this: &Weak<Controller>, args: A, f: impl FnOnce(&Controller, A)) {
 
 impl Controller {
     pub fn new(window: &SettingsWindow, commands: UnboundedSender<Command>) -> Rc<Self> {
+        Self::new_in(window, commands, model::locale())
+    }
+
+    /// A controller for a user of `locale` (`zh_CN.UTF-8`).
+    fn new_in(
+        window: &SettingsWindow,
+        commands: UnboundedSender<Command>,
+        locale: String,
+    ) -> Rc<Self> {
         let this = Rc::new(Self {
             window: window.as_weak(),
             commands,
             snapshot: RefCell::new(None),
+            locale,
             search: RefCell::new(String::new()),
             app_choices: RefCell::new(Vec::new()),
             timeouts: RefCell::new(Vec::new()),
@@ -262,6 +274,20 @@ impl Controller {
             .collect();
         backend.set_input_methods(model_of(rows));
         self.show_catalog(snapshot);
+        let (suggestions, suggested, missing) =
+            match model::start(&snapshot.input_methods, &self.locale) {
+                model::Start::Nothing => (Vec::new(), String::new(), String::new()),
+                model::Start::Suggest { language, methods } => (
+                    methods.into_iter().map(catalog_entry).collect(),
+                    language,
+                    String::new(),
+                ),
+                model::Start::Install { language } => (Vec::new(), String::new(), language),
+            };
+        backend.set_suggestions(model_of(suggestions));
+        backend.set_suggested_language(suggested.into());
+        backend.set_missing_language(missing.into());
+        backend.set_seat_taken(snapshot.diagnosis.seats.iter().any(|(_, ours)| !ours));
 
         let options = &snapshot.options;
         backend.set_toggle_keys(model_of(strings(hotkey::keys(&options.toggle))));
@@ -313,26 +339,31 @@ impl Controller {
     fn show_catalog(&self, snapshot: &Snapshot) {
         let search = self.search.borrow();
         let entries: Vec<CatalogEntry> =
-            model::catalog(&snapshot.input_methods, &search, &model::locale())
+            model::catalog(&snapshot.input_methods, &search, &self.locale)
                 .into_iter()
                 .map(|entry| match entry {
                     model::CatalogEntry::Heading(group) => CatalogEntry {
                         heading: group.into(),
                         ..CatalogEntry::default()
                     },
-                    model::CatalogEntry::Method(m) => CatalogEntry {
-                        id: m.id.as_str().into(),
-                        name: m.name.as_str().into(),
-                        engine_name: m.engine_name.as_str().into(),
-                        label: model::badge(m).into(),
-                        heading: SharedString::default(),
-                    },
+                    model::CatalogEntry::Method(m) => catalog_entry(m),
                 })
                 .collect();
         self.backend(|b| {
             b.set_catalog_empty(entries.is_empty());
             b.set_catalog(model_of(entries));
         });
+    }
+}
+
+/// An input method to add, as the window lists it.
+fn catalog_entry(method: &model::InputMethod) -> CatalogEntry {
+    CatalogEntry {
+        id: method.id.as_str().into(),
+        name: method.name.as_str().into(),
+        engine_name: method.engine_name.as_str().into(),
+        label: model::badge(method).into(),
+        heading: SharedString::default(),
     }
 }
 
@@ -456,14 +487,39 @@ mod tests {
     }
 
     fn open_in(locale: &str) -> (SettingsWindow, Rc<Controller>, UnboundedReceiver<Command>) {
+        open_for(locale, "C", snapshot())
+    }
+
+    /// A window with texts in the language of `locale`, for a user of `user` (their
+    /// language decides what the window offers), showing `snapshot`.
+    fn open_for(
+        locale: &str,
+        user: &str,
+        snapshot: Snapshot,
+    ) -> (SettingsWindow, Rc<Controller>, UnboundedReceiver<Command>) {
         i_slint_backend_testing::init_no_event_loop();
         let window = SettingsWindow::new().expect("a window");
         crate::tr::install(&window, locale);
         let (commands, requests) = unbounded_channel();
-        let controller = Controller::new(&window, commands);
-        controller.apply(Event::Snapshot(Box::new(snapshot())));
+        let controller = Controller::new_in(&window, commands, user.to_owned());
+        controller.apply(Event::Snapshot(Box::new(snapshot)));
         window.show().expect("shown");
         (window, controller, requests)
+    }
+
+    /// What omimed has for someone who has only installed it: Echo in use, Rime's and
+    /// Fcitx 5's input methods to add.
+    fn fresh() -> Snapshot {
+        Snapshot {
+            input_methods: vec![
+                method("echo", "Echo", "", "en", true),
+                method("rime/double_pinyin_flypy", "小鹤双拼", "双", "zh", false),
+                method("rime/luna_pinyin", "朙月拼音", "拼", "zh", false),
+                method("fcitx5/pinyin", "拼音", "拼", "zh_CN", false),
+                method("fcitx5/cangjie", "倉頡", "倉", "zh_HK", false),
+            ],
+            ..snapshot()
+        }
     }
 
     /// The element labelled `label` that is not just text: the switch of a row, not its
@@ -565,6 +621,80 @@ mod tests {
         assert!(backend.get_catalog_empty());
         click(&window, "Close");
         assert!(!window.global::<View<'_>>().get_adding());
+    }
+
+    #[test]
+    fn a_user_without_an_input_method_of_their_language_is_offered_some() {
+        let (window, controller, mut requests) = open_for("C", "zh_CN.UTF-8", fresh());
+        let backend = window.global::<Backend<'_>>();
+        assert_eq!(backend.get_suggested_language(), "zh-Hans");
+        let suggested: Vec<String> = backend
+            .get_suggestions()
+            .iter()
+            .map(|e| e.name.to_string())
+            .collect();
+        // Simplified Chinese first, then Chinese as a whole: three of the four.
+        assert_eq!(suggested, ["拼音", "小鹤双拼", "朙月拼音"]);
+        click(&window, "Add 小鹤双拼");
+        assert_eq!(engines(&mut requests), ["echo", "rime/double_pinyin_flypy"]);
+
+        // With one of their language, the window offers no more.
+        let mut with_one = fresh();
+        with_one.input_methods[1].enabled = true;
+        controller.apply(Event::Snapshot(Box::new(with_one)));
+        assert_eq!(backend.get_suggestions().row_count(), 0);
+        assert_eq!(backend.get_suggested_language(), "");
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, "Add 拼音")
+                .next()
+                .is_none(),
+            "nothing is suggested any more"
+        );
+    }
+
+    #[test]
+    fn the_window_says_when_the_users_language_has_no_input_method() {
+        let (window, _controller, _requests) = open_for("C", "ko_KR.UTF-8", fresh());
+        let backend = window.global::<Backend<'_>>();
+        assert_eq!(backend.get_missing_language(), "ko");
+        assert_eq!(backend.get_suggestions().row_count(), 0);
+        let notice = "No input method for Korean is installed. Install Fcitx 5 or IBus \
+                      with an input method for it: it shows here once it is installed.";
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(&window, notice).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_user_whose_language_needs_no_input_method_is_offered_none() {
+        // English is typed with the keyboard alone: nothing to say.
+        let (window, _controller, _requests) = open_for("C", "en_US.UTF-8", fresh());
+        let backend = window.global::<Backend<'_>>();
+        assert_eq!(backend.get_missing_language(), "");
+        assert_eq!(backend.get_suggestions().row_count(), 0);
+    }
+
+    #[test]
+    fn the_first_page_says_when_another_input_method_holds_the_keyboard() {
+        let (window, controller, _requests) = open();
+        let backend = window.global::<Backend<'_>>();
+        let buttons = |window: &SettingsWindow| -> Vec<ElementHandle> {
+            ElementHandle::find_by_accessible_label(window, "About")
+                .filter(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .collect()
+        };
+        assert!(!backend.get_seat_taken());
+        assert!(buttons(&window).is_empty());
+
+        let mut taken = snapshot();
+        taken.diagnosis.seats = vec![("seat0".to_owned(), false)];
+        controller.apply(Event::Snapshot(Box::new(taken)));
+        assert!(backend.get_seat_taken());
+        let about = buttons(&window);
+        assert_eq!(about.len(), 1, "the notice leads to the About page");
+        about[0].invoke_accessible_default_action();
+        assert_eq!(window.global::<View<'_>>().get_page(), 4);
     }
 
     #[test]
