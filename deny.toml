@@ -70,7 +70,7 @@ deny = [
   # Only user interface programs may use Slint; omimed, omime, omime-proto and the SDK
   # stay MIT/Apache-2.0 only.
   { crate = "slint", wrappers = ["omime-sparkle", "omime-overlay", "omime-panel", "omime-settings", "omime-rime"] },
-  { crate = "i-slint-backend-testing", wrappers = ["omime-settings"] },
+  { crate = "i-slint-backend-testing", wrappers = ["omime-settings", "omime-rime"] },
   # The platform uses zbus 6; the old zbus only comes with Slint.
   { crate = "zbus:<6", wrappers = ["i-slint-backend-winit"] },
   { crate = "ttf-parser", wrappers = ["fontdb", "owned_ttf_parser", "rustybuzz", "usvg"] },
