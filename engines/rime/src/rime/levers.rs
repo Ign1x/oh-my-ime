@@ -4,7 +4,6 @@
 //! the user's data. librime is set up as a deployer only, without sessions, in the
 //! settings window's process; the engine deploys what changed when it starts again.
 
-use std::cell::RefCell;
 use std::ffi::{CString, c_char, c_int};
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
@@ -26,8 +25,6 @@ pub struct Levers {
     settings: NonNull<SwitcherSettings>,
     strings: TraitStrings,
     user: PathBuf,
-    // Keep a staged file after a failed replacement so a retry can still save it.
-    pending: RefCell<Option<tempfile::TempDir>>,
 }
 
 impl std::fmt::Debug for Levers {
@@ -68,7 +65,6 @@ impl Levers {
             settings,
             strings,
             user: user.to_owned(),
-            pending: RefCell::new(None),
         };
         this.load(user)?;
         // librime takes the user's list from default.yaml as deployed, which it is not
@@ -86,17 +82,13 @@ impl Levers {
     fn load(&self, user: &Path) -> Result<(), String> {
         // SAFETY: the settings are alive.
         if unsafe { (self.levers.load_settings)(self.custom()) } == 0 {
-            return Err(format!(
-                "cannot read default.custom.yaml in {}",
-                user.display()
-            ));
+            return Err(format!("cannot read {CUSTOM} in {}", user.display()));
         }
         Ok(())
     }
 
     /// Discards unsaved edits before applying a new set of choices in the window.
     pub fn reset(&self) -> Result<(), String> {
-        self.pending.borrow_mut().take();
         self.load(&self.user)
     }
 
@@ -212,47 +204,67 @@ impl Levers {
         unsafe { (self.levers.customize_string)(self.custom(), key.as_ptr(), value.as_ptr()) != 0 }
     }
 
-    /// Writes through a temporary directory and atomically replaces the customization.
-    /// librime 1.17 reports success even if its file write failed, so check the staged
-    /// file ourselves. No changes is a successful no-op.
+    /// Writes the customization into a temporary directory and replaces
+    /// `default.custom.yaml` with it at once. librime 1.17 reports success even if its
+    /// file write failed, so the file is checked here. Nothing changed is a success;
+    /// after an error the choices are to be made again (see [`Self::reset`]).
     pub fn save(&self) -> std::io::Result<()> {
         // SAFETY: the settings are alive, used only on the settings window's thread.
-        if unsafe { (self.levers.settings_is_modified)(self.custom()) } != 0 {
-            let stage = tempfile::Builder::new()
-                .prefix(".omime-settings-")
-                .tempdir_in(&self.user)?;
-            let directory = c_path(stage.path())
-                .ok_or_else(|| std::io::Error::other("a NUL in the settings directory"))?;
-            let mut traits = self.strings.traits();
-            traits.user_data_dir = directory.as_ptr();
-            // SAFETY: no sessions or other threads use this process's deployer.
-            // The strings outlive the calls; CustomSettings holds this same deployer.
-            // Always restore its real directories before returning, including on error.
-            let saved = unsafe {
-                (self.api.deployer_initialize)(&raw mut traits);
-                let saved = (self.levers.save_settings)(self.custom());
-                traits = self.strings.traits();
-                (self.api.deployer_initialize)(&raw mut traits);
-                saved
-            };
-            if saved == 0 {
-                return Err(std::io::Error::other("Rime could not save its settings"));
-            }
-            *self.pending.borrow_mut() = Some(stage);
+        if unsafe { (self.levers.settings_is_modified)(self.custom()) } == 0 {
+            return Ok(());
         }
-        let mut pending = self.pending.borrow_mut();
-        if let Some(stage) = pending.as_ref() {
-            let source = stage.path().join("default.custom.yaml");
-            let file = std::fs::File::open(&source)?;
-            if file.metadata()?.len() == 0 {
-                return Err(std::io::Error::other("Rime wrote empty settings"));
-            }
-            file.sync_all()?;
-            std::fs::rename(source, self.user.join("default.custom.yaml"))?;
-            pending.take();
+        let stage = tempfile::Builder::new()
+            .prefix(".omime-settings-")
+            .tempdir_in(&self.user)?;
+        let directory = c_path(stage.path())
+            .ok_or_else(|| std::io::Error::other("a NUL in the settings directory"))?;
+        let mut traits = self.strings.traits();
+        traits.user_data_dir = directory.as_ptr();
+        // SAFETY: no sessions or other threads use this process's deployer.
+        // The strings outlive the calls; CustomSettings holds this same deployer.
+        // Always restore its real directories before returning, including on error.
+        let saved = unsafe {
+            (self.api.deployer_initialize)(&raw mut traits);
+            let saved = (self.levers.save_settings)(self.custom());
+            traits = self.strings.traits();
+            (self.api.deployer_initialize)(&raw mut traits);
+            saved
+        };
+        if saved == 0 {
+            return Err(std::io::Error::other("Rime could not save its settings"));
         }
-        Ok(())
+        let staged = stage.path().join(CUSTOM);
+        let file = std::fs::File::open(&staged)?;
+        if file.metadata()?.len() == 0 {
+            return Err(std::io::Error::other("Rime wrote empty settings"));
+        }
+        file.sync_all()?;
+        replace(&staged, &self.user.join(CUSTOM))
     }
+}
+
+/// The user's customization of `default.yaml`, in their Rime data.
+const CUSTOM: &str = "default.custom.yaml";
+
+/// Puts `staged` in the place of `destination`, at once. A link stays a link, as
+/// dotfiles kept elsewhere are: the file it points to is replaced, which fails where
+/// that cannot be written.
+fn replace(staged: &Path, destination: &Path) -> std::io::Result<()> {
+    if !destination.is_symlink() {
+        return std::fs::rename(staged, destination);
+    }
+    let target = destination.canonicalize()?;
+    let directory = target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("a link to no file"))?;
+    // Renaming does not cross file systems: copy beside the file first.
+    let beside = tempfile::Builder::new()
+        .prefix(".omime-settings-")
+        .tempfile_in(directory)?;
+    std::fs::copy(staged, beside.path())?;
+    beside.as_file().sync_all()?;
+    beside.persist(&target).map_err(|e| e.error)?;
+    Ok(())
 }
 
 impl Drop for Levers {
@@ -298,6 +310,8 @@ mod tests {
             return;
         };
         let user = std::env::temp_dir().join(format!("omime-rime-levers-{}", std::process::id()));
+        let elsewhere =
+            std::env::temp_dir().join(format!("omime-rime-dotfiles-{}", std::process::id()));
         crate::data::customize(&shared, &user).expect("customized");
         {
             let levers = Levers::open(&shared, &user).expect("librime's settings");
@@ -317,8 +331,9 @@ mod tests {
             assert!(levers.customize_string("ascii_composer/switch_key/Shift_L", "noop"));
             levers.save().expect("save settings");
 
-            // A failed save must be reported, and a retry must keep the changes.
-            let path = user.join("default.custom.yaml");
+            // A failed save is reported and leaves the file as it was; the choices
+            // made again are saved, as the window does.
+            let path = user.join(CUSTOM);
             let backup = user.join("default.custom.backup");
             std::fs::rename(&path, &backup).expect("back up the settings");
             std::fs::create_dir(&path).expect("block the destination");
@@ -328,18 +343,37 @@ mod tests {
                 "a directory cannot be replaced with settings"
             );
             std::fs::remove_dir(&path).expect("unblock the destination");
-            levers.save().expect("retry the pending changes");
+            std::fs::rename(&backup, &path).expect("restore the settings");
+            let kept = std::fs::read_to_string(&path).expect("kept settings");
+            assert!(kept.contains("\"menu/page_size\": 7"), "{kept}");
+            levers.reset().expect("read again");
+            assert!(levers.customize_int("menu/page_size", 8));
+            levers.save().expect("save the choices made again");
             let retried = std::fs::read_to_string(&path).expect("retried settings");
             assert!(retried.contains("\"menu/page_size\": 8"), "{retried}");
-            std::fs::rename(backup, path).expect("restore the first saved settings");
+
+            // Dotfiles kept elsewhere: the link stays, the file it points to changes.
+            std::fs::create_dir(&elsewhere).expect("a directory elsewhere");
+            let target = elsewhere.join("rime-default.yaml");
+            std::fs::rename(&path, &target).expect("move the settings elsewhere");
+            std::os::unix::fs::symlink(&target, &path).expect("link them");
+            levers.reset().expect("read through the link");
+            assert!(levers.customize_int("menu/page_size", 9));
+            levers.save().expect("save through the link");
+            assert!(path.is_symlink(), "the link was replaced with a file");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("linked settings"),
+                std::fs::read_to_string(&target).expect("settings elsewhere"),
+            );
         }
-        let written = std::fs::read_to_string(user.join("default.custom.yaml")).expect("written");
+        let written = std::fs::read_to_string(user.join(CUSTOM)).expect("written");
         let _ = std::fs::remove_dir_all(&user);
+        let _ = std::fs::remove_dir_all(&elsewhere);
         let luna = written.find("luna_pinyin").expect(&written);
         let cangjie = written.find("cangjie5").expect(&written);
         assert!(luna < cangjie, "{written}");
         assert!(!written.contains("double_pinyin_flypy"), "{written}");
-        assert!(written.contains("\"menu/page_size\": 7"), "{written}");
+        assert!(written.contains("\"menu/page_size\": 9"), "{written}");
         assert!(
             written.contains("\"ascii_composer/switch_key/Shift_L\": noop"),
             "{written}"

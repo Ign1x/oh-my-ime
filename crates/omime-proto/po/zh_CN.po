@@ -903,6 +903,9 @@ msgstr "切换中英，清除已输入的内容"
 msgid "Does nothing"
 msgstr "不切换"
 
+msgid "As Rime's files say"
+msgstr "由 Rime 配置文件决定"
+
 msgid "In a row"
 msgstr "横排"
 
@@ -923,6 +926,24 @@ msgstr "无法读取 Rime 的设置，只能更改候选窗："
 
 msgid "Could not save all settings. Please retry:"
 msgstr "保存未完成，请修复后重试："
+
+msgid "No Rime data (the rime-data package, or ${variable})."
+msgstr "没有 Rime 数据（rime-data 软件包，或 ${variable}）。"
+
+msgid "No home directory."
+msgstr "找不到主目录。"
+
+msgid "Select at least one schema."
+msgstr "请至少勾选一个方案。"
+
+msgid "Rime could not select the schemas."
+msgstr "Rime 无法选用这些方案。"
+
+msgid "Rime could not change the page size."
+msgstr "Rime 无法更改每页候选数。"
+
+msgid "Rime could not change the Shift key."
+msgstr "Rime 无法更改 Shift 键的行为。"
 
 msgid "Rime is deploying…"
 msgstr "Rime 正在部署…"

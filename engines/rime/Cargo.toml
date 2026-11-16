@@ -26,5 +26,9 @@ slint = { version = "1.16", default-features = false, features = [
 ] }
 # librime itself (BSD-3-Clause) is linked as a system library; see src/rime.
 
+[dev-dependencies]
+# Shows the settings window without a display in the tests; the version of slint.
+i-slint-backend-testing = "~1.16"
+
 [lints]
 workspace = true

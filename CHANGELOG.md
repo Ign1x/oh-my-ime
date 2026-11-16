@@ -13,6 +13,15 @@ All notable changes to this project are documented here. The format follows
   recipes. Packaging checks install the native packages in isolated containers;
   existing release archives can also be packaged without replacing published assets.
 
+### Fixed
+
+- Rime's settings window shows what is chosen for Shift, the layout and the appearance
+  again; the three lists were blank. A Shift setting the window does not offer, such
+  as Rime's own `inline_ascii` or a different one for each Shift key, is shown as
+  "As Rime's files say" and kept on saving. The window says why Save is off when no
+  schema is checked, its messages are translated, and a `default.custom.yaml` that is
+  a link (dotfiles kept elsewhere) stays one when saved.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added
