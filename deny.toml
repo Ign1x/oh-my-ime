@@ -17,6 +17,7 @@ ignore = [
   { id = "RUSTSEC-2026-0371", reason = "zbus_names 4, via Slint's zbus 5 in the UI programs" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5, via Slint's zbus 5 in the UI programs and gvdb in omimed" },
   { id = "RUSTSEC-2026-0441", reason = "pin-utils is used only by spin_on in Slint's build-time macros; spin_on 0.1.1 has no newer release. This advisory records maintenance status, not a reported vulnerability. Remove when Slint replaces this dependency." },
+  { id = "RUSTSEC-2026-0543", reason = "chrono, via i-slint-core (Slint's date and time widgets) in the UI programs. This advisory records maintenance status, not a reported vulnerability. Remove when Slint replaces this dependency." },
 ]
 
 [licenses]
@@ -77,6 +78,7 @@ deny = [
   { crate = "rustybuzz", wrappers = ["usvg"] },
   { crate = "pin-utils", wrappers = ["spin_on"] },
   { crate = "spin_on", wrappers = ["slint-macros"] },
+  { crate = "chrono", wrappers = ["i-slint-core"] },
 ]
 
 [sources]
