@@ -148,6 +148,14 @@ def check(components):
     desktop = Path("/usr/share/applications/io.github.ign1x.OhMyIme.Settings.desktop")
     owner(desktop, "oh-my-ime")
     assert "Exec=/usr/bin/omime-settings" in desktop.read_text()
+    kde_desktop = Path("/usr/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop")
+    gnome_desktop = Path("/usr/share/applications/io.github.ign1x.OhMyIme.IBus.desktop")
+    ibus_component = Path("/usr/share/ibus/component/oh-my-ime.xml")
+    for path in (kde_desktop, gnome_desktop, ibus_component):
+        owner(path, "oh-my-ime")
+    assert "Exec=/usr/bin/omimed" in kde_desktop.read_text()
+    assert "Exec=/usr/bin/omimed --ibus" in gnome_desktop.read_text()
+    assert "<exec>/usr/bin/omimed --ibus</exec>" in ibus_component.read_text()
     for engine in ("echo", "sparkle", "ibus") + (("rime",) if components == "all" else ()):
         path = Path("/usr/share/oh-my-ime/engines") / engine / "engine.toml"
         manifest = tomllib.loads(path.read_text())["engine"]
