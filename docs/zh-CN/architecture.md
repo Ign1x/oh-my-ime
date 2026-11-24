@@ -211,8 +211,8 @@ Slint 用 OpenGL 绘制的窗口（设置程序、Rime 和 Sparkle 的窗口）�
 
 ## 当前里程碑之后的兼容工作
 
-逐引擎 IBus 宿主推迟。目前通过托管完整的 Fcitx 5 和 IBus 框架接入其输入法，
-不再计划单独实现 Fcitx5 插件宿主。
+KDE IM v1 与 GNOME 系统 IBus 入口已和现有托管 Fcitx5/IBus 框架并存。逐引擎 IBus
+宿主属于另一种设计：未来可以只加载一个 IBus 引擎而不托管完整框架，但不属于当前入口契约。
 
 ## 安全说明
 

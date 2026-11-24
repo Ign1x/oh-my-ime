@@ -655,8 +655,10 @@ false` turns them off.
 
 ## Compatibility work after the current milestones
 
-Per-engine IBus hosting is deferred. The current integration hosts complete Fcitx 5
-and IBus frameworks; a separate Fcitx5 addon host is outside the plan.
+The native KDE IM v1 and GNOME system-IBus routes are implemented alongside the
+existing hosted Fcitx5/IBus framework routes. Per-engine IBus hosting remains a
+separate design: a future adapter could load one IBus engine without hosting the
+complete framework, but it is outside the current route contract.
 
 ## Security notes
 
