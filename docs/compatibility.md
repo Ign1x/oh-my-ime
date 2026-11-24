@@ -10,7 +10,7 @@ The initial machine-readable baseline is
 ## Current evidence
 
 Compatibility is recorded for a particular application build, desktop, input route and scenario.
-The following rows were run in isolated sessions on 2026-11-24 with the current source build:
+The following rows were run in isolated sessions on 2026-11-24 with the current source build: The machine-readable native baseline is [`tests/desktop/results/2026-11-24-native.json`](../tests/desktop/results/2026-11-24-native.json).
 
 | Desktop / application | Result | Scope |
 |---|---|---|

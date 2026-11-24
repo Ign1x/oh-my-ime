@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "description": "Native KDE/GNOME/IBus acceptance baseline for the 0.5.0 development source.",
+  "date": "2026-11-24",
+  "revision": "8084ca7176c963eae125b0631938079848d660cd",
+  "worktree_dirty": true,
+  "runs": [
+    {
+      "desktop": "KWin 6.8.3",
+      "route": "privileged input-method-v1 + input-panel-v1",
+      "engine": "Echo and Rime/luna_pinyin",
+      "session": "private virtual output",
+      "status": "passed",
+      "checks": ["startup", "Echo preedit/commit", "Rime 中国 commit", "candidate panel role", "password bypass", "focus recovery"],
+      "evidence": "/tmp/omime-native/kwin-run-8/report.json",
+      "limitations": ["physical display", "mixed DPI", "fullscreen", "visual panel placement"]
+    },
+    {
+      "desktop": "GNOME Shell 50.4",
+      "route": "system IBus engine + native Wayland text-input",
+      "engine": "Rime/luna_pinyin",
+      "session": "private headless Mutter/Wayland and IBus 1.5.34",
+      "status": "passed",
+      "checks": ["Shell startup", "IBus engine selection", "inline preedit", "candidate delivery", "candidate screenshot", "中国 commit", "focus cleanup", "password bypass"],
+      "evidence": "/tmp/omime-gnome-a3/report.json",
+      "limitations": ["physical display", "mixed DPI", "fullscreen", "GTK/Qt/browser applications", "pointer click"]
+    },
+    {
+      "desktop": "IBus 1.5.34",
+      "route": "native engine adapter",
+      "engine": "Rime and Echo",
+      "session": "private headless IBus and D-Bus",
+      "status": "passed",
+      "checks": ["Rime Unicode commit", "semantic candidates", "paging/clicking", "sensitive bypass", "focus cleanup", "unhandled shortcuts", "Echo commit-only cache clearing"],
+      "evidence": ["/tmp/omime-ibus-rime-b5/result.json", "/tmp/omime-ibus-echo-b5/result.json"],
+      "limitations": ["desktop shell presentation is covered by the GNOME row"]
+    }
+  ]
+}
