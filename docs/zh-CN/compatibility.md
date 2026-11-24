@@ -13,6 +13,7 @@
 | 桌面 / 应用 | 结果 | 验证范围 |
 |---|---|---|
 | sway 1.12 / Firefox 159.0，原生 Wayland | 预编辑、候选、中文上屏和失焦清理通过 | 独立 Firefox 配置与双输入框页面；Rime `luna_pinyin` |
+| sway 1.12 / Firefox 160.0，原生 Wayland | 预编辑、候选选择、中文上屏和失焦清理通过 | 新建 Firefox 配置；Rime `luna_pinyin`；`/tmp/omime-p0-sway-firefox-fixed/report.json` |
 | sway 1.12 / foot 1.28.0，原生 Wayland | 候选和中文上屏通过 | 真实终端 stdin；Rime `luna_pinyin` |
 | sway 1.12 / xterm 411，XWayland | 候选和中文上屏通过 | 真实终端 stdin，经 XIM |
 | KWin 6.8.3，虚拟显示器 | IM v1 启动、Echo 组合、Rime 中国、候选角色、密码绕过、焦点恢复通过 | `/tmp/omime-native/kwin-run-8/report.json`，6 项检查 |
@@ -22,6 +23,11 @@
 KWin 使用合成原生文本框，GNOME 另外启动真实 GTK3/GTK4 `Gtk.Entry` 和 Qt6 Quick `TextField`；两者都使用私有总线，证明适配器与桌面生命周期，
 不代表所有应用。实际显示器、混合 DPI、全屏、启动器、鼠标定位，以及浏览器/Electron/办公软件仍需
 分别验收。KWin 虚拟渲染器截图不稳定；GNOME 候选截图已成功保存。
+
+2026-11-24 的 P0 隔离复验中，GNOME 工具包完整路径和 Firefox 160 场景全部通过。
+KWin 通过启动、Echo 组合和 IM v1 候选 panel 角色检查，但 KWin 6.8.3 在虚拟截图请求时崩溃，
+后续截图和 Rime 上屏被该虚拟渲染器阻塞。证据保留在 `/tmp/omime-p0-kwin-1/report.json` 和
+`/tmp/omime-p0-gnome-toolkits/report.json`。
 
 ## 运行隔离探针
 

@@ -133,6 +133,15 @@ class DesktopProbeTests(unittest.TestCase):
         self.assertIn("Qt6 Quick TextField commit", gnome["checks"])
         self.assertEqual("/tmp/omime-gnome-toolkits-final2/report.json", gnome["evidence"])
 
+    def test_p0_baseline_records_application_and_compositor_blockers(self):
+        baseline = json.loads((ROOT / "tests/desktop/results/2026-11-24-p0.json").read_text())
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual({run["status"] for run in baseline["runs"]}, {"passed", "blocked"})
+        firefox = next(run for run in baseline["runs"] if "Firefox" in run["desktop"])
+        self.assertIn("candidate keyboard", firefox["checks"])
+        kwin = next(run for run in baseline["runs"] if run["desktop"].startswith("KWin"))
+        self.assertTrue(kwin["blocked_checks"])
+
     def test_require_compatible_rejects_registry_only_native_probe(self):
         report = {
             "checks": {

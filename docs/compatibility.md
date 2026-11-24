@@ -15,6 +15,7 @@ The following rows were run in isolated sessions on 2026-11-24 with the current 
 | Desktop / application | Result | Scope |
 |---|---|---|
 | sway 1.12 / Firefox 159.0, native Wayland | Passed: preedit, candidate selection, Chinese commit and focus cleanup | Private Firefox profile and local two-field fixture; Rime `luna_pinyin` |
+| sway 1.12 / Firefox 160.0, native Wayland | Passed: preedit, candidate selection, Chinese commit and focus cleanup | Fresh private Firefox profile; Rime `luna_pinyin`; `/tmp/omime-p0-sway-firefox-fixed/report.json` |
 | sway 1.12 / foot 1.28.0, native Wayland | Passed: candidate selection and Chinese commit | Real terminal stdin; Rime `luna_pinyin` |
 | sway 1.12 / xterm 411, XWayland | Passed: candidate selection and Chinese commit | Real terminal stdin through XIM |
 | KWin 6.8.3, virtual output | Passed: IM v1 startup, Echo composition, Rime 中国, panel role, password bypass and focus recovery | `/tmp/omime-native/kwin-run-8/report.json`; six checks, virtual output |
@@ -26,6 +27,12 @@ The KWin row uses a synthetic native text field; the GNOME row combines that fie
 desktop-owned lifecycle, not every application. Physical displays, mixed DPI, fullscreen, launchers,
 pointer placement and browser/Electron/office applications remain separate acceptance rows. KWin
 virtual-renderer screenshot capture is unstable; the GNOME candidate screenshot was captured successfully.
+
+The 2026-11-24 P0 isolated follow-up passed the complete GNOME toolkit run and Firefox 160 scenarios.
+KWin passed startup, Echo composition and the IM v1 candidate-panel role, then KWin 6.8.3 crashed while
+handling the virtual screenshot request. Later KWin screenshot and Rime commit checks are blocked by
+that virtual renderer. Evidence remains at `/tmp/omime-p0-kwin-1/report.json` and
+`/tmp/omime-p0-gnome-toolkits/report.json`.
 
 ## Run a private probe
 

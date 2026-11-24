@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-24",
+  "revision": "2497fa48a1184639bf989c25154d663dc38c49b8",
+  "scope": "isolated P0 desktop and application acceptance",
+  "runs": [
+    {
+      "desktop": "GNOME Shell 50.4",
+      "status": "passed",
+      "evidence": "/tmp/omime-p0-gnome-toolkits/report.json",
+      "checks": ["Shell startup", "IBus selection", "GTK3 commit", "GTK4 commit", "Qt6 commit", "preedit", "candidate delivery", "candidate screenshot", "Rime commit", "focus cleanup", "password bypass"],
+      "limitations": ["headless virtual output", "software renderer", "physical displays", "mixed DPI", "fullscreen", "pointer placement", "browser/Electron/office applications"]
+    },
+    {
+      "desktop": "sway 1.12 / Firefox 160.0",
+      "status": "passed",
+      "evidence": "/tmp/omime-p0-sway-firefox-fixed/report.json",
+      "route": "native Wayland text-input-v3",
+      "checks": ["preedit", "candidate keyboard", "Chinese commit", "focus cleanup"],
+      "limitations": ["private Firefox profile", "synthetic local page", "no pointer candidate selection", "no physical display"]
+    },
+    {
+      "desktop": "KWin 6.8.3",
+      "status": "blocked",
+      "evidence": "/tmp/omime-p0-kwin-1/report.json",
+      "checks": ["startup", "Echo preedit/commit", "IM v1 candidate panel role"],
+      "blocked_checks": ["virtual candidate screenshot", "later Rime commit and recovery checks"],
+      "detail": "KWin crashed while handling the isolated virtual screenshot request; the compositor virtual renderer is the blocking prerequisite.",
+      "limitations": ["virtual output", "physical display and mixed DPI remain untested"]
+    }
+  ]
+}
