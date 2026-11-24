@@ -90,14 +90,15 @@ nix develop .#e2e --command python3 tests/desktop/native-ibus.py \
 nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
   --shell /path/to/gnome-shell --out /tmp/omime-gnome-native
 nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
-  --shell /path/to/gnome-shell --gtk4 --out /tmp/omime-gnome-gtk4-native
+  --shell /path/to/gnome-shell --gtk3 --gtk4 --out /tmp/omime-gnome-gtk34-native
 ```
 
 Each run creates its own XDG directories, bus and processes. Existing sessions are
 not changed. The KWin test uses a virtual output, and the Shell test requires a
-headless-capable GNOME build. Screenshot capture on KWin 6.8.3's virtual renderer
+headless-capable GNOME build. The probe forces a virtual software renderer so host GPU
+state cannot make cleanup nondeterministic. Screenshot capture on KWin 6.8.3's virtual renderer
 crashed the compositor during testing, so candidate geometry is not visually
-accepted by that run. The optional `--gtk4` run starts a real GTK4 `Gtk.Entry` in
-the isolated Shell session and checks one Rime commit; it requires GTK4 and
-PyGObject in the environment. Physical displays, mixed DPI, fullscreen, and the
-GTK3, Qt, browser, Electron and office application matrix require further acceptance.
+accepted by that run. The optional `--gtk3` and `--gtk4` flags start real GTK3/GTK4
+`Gtk.Entry` clients in the isolated Shell session and check one Rime commit in each;
+they require GTK 3/4 and PyGObject in the environment. Physical displays, mixed DPI,
+fullscreen, and the Qt, browser, Electron and office application matrix require further acceptance.

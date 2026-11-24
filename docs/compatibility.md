@@ -18,12 +18,12 @@ The following rows were run in isolated sessions on 2026-11-24 with the current 
 | sway 1.12 / foot 1.28.0, native Wayland | Passed: candidate selection and Chinese commit | Real terminal stdin; Rime `luna_pinyin` |
 | sway 1.12 / xterm 411, XWayland | Passed: candidate selection and Chinese commit | Real terminal stdin through XIM |
 | KWin 6.8.3, virtual output | Passed: IM v1 startup, Echo composition, Rime 中国, panel role, password bypass and focus recovery | `/tmp/omime-native/kwin-run-8/report.json`; six checks, virtual output |
-| GNOME Shell 50.4, virtual output | Passed: system IBus selection, GTK4 `Gtk.Entry` commit, inline preedit, Rime commit, candidate delivery/screenshot, focus cleanup and password bypass | `/tmp/omime-gnome-gtk4-final4/report.json`; nine checks |
+| GNOME Shell 50.4, virtual output | Passed: system IBus selection, GTK3/GTK4 `Gtk.Entry` commits, inline preedit, Rime commit, candidate delivery/screenshot, focus cleanup and password bypass | `/tmp/omime-gnome-gtk34-probe-2/report.json`; ten checks |
 | IBus 1.5.34, headless native engine | Passed: Rime six checks and Echo five checks, including paging/clicking and commit-only cache clearing | `/tmp/omime-ibus-rime-b5/result.json`, `/tmp/omime-ibus-echo-b5/result.json` |
 
-The KWin row uses a synthetic native text field; the GNOME row combines that field with a real GTK4
-`Gtk.Entry`. Both use private buses. They establish the adapter and desktop-owned lifecycle, not every
-application. Physical displays, mixed DPI, fullscreen, launchers, pointer placement and GTK3/Qt/browser/
+The KWin row uses a synthetic native text field; the GNOME row combines that field with real GTK3 and GTK4
+`Gtk.Entry` clients. Both use private buses. They establish the adapter and desktop-owned lifecycle, not
+every application. Physical displays, mixed DPI, fullscreen, launchers, pointer placement and Qt/browser/
 Electron/office applications remain separate acceptance rows. KWin virtual-renderer screenshot capture is
 unstable; the GNOME candidate screenshot was captured successfully.
 

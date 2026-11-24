@@ -21,6 +21,8 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--shell', default='gnome-shell')
     parser.add_argument('--bin-dir', type=Path, default=ROOT/'target/debug')
+    parser.add_argument('--gtk3', action='store_true',
+                        help='also type into a real GTK3 Gtk.Entry in the private Shell session')
     parser.add_argument('--gtk4', action='store_true',
                         help='also type into a real GTK4 Gtk.Entry in the private Shell session')
     args = parser.parse_args()
@@ -51,10 +53,13 @@ def main():
               'shell_version': shared['version']([args.shell,'--version']),
               'limitations': ['Headless virtual output; physical displays, mixed DPI, fullscreen and launchers not tested.',
                               'Native synthetic Wayland text field; GTK/Qt/browser applications need separate acceptance.']}
-    if args.gtk4:
-        report['scope'] += ' and a real GTK4 Gtk.Entry'
-        report['limitations'][1] = ('Native synthetic Wayland text field; GTK3, Qt, browser, Electron and office '
-                                    'applications need separate acceptance.')
+    gtk_toolkits = [version for version, enabled in (('GTK3', args.gtk3), ('GTK4', args.gtk4)) if enabled]
+    if gtk_toolkits:
+        report['scope'] += ' and ' + ' and '.join(f'a real {version} Gtk.Entry' for version in gtk_toolkits)
+        untested = [version for version in ('GTK3', 'GTK4') if version not in gtk_toolkits]
+        untested += ['Qt', 'browser', 'Electron', 'office']
+        report['limitations'][1] = ('Native synthetic Wayland text field; ' + ', '.join(untested) +
+                                    ' applications need separate acceptance.')
     remote = None
     try:
         bus = args.out/'bus.conf'
@@ -70,7 +75,10 @@ def main():
         session.start('omimed',[args.bin_dir/'omimed','--ibus','--engine','rime'])
         shared['wait_for']('Rime schemas',lambda:'rime/luna_pinyin' in session.run(['omime','list','--all']).stdout,60)
         session.run(['omime','switch','rime/luna_pinyin'])
-        shell = session.start('shell',[args.shell,'--wayland','--headless','--no-x11','--virtual-monitor','1280x720','--wayland-display',env['WAYLAND_DISPLAY']])
+        shell = session.start('shell', [args.shell, '--wayland', '--headless', '--no-x11',
+                                        '--virtual-monitor', '1280x720', '--wayland-display',
+                                        env['WAYLAND_DISPLAY']],
+                             MUTTER_DEBUG_FORCE_VIRTUAL='1', LIBGL_ALWAYS_SOFTWARE='1')
         shared['wait_for']('GNOME display',lambda:(Path(env['XDG_RUNTIME_DIR'])/env['WAYLAND_DISPLAY']).exists(),30)
         import gi
         from gi.repository import Gio, GLib
@@ -106,13 +114,17 @@ def main():
         report['checks']['ibus_engine_selection']='passed'
         time.sleep(.5)
         keys=dict(zip('qwertyuiop',range(16,26)))|dict(zip('asdfghjkl',range(30,39)))|dict(zip('zxcvbnm',range(44,51)))|{' ':57}
-        if args.gtk4:
+        for toolkit in gtk_toolkits:
+            gtk_id = toolkit.lower()
             # Keep the event log separate from Session.start's stdout/stderr log.
-            gtk_log = args.out/'gtk4-entry.log'
-            gtk_process = session.start('gtk4-editor', ["python3", ROOT/'tests/desktop/gtk4-ibus-editor.py'],
-                                        OMIME_GTK4_LOG=str(gtk_log), GDK_BACKEND='wayland',
-                                        GSK_RENDERER='cairo', GTK_A11Y='none')
-            shared['wait_for']('GTK4 editor', lambda: gtk_log.exists() and 'ready true' in gtk_log.read_text(), 20)
+            gtk_log = args.out/f'{gtk_id}-entry.log'
+            gtk_process = session.start(f'{gtk_id}-editor',
+                                        ["python3", ROOT/f'tests/desktop/{gtk_id}-ibus-editor.py'],
+                                        OMIME_GTK_LOG=str(gtk_log), GDK_BACKEND='wayland',
+                                        GSK_RENDERER='cairo', GTK_A11Y='none',
+                                        **({'GTK_IM_MODULE': 'ibus'} if gtk_id == 'gtk3' else {}))
+            shared['wait_for'](f'{toolkit} editor',
+                               lambda: gtk_log.exists() and 'ready true' in gtk_log.read_text(), 20)
             # `present()` and `grab_focus()` return before GTK has delivered the
             # focus-in event to IBus. Give the toolkit one main-loop turn before
             # injecting the first key, otherwise that key can bypass IBus.
@@ -120,20 +132,22 @@ def main():
             for ch in 'zhongguo':
                 key(keys[ch])
             key(keys[' '])
-            shared['wait_for']('GTK4 Chinese commit', lambda:'text "中国"' in gtk_log.read_text(), 20)
+            shared['wait_for'](f'{toolkit} Chinese commit',
+                               lambda: 'text "中国"' in gtk_log.read_text(), 20)
             if gtk_log.read_text().count('text "中国"') != 1:
-                raise RuntimeError('GTK4 received Chinese text more than once')
-            shared['wait_for']('GTK4 editor exit', lambda: gtk_process.poll() is not None, 10)
+                raise RuntimeError(f'{toolkit} received Chinese text more than once')
+            shared['wait_for'](f'{toolkit} editor exit', lambda: gtk_process.poll() is not None, 10)
             if gtk_process.returncode != 0:
-                raise RuntimeError(f'GTK4 editor exited with status {gtk_process.returncode}')
-            report['checks']['gtk4_ibus_commit'] = 'passed'
-            # GTK4 owns the active focus after its commit. Start a fresh native
-            # text-input client so the remaining protocol checks do not depend on
-            # compositor-specific focus restoration behavior.
+                raise RuntimeError(f'{toolkit} editor exited with status {gtk_process.returncode}')
+            report['checks'][f'{gtk_id}_ibus_commit'] = 'passed'
+        if gtk_toolkits:
+            # A toolkit owns the active focus after its commit. Start a fresh
+            # native text-input client so the remaining protocol checks do not
+            # depend on compositor-specific focus restoration behavior.
             session.start('native-editor', [args.bin_dir/'omime-ti-client', '--app-id',
                                             'omime-gnome-native-editor'])
             log = args.out/'native-editor.log'
-            shared['wait_for']('native editor after GTK4', lambda:log.exists() and 'ready' in log.read_text(), 20)
+            shared['wait_for']('native editor after GTK', lambda:log.exists() and 'ready' in log.read_text(), 20)
             time.sleep(.5)
         # Refresh the fixture's cursor after Shell created its IBus context. A
         # direct space and backspace are real editing events, so the fixture sends

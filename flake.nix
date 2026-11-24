@@ -215,22 +215,26 @@
           cargo-deny
           foot
         ]) { };
-        # Just enough to build and run the end-to-end tests (used by CI). The Python
-        # engine example needs Python with PyGObject and GTK 4.
+        # Just enough to build and run the end-to-end tests (used by CI). The native
+        # GNOME application probes use Python with PyGObject and GTK 3/4.
         e2e =
           shell pkgs
             [
               (pkgs.python3.withPackages (ps: [ ps.pygobject3 ]))
+              pkgs.gtk3
               pkgs.gtk4
             ]
             {
-              # GTK 4 finds its own typelibs in the gtk4 output, and the namespaces they
-              # import in the outputs of their libraries.
+              # GTK 3/4 find their typelibs in the toolkit outputs, and the namespaces
+              # they import in the outputs of their libraries.
               GI_TYPELIB_PATH = pkgs.lib.makeSearchPath "lib/girepository-1.0" (
                 map pkgs.lib.getLib (
                   with pkgs;
                   [
+                    gtk3
                     gtk4
+                    atk
+                    at-spi2-core
                     glib
                     gdk-pixbuf
                     pango
