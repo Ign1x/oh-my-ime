@@ -21,10 +21,34 @@ let
   ibus = pkgs.ibus-with-plugins.override { plugins = cfg.ibus.engines; };
   frameworks = lib.optional cfg.fcitx5.enable fcitx5 ++ lib.optional cfg.ibus.enable ibus;
   servicePath = import ./service-path.nix { inherit lib frameworks; };
+  native = cfg.backend != "wayland";
+  installed = if native then import ./native-package.nix {
+    inherit pkgs lib frameworks;
+    package = cfg.package;
+    rime = if cfg.rime.enable then cfg.rime.package else null;
+  } else cfg.package;
 in
 {
   options.programs.oh-my-ime = {
     enable = lib.mkEnableOption "oh-my-ime, a Wayland-first input method platform";
+
+    backend = lib.mkOption {
+      type = lib.types.enum [ "wayland" "kde" "gnome" ];
+      default = "wayland";
+      description = ''
+        Desktop input route. `wayland` uses input-method-v2 (Hyprland/sway).
+        `kde` is launched by KWin with its privileged connection; select oh-my-ime
+        in Plasma's Virtual Keyboard settings. `gnome` registers an engine with
+        the session IBus daemon; add oh-my-ime in GNOME's Input Sources.
+      '';
+    };
+
+    autoStart = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.backend != "kde";
+      defaultText = lib.literalExpression ''backend != "kde"'';
+      description = "Start the user service with the graphical session. KWin must launch the KDE backend itself.";
+    };
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -119,34 +143,50 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = !config.i18n.inputMethod.enable;
+        assertion = !config.i18n.inputMethod.enable || (cfg.backend == "gnome" && config.i18n.inputMethod.type == "ibus");
         message = ''
-          programs.oh-my-ime and i18n.inputMethod cannot both be enabled: a Wayland
-          seat has room for one input method, and two would fight over it. Disable
-          i18n.inputMethod or programs.oh-my-ime.
+          programs.oh-my-ime can share i18n.inputMethod only with type = "ibus"
+          and backend = "gnome". Other combinations compete for the desktop input route.
         '';
+      }
+      {
+        assertion = cfg.backend != "kde" || !cfg.autoStart;
+        message = "The KDE backend must be launched by KWin, so programs.oh-my-ime.autoStart must be false.";
+      }
+      {
+        assertion = cfg.backend != "gnome" || (!cfg.fcitx5.enable && !cfg.ibus.enable);
+        message = "GNOME's native IBus route supports native engines; programs.oh-my-ime.fcitx5/ibus are hosted frameworks and require the Wayland backend.";
       }
     ];
 
     environment.systemPackages = [
-      cfg.package
+      installed
     ]
-    ++ lib.optionals cfg.qtModules [
+    ++ lib.optionals (cfg.qtModules && cfg.backend != "gnome") [
       pkgs.qt6Packages.fcitx5-qt
       pkgs.libsForQt5.fcitx5-qt
     ];
 
     # Engines that other packages install (share/oh-my-ime/engines) are found through
     # the system profile, which NixOS links only parts of share/ into.
-    environment.pathsToLink = [ "/share/oh-my-ime" ];
+    environment.pathsToLink = [ "/share/oh-my-ime" "/share/ibus/component" ];
+
+    # GNOME keeps ownership of the input service; oh-my-ime is one of its engines.
+    i18n.inputMethod = lib.mkIf (cfg.backend == "gnome") {
+      enable = lib.mkDefault true;
+      type = lib.mkDefault "ibus";
+      ibus.engines = [ installed ];
+      ibus.waylandFrontend = lib.mkDefault true;
+    };
 
     # The unit lives in the package; linking it here makes it part of the systemd
     # user manager's unit files. wantedBy and the environment become a drop-in for that
     # unit. The frameworks are only on its PATH: installed globally, Fcitx 5's
     # autostart entry would start it as the desktop's input method, in omimed's place.
-    systemd.packages = [ cfg.package ];
-    systemd.user.services.omimed = {
-      wantedBy = [ "graphical-session.target" ];
+    systemd.packages = lib.optional (cfg.backend != "kde") cfg.package;
+    systemd.user.services.omimed = lib.mkIf (cfg.backend != "kde") {
+      wantedBy = lib.optional cfg.autoStart "graphical-session.target";
+      serviceConfig.ExecStart = lib.mkIf (cfg.backend == "gnome") (lib.mkForce "${installed}/bin/omimed --ibus");
       serviceConfig.RestartPreventExitStatus = 69;
       serviceConfig.KillMode = "mixed";
       serviceConfig.TimeoutStopSec = 6;
@@ -160,7 +200,7 @@ in
 
     # GTK 4 and Qt 6.8+ use the compositor's text-input; the empty GTK_IM_MODULE keeps
     # GTK 3 from loading an immodule that is not there.
-    environment.sessionVariables = lib.mkIf cfg.sessionVariables {
+    environment.sessionVariables = lib.mkIf (cfg.sessionVariables && cfg.backend != "gnome") {
       GTK_IM_MODULE = "";
       QT_IM_MODULE = "fcitx";
       QT_IM_MODULES = "wayland;fcitx";

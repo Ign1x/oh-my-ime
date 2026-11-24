@@ -434,3 +434,18 @@ GLib (`g_dbus_connection_new_for_address`), Qt (`QDBusConnection::connectToPeer`
 sd-bus and zbus all support peer-to-peer connections.
 [`examples/python-gtk4`](../examples/python-gtk4) is a whole engine in Python with
 PyGObject, without the SDK, whose GTK 4 window becomes the popup like any other.
+
+## Optional desktop candidates (protocol 1.3)
+
+A host advertising `candidate-ui = true` with negotiated API minor ≥ 3 can draw
+semantic candidates. `Host::candidate_ui()` checks both gates. Send a `CandidatePage`
+through `Host::set_candidates(context, page)` or `Context::set_candidates(page)`;
+an empty page hides the lookup. Entries contain text, comment and label, with a
+page-local cursor and `has_previous`/`has_next` flags.
+
+Implement `candidate_clicked` and `candidate_page` callbacks to select or page in
+your engine. Return ordered actions as for keys; validate the active context and
+candidate index. Older hosts never receive these extension calls. Use
+`OMIME_PRESENTATION=ibus` to select a headless presentation path when launched on
+GNOME. Rime demonstrates this path while keeping its existing Wayland/Slint UI.
+A GUI-only engine must not create an unattached popup in this mode.

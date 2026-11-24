@@ -110,6 +110,15 @@ def stage_component(payload, destination, component):
         shutil.rmtree(prefix / "share/systemd")
         desktop = prefix / "share/applications/io.github.ign1x.OhMyIme.Settings.desktop"
         desktop.write_text(desktop.read_text().replace("Exec=omime-settings", "Exec=/usr/bin/omime-settings"))
+    native = prefix / "share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop"
+    if native.exists():
+        native.write_text(native.read_text().replace("Exec=omimed", "Exec=/usr/bin/omimed"))
+    gnome = prefix / "share/applications/io.github.ign1x.OhMyIme.IBus.desktop"
+    if gnome.exists():
+        gnome.write_text(gnome.read_text().replace("Exec=omimed --ibus", "Exec=/usr/bin/omimed --ibus"))
+    ibus = prefix / "share/ibus/component/oh-my-ime.xml"
+    if ibus.exists():
+        ibus.write_text(ibus.read_text().replace("<exec>omimed --ibus</exec>", "<exec>/usr/bin/omimed --ibus</exec>"))
     for engine in ("echo", "sparkle", "rime", "ibus"):
         manifest = prefix / "share/oh-my-ime/engines" / engine / "engine.toml"
         if manifest.exists():

@@ -58,10 +58,10 @@ fn chinese_setup_and_english_undo_preserve_managed_markers() -> anyhow::Result<(
     fs::create_dir_all(path.parent().unwrap())?;
     let original = "# 用户配置\nexec-once = fcitx5 -d\n";
     fs::write(&path, original)?;
-    let preview = env.omime(&["setup", "--take-over", "--dry-run"])?;
+    let preview = env.omime(&["setup", "--desktop", "hyprland", "--take-over", "--dry-run"])?;
     assert!(preview.contains("将创建"), "{preview}");
     assert_eq!(fs::read_to_string(&path)?, original);
-    let output = env.omime(&["setup", "--take-over"])?;
+    let output = env.omime(&["setup", "--desktop", "hyprland", "--take-over"])?;
     assert!(output.contains("Hyprland 配置已就绪"), "{output}");
     let configured = fs::read_to_string(&path)?;
     assert!(configured.contains("# omime setup begin"));

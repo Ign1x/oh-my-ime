@@ -8,26 +8,20 @@
 
 ## 本轮实测
 
-以下测试在 2026-11-06 的 x86_64 NixOS 上使用**已发布的 v0.4.0 平台与 Rime 二进制包**，
-并未使用尚未发布的源码修改：
+兼容性必须对应具体的应用版本、桌面、输入路径和场景。以下记录于 2026-11-24，使用当前源码构建和独立会话：
 
 | 桌面 / 应用 | 结果 | 验证范围 |
 |---|---|---|
-| sway 1.12 / Firefox 159.0，原生 Wayland | 预编辑、空格选词、中文上屏、失焦清理通过 | 独立 Firefox 配置与本地双输入框页面；Rime `luna_pinyin` |
-| sway 1.12 / foot 1.28.0，原生 Wayland | 空格选词、中文上屏通过 | 真实终端 stdin 精确收到 `中国` 和换行；Rime `luna_pinyin` |
-| sway 1.12 / xterm 411，XWayland | 空格选词、中文上屏通过 | 真实终端 stdin 通过 XIM 精确收到 `中国` 和换行 |
-| KWin 6.8.2，虚拟显示器 | 阻塞：当前平台要求 IM v2 | 已读取普通连接及 `--inputmethod` 特权连接的 registry；特权连接提供 `zwp_input_method_v1` 和 `zwp_input_panel_v1`，没有 IM v2 或 virtual-keyboard-v1 |
-| GNOME | 阻塞：测试环境未安装 `gnome-shell` | 未运行 GNOME 输入流程 |
+| sway 1.12 / Firefox 159.0，原生 Wayland | 预编辑、候选、中文上屏和失焦清理通过 | 独立 Firefox 配置与双输入框页面；Rime `luna_pinyin` |
+| sway 1.12 / foot 1.28.0，原生 Wayland | 候选和中文上屏通过 | 真实终端 stdin；Rime `luna_pinyin` |
+| sway 1.12 / xterm 411，XWayland | 候选和中文上屏通过 | 真实终端 stdin，经 XIM |
+| KWin 6.8.3，虚拟显示器 | IM v1 启动、Echo 组合、Rime 中国、候选角色、密码绕过、焦点恢复通过 | `/tmp/omime-native/kwin-run-8/report.json`，6 项检查 |
+| GNOME Shell 50.4，虚拟显示器 | 系统 IBus 选择、行内预编辑、Rime 上屏、候选、失焦清理、密码绕过通过 | `/tmp/omime-gnome-a3/report.json`，8 项检查 |
+| IBus 1.5.34，无头原生引擎 | Rime 6 项、Echo 5 项通过，含翻页/点击与提交缓存清理 | `/tmp/omime-ibus-rime-b5/result.json`、`/tmp/omime-ibus-echo-b5/result.json` |
 
-Firefox 测试读取真实 DOM 组合事件和文本内容：输入 `zhongguo` 后按空格得到 `中国`；
-再开始组合 `ni`，让页面把焦点移到第二个输入框，输入 `hao` 后按空格只得到 `好`。
-测试通过 DOM 改变焦点，因为 Tab 可能由 Rime 用于组合操作。这里不要求第一个输入框
-失焦时一定提交或取消组合，不同应用的处理可以不同。
-
-Firefox 的候选窗口位置、鼠标选词、快捷键、混合缩放和重启尚未验收。
-foot/xterm 的预编辑外观与焦点行为仍未测试。GTK 3/4 应用、Qt 5/6 应用、Chromium、VS Code、微信和 WPS 都有独立的
-待测行；Firefox 通过不代表其他 GTK 应用通过。既有 WPS 问题仍记录在
-[应用指南](hyprland.md)中。
+KWin/GNOME 使用合成原生文本框和私有总线，证明适配器与桌面生命周期，不代表所有应用。
+实际显示器、混合 DPI、全屏、启动器、鼠标定位，以及 GTK/Qt/浏览器/Electron/办公软件仍需
+分别验收。KWin 虚拟渲染器截图不稳定；GNOME 候选截图已成功保存。
 
 ## 运行隔离探针
 
@@ -95,15 +89,3 @@ Wayland/XWayland 模式、输入路径、启动选项、引擎/方案、日期�
 `passed` 表示实际观察通过；`failed` 表示场景已运行但结果不正确；`blocked` 表示前置条件
 阻止运行；`not-tested` 表示未执行。各适用场景有证据后，才能把桌面/应用标为完整验收。
 无头测试无法证明真实 GPU、物理显示器或桌面启动器的行为。
-
-## 探针确定的后端工作
-
-KDE 需要在 KWin 传入的输入法连接上实现 IM v1 前端和 input-panel-v1 窗口承载。
-文本协议和候选窗口角色均不同于现有 v2 实现；守护进程也需要能够在不要求 v2 前端的情况下
-初始化核心。仅把现有引擎登记成 KWin 输入法还不能工作。候选 surface 与输入法仍须共用连接。
-
-GNOME 首先采用 oh-my-ime 作为**系统 IBus** 中的一个引擎，需要解开守护进程生命周期与 v2
-前端的耦合，增加 IBus 引擎适配，并让 Rime 可选地输出候选语义，供 GNOME 系统候选 UI 使用。
-现有 `omime-ibus` 在平台内托管私有 IBus，方向相反，不能充当 GNOME 接入。
-运行时验证的下一前置条件是提供支持探针所需无头参数的 GNOME 环境。
-KDE 和 GNOME 目前均未达到输入验收状态。

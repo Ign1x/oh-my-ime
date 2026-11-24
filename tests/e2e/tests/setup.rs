@@ -117,7 +117,16 @@ fn setup_previews_configures_and_undoes_both_hyprland_formats() -> anyhow::Resul
         let path = main.to_str().context("UTF-8 test path")?;
         let journal = env.dir().join("state/oh-my-ime/setup.toml");
         let original_config = fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
-        let preview = env.omime(&["setup", "--engine", "echo", "--config", path, "--dry-run"])?;
+        let preview = env.omime(&[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "echo",
+            "--config",
+            path,
+            "--dry-run",
+        ])?;
         assert!(preview.contains("Would Create"), "{preview}");
         assert!(!main.exists());
         assert!(!journal.exists());
@@ -125,7 +134,15 @@ fn setup_previews_configures_and_undoes_both_hyprland_formats() -> anyhow::Resul
         let launch_env = env.dir().join("config/environment.d/90-oh-my-ime.conf");
         assert!(!uwsm.exists());
         assert!(!launch_env.exists());
-        env.omime(&["setup", "--engine", "echo", "--config", path])?;
+        env.omime(&[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "echo",
+            "--config",
+            path,
+        ])?;
         let output = env
             .command("sh")
             .args([
@@ -143,7 +160,7 @@ fn setup_previews_configures_and_undoes_both_hyprland_formats() -> anyhow::Resul
         );
         verify_hyprland(&env, &main)?;
         let once = fs::read(&main)?;
-        env.omime(&["setup"])?;
+        env.omime(&["setup", "--desktop", "hyprland"])?;
         assert_eq!(fs::read(&main)?, once);
         env.omime(&["setup", "--undo", "--dry-run"])?;
         assert!(main.exists());
@@ -213,7 +230,14 @@ fn setup_updates_the_matching_launch_manager_and_leaves_other_sessions_alone() -
             tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let out = env
                     .command(program_dir().join("omime"))
-                    .args(["setup", "--engine", "echo", "--start"])
+                    .args([
+                        "setup",
+                        "--desktop",
+                        "hyprland",
+                        "--engine",
+                        "echo",
+                        "--start",
+                    ])
                     .output()?;
                 let text = format!(
                     "{}{}",
@@ -255,7 +279,14 @@ fn setup_enables_the_bundled_sparkle_demo_from_empty_configuration() -> anyhow::
     // on headless CI, so it must inherit the harness's software renderer too.
     start_with_env(
         &mut env,
-        &["setup", "--engine", "sparkle", "--start"],
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "sparkle",
+            "--start",
+        ],
         &[("__EGL_VENDOR_LIBRARY_FILENAMES", "/dev/null")],
     )?;
     let config = fs::read_to_string(env.dir().join("config/oh-my-ime/config.toml"))?;
@@ -276,7 +307,7 @@ fn setup_enables_the_bundled_sparkle_demo_from_empty_configuration() -> anyhow::
 fn first_login_uses_the_chosen_method_and_later_logins_remember_direct_input() -> anyhow::Result<()>
 {
     let mut env = TestEnv::prepare(&[echo_engine()])?;
-    env.omime(&["setup", "--engine", "echo"])?;
+    env.omime(&["setup", "--desktop", "hyprland", "--engine", "echo"])?;
     env.launch_daemon()?;
     env.wait_for_status_starting("echo")?;
     let editor = env.editor(&[])?;
@@ -325,7 +356,14 @@ fn setup_starts_real_ibus_pinyin_from_empty_configuration() -> anyhow::Result<()
     offered(&env, "ibus")?;
     start(
         &mut env,
-        &["setup", "--engine", "ibus/libpinyin", "--start"],
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "ibus/libpinyin",
+            "--start",
+        ],
     )?;
     let editor = env.editor(&["--app-id", "setup-first"])?;
     env.type_on_seat("seat0", "nihao ")?;
@@ -339,7 +377,7 @@ fn setup_starts_real_ibus_pinyin_from_empty_configuration() -> anyhow::Result<()
     env.focus("setup-first")?;
     env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("你好中国你好")?;
-    env.omime(&["setup", "--start"])?;
+    env.omime(&["setup", "--desktop", "hyprland", "--start"])?;
     env.wait_for_status_starting("ibus/libpinyin")?;
     Ok(())
 }
@@ -349,7 +387,17 @@ fn setup_starts_real_ibus_pinyin_from_empty_configuration() -> anyhow::Result<()
 fn setup_starts_real_pinyin_from_empty_configuration() -> anyhow::Result<()> {
     let mut env = TestEnv::prepare(&[fcitx5()?])?;
     offered(&env, "fcitx5")?;
-    let result = start(&mut env, &["setup", "--engine", "fcitx5/pinyin", "--start"])?;
+    let result = start(
+        &mut env,
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "fcitx5/pinyin",
+            "--start",
+        ],
+    )?;
     assert!(result.contains("Input is ready"), "{result}");
     let (_, doctor) = env.omime_status(&["doctor"])?;
     let pid = env.engine_pid("fcitx5").context("hosted Fcitx5 pid")?;
@@ -366,7 +414,7 @@ fn setup_starts_real_pinyin_from_empty_configuration() -> anyhow::Result<()> {
     // Running setup again must not mistake the hosted framework for a competitor
     // or override a saved direct-input choice.
     env.omime(&["switch", "direct"])?;
-    env.omime(&["setup", "--start"])?;
+    env.omime(&["setup", "--desktop", "hyprland", "--start"])?;
     env.wait_for_status("direct input")?;
     Ok(())
 }
@@ -424,7 +472,7 @@ fn failed_start_after_takeover_lists_framework_recovery_commands() -> anyhow::Re
         .env("PATH", path)
         .env("IBUS_ADDRESS", address)
         .env("IBUS_ADDRESS_FILE", address_file)
-        .args(["setup", "--start", "--take-over"])
+        .args(["setup", "--desktop", "hyprland", "--start", "--take-over"])
         .output()?;
     assert!(!output.status.success());
     let message = String::from_utf8(output.stderr)?;
@@ -455,6 +503,8 @@ fn missing_addon_after_takeover_releases_the_daemon_before_framework_recovery() 
         &mut env,
         &[
             "setup",
+            "--desktop",
+            "hyprland",
             "--engine",
             "fcitx5/missing-addon",
             "--start",
@@ -527,7 +577,15 @@ fn launch_environment_failure_after_takeover_keeps_working_input() -> anyhow::Re
             tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let error = start(
                     &mut env,
-                    &["setup", "--engine", "echo", "--start", "--take-over"],
+                    &[
+                        "setup",
+                        "--desktop",
+                        "hyprland",
+                        "--engine",
+                        "echo",
+                        "--start",
+                        "--take-over",
+                    ],
                 )
                 .expect_err("the launch manager belongs to another display");
                 let message = format!("{error:#}");
@@ -560,7 +618,14 @@ fn takeover_exits_the_old_fcitx5_and_restores_its_startup_on_undo() -> anyhow::R
     wait_until("the old Fcitx5 on the session bus", || {
         bus_pid(&env, "org.fcitx.Fcitx5").ok().flatten()
     })?;
-    let (status, _) = env.omime_status(&["setup", "--engine", "fcitx5/pinyin", "--start"])?;
+    let (status, _) = env.omime_status(&[
+        "setup",
+        "--desktop",
+        "hyprland",
+        "--engine",
+        "fcitx5/pinyin",
+        "--start",
+    ])?;
     assert!(
         !status.success(),
         "an active framework needs an explicit takeover"
@@ -576,6 +641,8 @@ fn takeover_exits_the_old_fcitx5_and_restores_its_startup_on_undo() -> anyhow::R
         &mut env,
         &[
             "setup",
+            "--desktop",
+            "hyprland",
             "--engine",
             "fcitx5/pinyin",
             "--start",
@@ -623,7 +690,14 @@ fn takeover_exits_the_old_ibus_and_starts_a_fresh_hosted_bus() -> anyhow::Result
     ];
     let error = start_with_env(
         &mut env,
-        &["setup", "--engine", "ibus/libpinyin", "--start"],
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "ibus/libpinyin",
+            "--start",
+        ],
         &variables,
     )
     .expect_err("an active IBus needs an explicit takeover");
@@ -639,6 +713,8 @@ fn takeover_exits_the_old_ibus_and_starts_a_fresh_hosted_bus() -> anyhow::Result
         &mut env,
         &[
             "setup",
+            "--desktop",
+            "hyprland",
             "--engine",
             "ibus/libpinyin",
             "--take-over",
@@ -663,7 +739,14 @@ fn a_missing_pinyin_addon_is_reported_instead_of_claiming_input_is_ready() -> an
     offered(&env, "fcitx5")?;
     let error = start(
         &mut env,
-        &["setup", "--engine", "fcitx5/missing-addon", "--start"],
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "fcitx5/missing-addon",
+            "--start",
+        ],
     )
     .expect_err("a missing addon cannot be ready");
     assert!(
@@ -677,7 +760,17 @@ fn a_missing_pinyin_addon_is_reported_instead_of_claiming_input_is_ready() -> an
     let editor = env.editor(&[])?;
     env.type_on_seat("seat0", "abc")?;
     editor.wait_for_text("abc")?; // A failed selection must not hold keys forever.
-    start(&mut env, &["setup", "--engine", "fcitx5/pinyin", "--start"])?;
+    start(
+        &mut env,
+        &[
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "fcitx5/pinyin",
+            "--start",
+        ],
+    )?;
     env.type_on_seat("seat0", "nihao ")?;
     editor.wait_for_text("abc你好")?;
     Ok(())
@@ -689,12 +782,20 @@ fn invalid_engine_or_missing_wayland_session_changes_no_configuration() -> anyho
     let env = TestEnv::prepare(&[echo_engine()])?;
     let config = env.dir().join("config/oh-my-ime/config.toml");
     let before = fs::read(&config)?;
-    let (status, _) = env.omime_status(&["setup", "--engine", "missing"])?;
+    let (status, _) =
+        env.omime_status(&["setup", "--desktop", "hyprland", "--engine", "missing"])?;
     assert!(!status.success());
     let output = env
         .command(program_dir().join("omime"))
         .env_remove("WAYLAND_DISPLAY")
-        .args(["setup", "--engine", "echo", "--start"])
+        .args([
+            "setup",
+            "--desktop",
+            "hyprland",
+            "--engine",
+            "echo",
+            "--start",
+        ])
         .output()?;
     assert!(!output.status.success());
     assert_eq!(fs::read(config)?, before);

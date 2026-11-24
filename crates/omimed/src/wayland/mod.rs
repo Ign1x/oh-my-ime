@@ -13,6 +13,7 @@ mod bridge;
 mod outputs;
 mod seat;
 mod toplevels;
+mod v1;
 
 /// The registry is complete, but this compositor cannot serve our input methods.
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +37,9 @@ use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_keyboard_gra
     ZwpInputMethodKeyboardGrabV2, ZwpInputMethodKeyboardGrabV2Handler,
 };
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_manager_v2::ZwpInputMethodManagerV2;
+use wl_proxy::protocols::input_method_unstable_v1::zwp_input_method_v1::ZwpInputMethodV1;
+use wl_proxy::protocols::input_method_unstable_v1::zwp_input_method_context_v1::ZwpInputMethodContextV1;
+use wl_proxy::protocols::input_method_unstable_v1::zwp_input_panel_v1::ZwpInputPanelV1;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::{
     ZwpInputMethodV2, ZwpInputMethodV2Handler,
 };
@@ -78,6 +82,11 @@ pub enum Event {
         name: u32,
     },
     InitialSyncDone,
+    V1(v1::V1Event),
+    V1Context {
+        context: Rc<ZwpInputMethodContextV1>,
+        event: v1::ContextEvent,
+    },
     SeatName {
         seat: SeatId,
         name: String,
@@ -195,7 +204,12 @@ pub struct Frontend {
     state: Rc<State>,
     queue: EventQueue,
     registry: Rc<WlRegistry>,
+    /// Live globals on this connection, shared with the CLI's capability rules.
+    globals: BTreeMap<u32, (ObjectInterface, u32)>,
     im_manager: Option<BoundGlobal<ZwpInputMethodManagerV2>>,
+    im_v1: Option<BoundGlobal<ZwpInputMethodV1>>,
+    panel_v1: Option<BoundGlobal<ZwpInputPanelV1>>,
+    v1: Option<v1::Session>,
     vk_manager: Option<BoundGlobal<ZwpVirtualKeyboardManagerV1>>,
     toplevel_manager: Option<BoundGlobal<ZwlrForeignToplevelManagerV1>>,
     toplevels: Toplevels,
@@ -265,7 +279,11 @@ impl Frontend {
             state,
             queue,
             registry,
+            globals: BTreeMap::new(),
             im_manager: None,
+            im_v1: None,
+            panel_v1: None,
+            v1: None,
             vk_manager: None,
             toplevel_manager: None,
             toplevels: Toplevels::default(),
@@ -313,10 +331,17 @@ impl Frontend {
 
     /// The earliest moment at which [`Self::on_timer`] wants to run.
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.seats.values().filter_map(SeatSession::deadline).min()
+        self.seats
+            .values()
+            .filter_map(SeatSession::deadline)
+            .chain(self.v1.as_ref().and_then(v1::Session::deadline))
+            .min()
     }
 
     pub fn on_timer(&mut self, now: Instant) -> anyhow::Result<()> {
+        if let Some(session) = &mut self.v1 {
+            session.on_timer(now);
+        }
         if let Some(manager) = &self.im_manager {
             for seat in self.seats.values_mut() {
                 seat.on_timer(now, &manager.object);
@@ -332,6 +357,9 @@ impl Frontend {
 
     /// Every seat's name and whether omimed is its input method.
     pub fn seat_states(&self) -> Vec<(String, bool)> {
+        if self.v1.is_some() {
+            return vec![("seat0".into(), self.im_v1.is_some())];
+        }
         self.seats
             .values()
             .map(|s| (s.name().to_owned(), s.is_input_method()))
@@ -355,6 +383,12 @@ impl Frontend {
 
     /// Forwards or swallows a key reported in [`FrontendEvent::Key`].
     pub fn finish_key(&mut self, key: &KeyRef, handled: bool) {
+        if key.seat == v1::SEAT
+            && let Some(session) = &mut self.v1
+        {
+            session.finish_key(key, handled);
+            return;
+        }
         if let Some(seat) = self.seats.get_mut(&key.seat) {
             seat.finish_key(key, handled);
         }
@@ -368,6 +402,12 @@ impl Frontend {
         actions: &[Action],
         reply_key: Option<&KeyRef>,
     ) {
+        if seat == v1::SEAT
+            && let Some(session) = &mut self.v1
+        {
+            session.apply_actions(ctx, actions, reply_key);
+            return;
+        }
         if let Some(seat) = self.seats.get_mut(&seat) {
             seat.apply_actions(ctx, actions, reply_key);
         }
@@ -375,6 +415,12 @@ impl Frontend {
 
     /// Removes any preedit from the text field `ctx` on `seat`.
     pub fn clear_preedit(&mut self, seat: SeatId, ctx: ContextId) {
+        if seat == v1::SEAT
+            && let Some(session) = &mut self.v1
+        {
+            session.clear_preedit(ctx);
+            return;
+        }
         if let Some(seat) = self.seats.get_mut(&seat) {
             seat.clear_preedit(ctx);
         }
@@ -407,6 +453,11 @@ impl Frontend {
         info: &ContextInfo,
     ) -> bool {
         let (seat, x11) = match origin {
+            Origin::Ibus => return false,
+            Origin::Wayland(v1::SEAT) => match self.bridge.hosted_seat(engine) {
+                Some(seat) => (seat, false),
+                None => return false,
+            },
             Origin::Wayland(seat) => (seat, false),
             Origin::Fcitx | Origin::Xim => match self.bridge.hosted_seat(engine) {
                 Some(seat) => (seat, true),
@@ -446,6 +497,7 @@ impl Frontend {
         const PRESSED: u32 = 1;
         const REPEATED: u32 = 2;
         let hosted = match key {
+            frontend::KeyRef::Ibus(_) => return KeyDelivery::Refused,
             frontend::KeyRef::Wayland(key) => HostedKey {
                 keycode: key.keycode,
                 time: key.time,
@@ -472,12 +524,24 @@ impl Frontend {
     /// Records that a key went to a hosted engine, which decides what the application
     /// gets: it forwards keys itself.
     pub fn finish_delegated(&mut self, key: &KeyRef) {
+        if key.seat == v1::SEAT
+            && let Some(session) = &mut self.v1
+        {
+            session.finish_delegated(key);
+            return;
+        }
         if let Some(seat) = self.seats.get_mut(&key.seat) {
             seat.finish_delegated(key);
         }
     }
 
     pub fn forward_key(&mut self, seat: SeatId, ctx: ContextId, key: &frontend::ForwardedKey) {
+        if seat == v1::SEAT
+            && let Some(session) = &mut self.v1
+        {
+            session.forward_key(ctx, key);
+            return;
+        }
         if let Some(seat) = self.seats.get_mut(&seat) {
             seat.forward_key(ctx, key);
         }
@@ -508,6 +572,20 @@ impl Frontend {
     /// Tells the bridge which input method hosts popups, whether it is active, and
     /// where windows go for an X11 application.
     fn update_bridge(&self) {
+        if let Some(session) = &self.v1 {
+            let im_active = session.context().is_some();
+            let x11 = self
+                .x11_cursor
+                .filter(|_| !im_active)
+                .and_then(|cursor| self.x11_target(cursor));
+            self.bridge.set_panel_policy(
+                self.panel_v1.as_ref().map(|panel| panel.object.clone()),
+                im_active,
+                self.active_engine.clone(),
+                x11,
+            );
+            return;
+        }
         let focused = |s: &&SeatSession| s.context().is_some();
         let host = self
             .seats
@@ -552,6 +630,9 @@ impl Frontend {
         // The bridge may still dispatch globals while engines finish saving.
         // A newly advertised seat must not acquire another input-method grab.
         self.sessions_started = false;
+        if let Some(mut session) = self.v1.take() {
+            session.shutdown();
+        }
         for seat in self.seats.values_mut() {
             seat.shutdown();
         }
@@ -576,6 +657,37 @@ impl Frontend {
 
     fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
+            Event::V1(event) => {
+                if let Some(session) = &mut self.v1 {
+                    let change = session.handle(event, &self.context_ids);
+                    // Hosted engines bind the real wl_seat globals exposed by the
+                    // bridge; v1's single context is represented internally by SEAT.
+                    for &seat in self.seat_objects.keys() {
+                        match &change {
+                            Some(KeyboardChange::Keymap(keymap)) => {
+                                self.bridge.set_keymap(seat, keymap.clone())
+                            }
+                            Some(KeyboardChange::Repeat(repeat)) => {
+                                self.bridge.set_repeat(seat, *repeat)
+                            }
+                            Some(KeyboardChange::Modifiers(modifiers)) => {
+                                self.bridge.set_modifiers(seat, *modifiers)
+                            }
+                            None => {}
+                        }
+                    }
+                } else if let v1::V1Event::Activate(context) = event {
+                    // A v2 connection may advertise v1 too. Never leave a
+                    // server-created context without an owner on that path.
+                    context.unset_handler();
+                    context.send_destroy();
+                }
+            }
+            Event::V1Context { context, event } => {
+                if let Some(session) = &mut self.v1 {
+                    session.early_context(&context, event, &self.context_ids);
+                }
+            }
             Event::Global {
                 name,
                 interface,
@@ -584,18 +696,13 @@ impl Frontend {
             Event::GlobalRemove { name } => self.on_global_remove(name),
             Event::InitialSyncDone => {
                 self.initial_sync_done = true;
-                let missing: Vec<_> = [
-                    (self.im_manager.is_none(), "zwp_input_method_manager_v2"),
-                    (self.vk_manager.is_none(), "zwp_virtual_keyboard_manager_v1"),
-                ]
-                .into_iter()
-                .filter_map(|(missing, name)| missing.then_some(name))
-                .collect();
-                if !missing.is_empty() {
-                    return Err(UnsupportedCompositor(omime_proto::tr!(
-                        "This desktop is not supported: missing {protocols}. KDE Plasma and GNOME are not supported yet. Run setup from a Hyprland session.",
-                        protocols = missing.join(", ")
-                    )).into());
+                let capabilities = omime_proto::desktop::Capabilities::from_globals(
+                    self.globals
+                        .values()
+                        .map(|(interface, version)| (interface.name(), *version)),
+                );
+                if let Some(warning) = capabilities.warning() {
+                    return Err(UnsupportedCompositor(warning).into());
                 }
                 if self.sessions_started {
                     self.start_sessions();
@@ -668,6 +775,10 @@ impl Frontend {
     }
 
     fn on_global(&mut self, name: u32, interface: ObjectInterface, version: u32) {
+        self.globals.insert(name, (interface, version));
+        if version == 0 {
+            return;
+        }
         match interface {
             ObjectInterface::ZwpInputMethodManagerV2 => {
                 let object = self.state.create_object::<ZwpInputMethodManagerV2>(1);
@@ -736,8 +847,24 @@ impl Frontend {
     }
 
     fn on_global_remove(&mut self, name: u32) {
+        self.globals.remove(&name);
         self.seat_names.remove(&name);
         self.output_set.remove(name);
+        if self.im_v1.as_ref().is_some_and(|g| g.name == name)
+            || self.panel_v1.as_ref().is_some_and(|g| g.name == name)
+        {
+            if let Some(mut session) = self.v1.take() {
+                session.shutdown();
+            }
+            if self.im_v1.as_ref().is_some_and(|g| g.name == name) {
+                self.im_v1 = None;
+            }
+            if self.panel_v1.as_ref().is_some_and(|g| g.name == name) {
+                self.panel_v1 = None;
+            }
+            self.bridge
+                .set_panel_policy(None, false, self.active_engine.clone(), None);
+        }
         if let Some(mut session) = self.seats.remove(&name) {
             info!(seat = session.name(), "seat removed");
             session.shutdown();
@@ -776,6 +903,9 @@ impl Frontend {
             "focused application changed"
         );
         self.focused_app = app.clone();
+        if let Some(session) = &mut self.v1 {
+            session.set_app_id(app.clone());
+        }
         for seat in self.seats.values_mut() {
             seat.set_app_id(app.clone());
         }
@@ -787,6 +917,51 @@ impl Frontend {
     /// Start taking input only after the daemon's session services are ready.
     pub fn start_sessions(&mut self) {
         self.sessions_started = true;
+        if !self.initial_sync_done {
+            return;
+        }
+        if self.im_manager.is_none() || self.vk_manager.is_none() {
+            if self.v1.is_none() {
+                let method = self
+                    .globals
+                    .iter()
+                    .find_map(|(&name, (interface, version))| {
+                        (*interface == ObjectInterface::ZwpInputMethodV1 && *version > 0)
+                            .then_some(name)
+                    });
+                let panel = self
+                    .globals
+                    .iter()
+                    .find_map(|(&name, (interface, version))| {
+                        (*interface == ObjectInterface::ZwpInputPanelV1 && *version > 0)
+                            .then_some(name)
+                    });
+                if let (Some(method), Some(panel)) = (method, panel) {
+                    let mut session = v1::Session::new(self.queue.clone(), self.outputs.clone());
+                    session.set_app_id(self.focused_app.clone());
+                    self.v1 = Some(session);
+                    let object = self.state.create_object::<ZwpInputMethodV1>(1);
+                    object.set_forward_to_client(false);
+                    object.set_handler(v1::MethodEvents {
+                        queue: self.queue.clone(),
+                    });
+                    self.registry.send_bind(method, object.clone());
+                    self.im_v1 = Some(BoundGlobal {
+                        name: method,
+                        object,
+                    });
+                    let object = self.state.create_object::<ZwpInputPanelV1>(1);
+                    object.set_forward_to_client(false);
+                    self.registry.send_bind(panel, object.clone());
+                    self.panel_v1 = Some(BoundGlobal {
+                        name: panel,
+                        object,
+                    });
+                    info!("using the input-method-v1 and input-panel-v1 backend");
+                }
+            }
+            return;
+        }
         let (Some(im_manager), Some(vk_manager)) = (&self.im_manager, &self.vk_manager) else {
             return;
         };

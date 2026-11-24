@@ -190,6 +190,8 @@ enum Request {
     /// Resynchronize from the one retained ContextInfo after overload recovery.
     Refresh,
     Reset,
+    CandidateClicked(u32, u32, u32),
+    CandidatePage(bool),
     Key(KeyRef, KeyEvent, Option<Instant>),
 }
 
@@ -202,6 +204,8 @@ impl Request {
             Self::Update(_) | Self::Refresh => "UpdateContext",
             Self::Reset => "Reset",
             Self::Key(..) => "ProcessKey",
+            Self::CandidateClicked(..) => "CandidateClicked",
+            Self::CandidatePage(..) => "CandidatePage",
         }
     }
 }
@@ -585,6 +589,10 @@ impl Core {
                 slot.available = available.clone();
             }
         }
+    }
+
+    pub fn set_candidate_ui(&mut self, enabled: bool) {
+        self.engines.set_candidate_ui(enabled);
     }
 
     /// Reads in the background which input methods the hosted frameworks have that have
@@ -1202,8 +1210,11 @@ impl Core {
                     return;
                 };
                 let mut info = info;
-                // The cursor rectangle comes from the bridge, not from the field.
-                info.cursor_rect = context.info.cursor_rect;
+                // Wayland popup-relative coordinates come from the bridge. IBus
+                // supplies desktop coordinates as part of its field updates.
+                if !matches!(context.origin, Origin::Ibus) {
+                    info.cursor_rect = context.info.cursor_rect;
+                }
                 let app_changed = info.app_id != context.info.app_id;
                 let identifying_initial_app =
                     context.epoch == 0 && context.info.app_id.is_none() && info.app_id.is_some();
@@ -1240,6 +1251,11 @@ impl Core {
             }
             FrontendEvent::Deactivated { ctx } => {
                 if let Some(context) = self.contexts.remove(&ctx) {
+                    out.set_candidates(
+                        context.origin,
+                        ctx,
+                        &omime_proto::engine::CandidatePage::default(),
+                    );
                     if let Some(flight) = context.in_flight
                         && let Some(key) = flight.key
                     {
@@ -1301,6 +1317,33 @@ impl Core {
                     let changes = info.diff(&context.info);
                     context.info = info;
                     context.update(changes);
+                    self.pump(ctx, out);
+                }
+            }
+            FrontendEvent::CandidateClicked {
+                ctx,
+                index,
+                button,
+                modifiers,
+            } => {
+                if let Some(context) = self.contexts.get_mut(&ctx)
+                    && context.activated
+                    && !context.recovering
+                    && context.queue.len() < MAX_QUEUED_REQUESTS
+                {
+                    context
+                        .queue
+                        .push_back(Request::CandidateClicked(index, button, modifiers));
+                    self.pump(ctx, out);
+                }
+            }
+            FrontendEvent::CandidatePage { ctx, previous } => {
+                if let Some(context) = self.contexts.get_mut(&ctx)
+                    && context.activated
+                    && !context.recovering
+                    && context.queue.len() < MAX_QUEUED_REQUESTS
+                {
+                    context.queue.push_back(Request::CandidatePage(previous));
                     self.pump(ctx, out);
                 }
             }
@@ -1621,7 +1664,7 @@ impl Core {
                 admission: _admission,
             } => {
                 let current_context = match &call {
-                    HostCall::Action { ctx, .. } => self
+                    HostCall::Action { ctx, .. } | HostCall::Candidates { ctx, .. } => self
                         .contexts
                         .get(ctx)
                         .is_some_and(|context| context.engine.as_deref() == Some(engine.as_str())),
@@ -1650,6 +1693,16 @@ impl Core {
 
     fn on_host_call(&mut self, engine: &str, call: HostCall, out: &mut dyn Frontends) {
         match call {
+            HostCall::Candidates { ctx, page } => {
+                if let Some(context) = self.contexts.get(&ctx)
+                    && context.engine.as_deref() == Some(engine)
+                    && context.activated
+                    && !context.recovering
+                    && context.in_flight.as_ref().is_none_or(|f| !f.timed_out)
+                {
+                    out.set_candidates(context.origin, ctx, &page);
+                }
+            }
             HostCall::Action { ctx, action } => {
                 if let Some(context) = self.contexts.get(&ctx)
                     && context.engine.as_deref() == Some(engine)
@@ -2159,6 +2212,7 @@ impl Core {
                     out.hosted_activate(&engine, context.origin, ctx, &context.info);
                 context.waiting_since = Instant::now();
             }
+            Request::CandidateClicked(..) | Request::CandidatePage(..) => {}
             Request::RestoreMode => {
                 context.mode_ready = true;
             }
@@ -2358,6 +2412,16 @@ impl Core {
         let Some(engine) = context.engine.clone() else {
             return;
         };
+        if matches!(
+            request,
+            Request::CandidateClicked(..) | Request::CandidatePage(..)
+        ) && self
+            .engines
+            .get(&engine)
+            .is_none_or(|slot| slot.api_minor < 3)
+        {
+            return;
+        }
         let Some(proxy) = self.engines.get(&engine).and_then(|s| s.proxy.clone()) else {
             return;
         };
@@ -2415,6 +2479,12 @@ impl Core {
                     Reply::Actions(proxy.update_context(ctx, &changes).await)
                 }
                 Request::Reset => Reply::Actions(proxy.reset(ctx).await),
+                Request::CandidateClicked(index, button, modifiers) => {
+                    Reply::Actions(proxy.candidate_clicked(ctx, index, button, modifiers).await)
+                }
+                Request::CandidatePage(previous) => {
+                    Reply::Actions(proxy.candidate_page(ctx, previous).await)
+                }
                 Request::Key(_, event, _) => {
                     Reply::Key(proxy.process_key(ctx, &event, &Dict::new()).await)
                 }

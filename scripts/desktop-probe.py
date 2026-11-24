@@ -465,6 +465,13 @@ def probe(args):
                                         else "current daemon's Wayland globals are present")
         if args.desktop == "kwin":
             report["limitations"].append("KWin restricts IM v1 to its launched input method; public registry absence does not prove IM v1 is absent.")
+        if args.desktop != "sway":
+            # This legacy probe only enumerates capabilities. Native acceptance
+            # must use the desktop-owned connection/lifecycle in the new probes.
+            native = "native-kwin.py" if args.desktop == "kwin" else "native-gnome.py"
+            report["checks"]["registry"] = result("passed", "registry captured; IM v2 is not required by this desktop's native backend")
+            report["checks"]["daemon"] = result("not-tested", f"run tests/desktop/{native} for native input acceptance")
+            return report
         stage = "daemon"
         daemon = args.bin_dir / "omimed"
         if not daemon.is_file():

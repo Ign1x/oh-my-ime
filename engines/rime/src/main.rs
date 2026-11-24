@@ -3,6 +3,8 @@
 //! as input methods of their own (`rime/double_pinyin_flypy`). The engine draws the
 //! candidates in its own Slint window, a popup at the text cursor; with an application
 //! that leaves the preedit to the input method (xterm), the window shows it too.
+//! With `OMIME_PRESENTATION=ibus`, the desktop draws the candidates and no window or
+//! display connection is created by this engine.
 //!
 //! Each text field has a Rime session of its own; Chinese or English letters (Rime's
 //! `ascii_mode`) are the same in all of them. The engine's menu switches them, full or
@@ -27,8 +29,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use omime_sdk::{
-    Context, ContextId, Engine, Host, InputMethodInfo, KeyEvent, Preedit, Property, PropertyKind,
-    Status,
+    Candidate, CandidatePage, Context, ContextId, Engine, Host, InputMethodInfo, KeyEvent, Preedit,
+    Property, PropertyKind, Status,
 };
 use rime::{Composing, Notice, Rime, SessionId};
 use slint::{ComponentHandle as _, ModelRc, VecModel};
@@ -512,11 +514,40 @@ impl State {
     }
 }
 
-/// Pushes what the focused field composes to the window, and shows or hides it.
-fn refresh(state: &mut State, ui: &slint::Weak<Candidates>) {
+/// A page's semantic contents, independent of the toolkit and desktop protocol.
+fn candidate_page(composing: Option<&Composing>) -> CandidatePage {
+    let Some(composing) = composing else {
+        return CandidatePage::default();
+    };
+    CandidatePage {
+        candidates: composing
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| Candidate {
+                text: candidate.text.clone(),
+                comment: candidate.comment.clone(),
+                label: composing.labels.get(index).cloned().unwrap_or_default(),
+            })
+            .collect(),
+        cursor: u32::try_from(composing.highlighted).unwrap_or(0),
+        has_previous: composing.page > 0,
+        has_next: !composing.last_page,
+    }
+}
+
+/// Presents the focused field in its own window or the host's candidate UI.
+fn refresh(state: &mut State, ui: &Option<slint::Weak<Candidates>>) {
     let composing: Option<Composing> = state
         .focused_session()
+        .filter(|_| state.deployed)
         .and_then(|session| state.rime.as_ref()?.composing(session));
+    let Some(ui) = ui else {
+        if let (Some(host), Some(context)) = (&state.host, state.focused) {
+            host.set_candidates(context, &candidate_page(composing.as_ref()));
+        }
+        return;
+    };
     let client_preedit = state
         .focused
         .and_then(|ctx| state.fields.get(&ctx))
@@ -569,7 +600,7 @@ fn refresh(state: &mut State, ui: &slint::Weak<Candidates>) {
 
 struct RimeEngine {
     state: Arc<Mutex<State>>,
-    ui: slint::Weak<Candidates>,
+    ui: Option<slint::Weak<Candidates>>,
 }
 
 impl RimeEngine {
@@ -609,6 +640,7 @@ impl Engine for RimeEngine {
         } else {
             state.announce(None);
         }
+        refresh(&mut state, &self.ui);
     }
 
     fn select_input_method(&mut self, host: &Host, id: &str) {
@@ -643,6 +675,7 @@ impl Engine for RimeEngine {
                 state.deployed = !rime.deploying();
             }
             state.announce(None);
+            refresh(&mut state, &self.ui);
             let _ = host;
             return;
         }
@@ -699,6 +732,7 @@ impl Engine for RimeEngine {
 
     fn deactivate(&mut self, ctx: &mut Context<'_>) {
         let mut state = lock(&self.state);
+        ctx.set_candidates(&CandidatePage::default());
         if let Some(field) = state.fields.remove(&ctx.id())
             && let (Some(session), Some(rime)) = (field.session, &state.rime)
         {
@@ -774,6 +808,60 @@ impl Engine for RimeEngine {
         refresh(&mut state, &self.ui);
         handled
     }
+
+    fn candidate_clicked(
+        &mut self,
+        ctx: &mut Context<'_>,
+        index: u32,
+        button: u32,
+        _modifiers: u32,
+    ) {
+        if button != 1 {
+            return;
+        }
+        let mut state = lock(&self.state);
+        if state.focused != Some(ctx.id()) || !state.deployed {
+            return;
+        }
+        let (Some(rime), Some(session)) = (&state.rime, state.focused_session()) else {
+            return;
+        };
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        if rime
+            .composing(session)
+            .is_none_or(|composing| index >= composing.candidates.len())
+        {
+            return;
+        }
+        rime.pick(session, index);
+        Self::apply(ctx, state.effects(ctx.id(), session));
+        state.follow_status(session);
+        state.report_input_mode(ctx, session);
+        refresh(&mut state, &self.ui);
+    }
+
+    fn candidate_page(&mut self, ctx: &mut Context<'_>, previous: bool) {
+        let mut state = lock(&self.state);
+        if state.focused != Some(ctx.id()) || !state.deployed {
+            return;
+        }
+        let (Some(rime), Some(session)) = (&state.rime, state.focused_session()) else {
+            return;
+        };
+        let Some(composing) = rime.composing(session) else {
+            return;
+        };
+        if (previous && composing.page == 0) || (!previous && composing.last_page) {
+            return;
+        }
+        rime.turn_page(session, previous);
+        Self::apply(ctx, state.effects(ctx.id(), session));
+        state.follow_status(session);
+        state.report_input_mode(ctx, session);
+        refresh(&mut state, &self.ui);
+    }
 }
 
 /// Clicks and the wheel in the window: Rime picks or turns the page in the focused
@@ -800,7 +888,7 @@ fn on_window(
     }
     state.follow_status(session);
     state.report_focused_input_mode(session);
-    refresh(&mut state, ui);
+    refresh(&mut state, &Some(ui.clone()));
 }
 
 /// Whether a window of this program came up. Until then an error is about the window
@@ -808,15 +896,20 @@ fn on_window(
 static WINDOW_UP: AtomicBool = AtomicBool::new(false);
 
 fn main() -> std::process::ExitCode {
-    let result = if std::env::args().nth(1).as_deref() == Some("--settings") {
+    let settings = std::env::args().nth(1).as_deref() == Some("--settings");
+    let headless = !settings && std::env::var("OMIME_PRESENTATION").as_deref() == Ok("ibus");
+    let result = if settings {
         settings::run()
+    } else if headless {
+        run_headless()
     } else {
         run()
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            if !WINDOW_UP.load(Ordering::Relaxed)
+            if !headless
+                && !WINDOW_UP.load(Ordering::Relaxed)
                 && let Some(again) = omime_ui::renderer::restart_in_software(&e)
             {
                 eprintln!("omime-rime: cannot start again with the software renderer: {again}");
@@ -890,6 +983,58 @@ fn start_engine(
     ui: &Candidates,
     state: &Arc<Mutex<State>>,
 ) -> Result<Host, Box<dyn std::error::Error>> {
+    let noticed = initialize_rime(state);
+    let engine = RimeEngine {
+        state: state.clone(),
+        ui: Some(ui.as_weak()),
+    };
+    let (host, engine_thread) = omime_sdk::spawn(engine)?;
+    follow_notices(state, Some(ui.as_weak()), noticed)?;
+
+    let picks = state.clone();
+    let weak = ui.as_weak();
+    ui.on_picked(move |i| {
+        let Ok(i) = usize::try_from(i) else { return };
+        on_window(&picks, &weak, |rime, session| {
+            rime.pick(session, i);
+        });
+    });
+    let turns = state.clone();
+    let weak = ui.as_weak();
+    ui.on_turn(move |back| {
+        on_window(&turns, &weak, |rime, session| {
+            rime.turn_page(session, back);
+        });
+    });
+
+    // When the platform stops the engine, close the window too.
+    std::thread::spawn(move || {
+        if let Ok(Err(e)) = engine_thread.join() {
+            eprintln!("omime-rime: {e}");
+        }
+        let _ = slint::invoke_from_event_loop(|| {
+            let _ = slint::quit_event_loop();
+        });
+    });
+    Ok(host)
+}
+
+/// GNOME supplies the lookup table; this path never creates a toolkit backend or
+/// opens a display. The SDK owns the main thread and retains the normal lifecycle.
+fn run_headless() -> Result<(), Box<dyn std::error::Error>> {
+    let state = Arc::new(Mutex::new(State::default()));
+    let noticed = initialize_rime(&state);
+    let result = follow_notices(&state, None, noticed).map(|()| RimeEngine {
+        state: state.clone(),
+        ui: None,
+    });
+    let result = result.and_then(|engine| omime_sdk::run(engine).map_err(Into::into));
+    // Finalize before C++ teardown, including after registration failures.
+    lock(&state).rime = None;
+    result
+}
+
+fn initialize_rime(state: &Arc<Mutex<State>>) -> mpsc::Receiver<Notice> {
     // Start Rime first: a deployment can take a while, and it runs in its own thread.
     let (notices, noticed) = mpsc::channel();
     match (data::shared_dir(), data::user_dir()) {
@@ -933,15 +1078,16 @@ fn start_engine(
         (_, None) => eprintln!("omime-rime: no home directory; keys pass through"),
     }
 
-    let engine = RimeEngine {
-        state: state.clone(),
-        ui: ui.as_weak(),
-    };
-    let (host, engine_thread) = omime_sdk::spawn(engine)?;
+    noticed
+}
 
+fn follow_notices(
+    state: &Arc<Mutex<State>>,
+    ui: Option<slint::Weak<Candidates>>,
+    noticed: mpsc::Receiver<Notice>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Librime's notices, about deploying.
     let deploying = state.clone();
-    let weak = ui.as_weak();
     std::thread::Builder::new()
         .name("rime-notices".to_owned())
         .spawn(move || {
@@ -951,44 +1097,20 @@ fn start_engine(
                     Notice::Deploying => {
                         state.deployed = false;
                         state.announce(None);
+                        refresh(&mut state, &ui);
                     }
                     Notice::Deployed { ok } => {
                         if !ok {
                             eprintln!("omime-rime: deploying failed; see the messages above");
                         }
                         state.deployed();
-                        refresh(&mut state, &weak);
+                        refresh(&mut state, &ui);
                     }
                 }
             }
         })?;
 
-    let picks = state.clone();
-    let weak = ui.as_weak();
-    ui.on_picked(move |i| {
-        let Ok(i) = usize::try_from(i) else { return };
-        on_window(&picks, &weak, |rime, session| {
-            rime.pick(session, i);
-        });
-    });
-    let turns = state.clone();
-    let weak = ui.as_weak();
-    ui.on_turn(move |back| {
-        on_window(&turns, &weak, |rime, session| {
-            rime.turn_page(session, back);
-        });
-    });
-
-    // When the platform stops the engine, close the window too.
-    std::thread::spawn(move || {
-        if let Ok(Err(e)) = engine_thread.join() {
-            eprintln!("omime-rime: {e}");
-        }
-        let _ = slint::invoke_from_event_loop(|| {
-            let _ = slint::quit_event_loop();
-        });
-    });
-    Ok(host)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1000,5 +1122,35 @@ mod tests {
         assert_eq!(badge("double_pinyin_flypy", "小鶴雙拼"), "双");
         assert_eq!(badge("luna_pinyin", "朙月拼音"), "拼");
         assert_eq!(badge("cangjie5", "倉頡五代"), "倉");
+    }
+
+    #[test]
+    fn semantic_page_preserves_unicode_labels_comments_and_paging() {
+        let composing = Composing {
+            candidates: vec![
+                rime::Candidate {
+                    text: "你好👋".into(),
+                    comment: "nǐ hǎo".into(),
+                },
+                rime::Candidate {
+                    text: "拟好".into(),
+                    comment: String::new(),
+                },
+            ],
+            labels: vec!["①".into()],
+            highlighted: 1,
+            page: 2,
+            last_page: false,
+            ..Composing::default()
+        };
+        let page = candidate_page(Some(&composing));
+        assert_eq!(page.candidates.len(), 2);
+        assert_eq!(page.candidates[0].text, "你好👋");
+        assert_eq!(page.candidates[0].comment, "nǐ hǎo");
+        assert_eq!(page.candidates[0].label, "①");
+        assert_eq!(page.candidates[1].label, "");
+        assert_eq!(page.cursor, 1);
+        assert!(page.has_previous && page.has_next);
+        assert_eq!(candidate_page(None), CandidatePage::default());
     }
 }

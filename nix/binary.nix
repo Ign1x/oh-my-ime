@@ -80,6 +80,16 @@ stdenvNoCC.mkDerivation {
         --replace-fail 'ExecReload=%h/.local/bin/omime reload' "ExecReload=$out/bin/omime reload"
       substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.Settings.desktop \
         --replace-fail 'Exec=omime-settings' "Exec=$out/bin/omime-settings"
+      if [ -f $out/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop ]; then
+        substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop \
+          --replace-fail 'Exec=omimed' "Exec=$out/bin/omimed"
+        substituteInPlace $out/share/ibus/component/oh-my-ime.xml \
+          --replace-fail '<exec>omimed --ibus</exec>' "<exec>$out/bin/omimed --ibus</exec>"
+      fi
+      if [ -f $out/share/applications/io.github.ign1x.OhMyIme.IBus.desktop ]; then
+        substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.IBus.desktop \
+          --replace-fail 'Exec=omimed --ibus' "Exec=$out/bin/omimed --ibus"
+      fi
     ''}
     runHook postInstall
   '';

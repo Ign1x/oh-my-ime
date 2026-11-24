@@ -8,11 +8,11 @@ export component PageHeader inherits VerticalLayout {
     in property <string> title;
     in property <string> description;
     spacing: 6px;
-    padding-bottom: 8px;
+    padding-bottom: 6px;
     Text {
         text: root.title;
-        font-size: 26px;
-        font-weight: 600;
+        font-size: 24px;
+        font-weight: 700;
         color: Theme.text;
         accessible-role: none;
     }
@@ -26,19 +26,68 @@ export component PageHeader inherits VerticalLayout {
 }
 
 // The heading of a group of cards.
-export component SectionHeader inherits Text {
-    font-size: 14px;
-    font-weight: 600;
-    color: Theme.text;
+export component SectionHeader inherits HorizontalLayout {
+    in property <string> text;
+    padding-left: 2px;
+    padding-top: 4px;
+    Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 600;
+        color: Theme.secondary;
+        vertical-alignment: center;
+    }
+
+    @children
 }
 
 // A rounded box around rows.
 export component Card inherits Rectangle {
     background: Theme.card;
-    border-radius: 8px;
+    border-radius: 12px;
     border-width: 1px;
     border-color: Theme.card-border;
     clip: true;
+}
+
+// A subtle informational or alert banner card.
+export component NoticeCard inherits Rectangle {
+    in property <image> icon;
+    in property <brush> tint: Theme.secondary;
+    in property <brush> bg: Theme.surface-subtle;
+    in property <brush> border: Theme.card-border;
+    in property <string> text;
+    background: root.bg;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: root.border;
+    HorizontalLayout {
+        padding: 14px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: start;
+            padding-top: 1px;
+            Image {
+                source: root.icon;
+                colorize: root.tint;
+                width: 18px;
+                height: 18px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 13px;
+            color: Theme.text;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        @children
+    }
 }
 
 // The line between the rows of a card.
@@ -56,17 +105,18 @@ export component RowText inherits VerticalLayout {
     in property <string> title;
     in property <string> subtitle;
     alignment: center;
-    spacing: 2px;
+    spacing: 3px;
     Text {
         text: root.title;
         font-size: 14px;
+        font-weight: 500;
         color: Theme.text;
         overflow: elide;
     }
 
     if root.subtitle != "": Text {
         text: root.subtitle;
-        font-size: 12px;
+        font-size: 12.5px;
         color: Theme.secondary;
         wrap: word-wrap;
     }
@@ -78,11 +128,11 @@ export component IconButton inherits Rectangle {
     // What it does, for screen readers and tests.
     in property <string> label;
     in property <bool> enabled: true;
-    in property <brush> tint: Theme.text;
+    in property <brush> tint: Theme.secondary;
     callback clicked;
     width: 32px;
     height: 32px;
-    border-radius: 6px;
+    border-radius: 8px;
     background: !root.enabled ? transparent : touch.pressed ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
     accessible-role: button;
     accessible-label: root.label;
@@ -95,9 +145,9 @@ export component IconButton inherits Rectangle {
 
     Image {
         source: root.icon;
-        colorize: root.enabled ? root.tint : Theme.tertiary;
-        width: 18px;
-        height: 18px;
+        colorize: !root.enabled ? Theme.tertiary : touch.has-hover ? Theme.text : root.tint;
+        width: 17px;
+        height: 17px;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
     }
@@ -111,17 +161,83 @@ export component IconButton inherits Rectangle {
     }
 }
 
-// An input method's badge: its label on the accent color.
+// A primary action button styled in the intentional teal accent.
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 34px;
+    forward-focus: scope;
+    border-radius: 8px;
+    background: !root.enabled ? Theme.hover : touch.pressed ? Theme.accent-pressed : touch.has-hover ? Theme.accent-hover : Theme.accent;
+    border-width: scope.has-focus ? 2px : 0px;
+    border-color: Theme.accent-text;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: root.has-icon ? 12px : 14px;
+        padding-right: 14px;
+        spacing: 7px;
+        if root.has-icon: VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                colorize: root.enabled ? Theme.on-accent : Theme.tertiary;
+                width: 16px;
+                height: 16px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 13px;
+            font-weight: 600;
+            color: root.enabled ? Theme.on-accent : Theme.tertiary;
+            vertical-alignment: center;
+        }
+    }
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// An input method's badge: teal when active, restrained navy otherwise.
 export component Badge inherits Rectangle {
     in property <string> text;
     in property <length> size: 36px;
+    in property <bool> active: true;
     width: root.size;
     height: root.size;
-    border-radius: root.size / 4.5;
-    background: Theme.accent;
+    border-radius: root.size * 0.28;
+    background: root.active ? Theme.accent : Theme.navy;
     Text {
         text: root.text;
-        color: Theme.on-accent;
+        color: root.active ? Theme.on-accent : Theme.on-navy;
         font-size: root.size * 0.44;
         font-weight: 600;
         width: parent.width;
@@ -132,20 +248,37 @@ export component Badge inherits Rectangle {
     }
 }
 
-// A short word on a tinted background, such as "In use".
+// A short status word on a tinted background, such as "In use".
 export component Pill inherits Rectangle {
     in property <string> text;
-    height: 20px;
-    border-radius: 10px;
-    background: Theme.accent.with-alpha(0.18);
+    in property <brush> fg: Theme.accent-text;
+    in property <brush> bg: Theme.accent-soft;
+    in property <brush> border: Theme.accent-border;
+    in property <bool> dot: false;
+    height: 22px;
+    border-radius: 11px;
+    background: root.bg;
+    border-width: 1px;
+    border-color: root.border;
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
+        padding-left: root.dot ? 8px : 9px;
+        padding-right: 9px;
+        spacing: 5px;
+        if root.dot: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.fg;
+            }
+        }
+
         Text {
             text: root.text;
             font-size: 11px;
             font-weight: 600;
-            color: Theme.accent;
+            color: root.fg;
             vertical-alignment: center;
         }
     }
@@ -159,14 +292,14 @@ export component Keycap inherits Rectangle {
     border-radius: 6px;
     background: Theme.keycap;
     border-width: 1px;
-    border-color: Theme.card-border;
+    border-color: Theme.keycap-border;
     HorizontalLayout {
         padding-left: 9px;
         padding-right: 9px;
         Text {
             text: root.text;
-            font-size: 13px;
-            font-weight: 500;
+            font-size: 12.5px;
+            font-weight: 600;
             color: Theme.text;
             vertical-alignment: center;
             horizontal-alignment: center;
@@ -181,12 +314,11 @@ export component SwitchRow inherits HorizontalLayout {
     in property <bool> enabled: true;
     in-out property <bool> checked <=> switch.checked;
     callback toggled(bool);
-    padding-left: 16px;
-    padding-right: 16px;
-    padding-top: 12px;
-    padding-bottom: 12px;
+    padding-left: 18px;
+    padding-right: 18px;
+    padding-top: 14px;
+    padding-bottom: 14px;
     spacing: 16px;
-    min-height: 64px;
     RowText {
         title: root.title;
         subtitle: root.subtitle;
@@ -211,8 +343,8 @@ export component NavItem inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
     callback clicked;
-    height: 38px;
-    border-radius: 6px;
+    height: 40px;
+    border-radius: 8px;
     background: root.selected ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
     accessible-role: tab;
     accessible-label: root.text;
@@ -226,9 +358,9 @@ export component NavItem inherits Rectangle {
         x: 0;
         y: (parent.height - self.height) / 2;
         width: 3px;
-        height: root.selected ? 16px : 0px;
+        height: root.selected ? 18px : 0px;
         border-radius: 1.5px;
-        background: Theme.accent;
+        background: Theme.accent-text;
         animate height {
             duration: 150ms;
             easing: ease-out;
@@ -243,7 +375,7 @@ export component NavItem inherits Rectangle {
             alignment: center;
             Image {
                 source: root.icon;
-                colorize: Theme.text;
+                colorize: root.selected ? Theme.accent-text : touch.has-hover ? Theme.text : Theme.secondary;
                 width: 18px;
                 height: 18px;
             }
@@ -251,14 +383,16 @@ export component NavItem inherits Rectangle {
 
         Text {
             text: root.text;
-            font-size: 14px;
-            color: Theme.text;
+            font-size: 13.5px;
+            font-weight: root.selected ? 600 : 400;
+            color: root.selected || touch.has-hover ? Theme.text : Theme.secondary;
             vertical-alignment: center;
             overflow: elide;
         }
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => {
             root.clicked();
         }

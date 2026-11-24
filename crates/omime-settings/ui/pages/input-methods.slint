@@ -1,103 +1,132 @@
 import { Button, LineEdit, ScrollView } from "std-widgets.slint";
 import { Backend, CatalogEntry, InputMethodRow, Texts, Tr, View } from "../backend.slint";
 import { Theme } from "../theme.slint";
-import { Badge, Card, Divider, IconButton, Keycap, PageHeader, Pill, RowText, SectionHeader } from "../widgets.slint";
+import { Badge, Card, Divider, IconButton, Keycap, NoticeCard, PageHeader, Pill, PrimaryButton, RowText, SectionHeader } from "../widgets.slint";
 
-// An enabled input method with what can be done with it.
-component InputMethodItem inherits HorizontalLayout {
+// An enabled input method with its switching priority and actions.
+component InputMethodItem inherits Rectangle {
     in property <InputMethodRow> method;
     in property <int> index;
     in property <int> count;
-    padding-left: 16px;
-    padding-right: 10px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    spacing: 14px;
-    VerticalLayout {
-        alignment: center;
-        Badge {
-            text: root.method.label;
-        }
-    }
+    background: root.method.in-use ? Theme.active-row : transparent;
 
-    VerticalLayout {
-        alignment: center;
-        spacing: 2px;
-        horizontal-stretch: 1;
-        HorizontalLayout {
-            alignment: start;
-            spacing: 8px;
-            Text {
-                text: root.method.name;
-                font-size: 14px;
-                color: Theme.text;
-                overflow: elide;
-            }
-
-            if root.method.in-use: VerticalLayout {
-                alignment: center;
-                Pill {
-                    text: root.method.mode-label == "" ? Tr.text("In use") : Tr.text1("In use · {}", root.method.mode-label);
-                }
-            }
-        }
-
-        if Texts.detail(root.method.engine-name, root.method.language) != "": Text {
-            text: Texts.detail(root.method.engine-name, root.method.language);
-            font-size: 12px;
-            color: Theme.secondary;
-            overflow: elide;
-        }
+    // Subtle active indicator on the method currently in use.
+    if root.method.in-use: Rectangle {
+        x: 0;
+        y: 12px;
+        width: 3px;
+        height: parent.height - 24px;
+        border-radius: 1.5px;
+        background: Theme.accent-text;
     }
 
     HorizontalLayout {
-        spacing: 2px;
-        alignment: end;
+        padding-left: 18px;
+        padding-right: 12px;
+        padding-top: 13px;
+        padding-bottom: 13px;
+        spacing: 14px;
         VerticalLayout {
             alignment: center;
-            IconButton {
-                icon: @image-url("../icons/chevron-up.svg");
-                label: Tr.text1("Move {} up", root.method.name);
-                enabled: root.index > 0;
-                clicked => {
-                    Backend.move-input-method(root.index, root.index - 1);
-                }
+            Badge {
+                text: root.method.label;
+                active: root.method.in-use;
             }
         }
 
         VerticalLayout {
             alignment: center;
-            IconButton {
-                icon: @image-url("../icons/chevron-down.svg");
-                label: Tr.text1("Move {} down", root.method.name);
-                enabled: root.index < root.count - 1;
-                clicked => {
-                    Backend.move-input-method(root.index, root.index + 1);
+            spacing: 3px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Text {
+                    text: root.method.name;
+                    font-size: 14px;
+                    font-weight: root.method.in-use ? 600 : 500;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
                 }
+
+                if root.method.in-use: VerticalLayout {
+                    alignment: center;
+                    Pill {
+                        dot: true;
+                        text: root.method.mode-label == "" ? Tr.text("In use") : Tr.text1("In use · {}", root.method.mode-label);
+                    }
+                }
+            }
+
+            if Texts.detail(root.method.engine-name, root.method.language) != "": Text {
+                text: Texts.detail(root.method.engine-name, root.method.language);
+                font-size: 12.5px;
+                color: Theme.secondary;
+                overflow: elide;
             }
         }
 
-        VerticalLayout {
-            alignment: center;
-            IconButton {
-                icon: @image-url("../icons/gear.svg");
-                label: Tr.text1("Settings of {}", root.method.name);
-                // Keeps its place when there is nothing to open, so that the buttons line up.
-                visible: root.method.settings;
-                enabled: root.method.settings;
-                clicked => {
-                    Backend.open-settings(root.method.engine);
+        HorizontalLayout {
+            spacing: 2px;
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    icon: @image-url("../icons/chevron-up.svg");
+                    label: Tr.text1("Move {} up", root.method.name);
+                    enabled: root.index > 0;
+                    clicked => {
+                        Backend.move-input-method(root.index, root.index - 1);
+                    }
                 }
             }
-        }
 
-        VerticalLayout {
-            alignment: center;
-            IconButton {
-                icon: @image-url("../icons/trash.svg");
-                label: Tr.text1("Remove {}", root.method.name);
-                clicked => {
-                    Backend.remove-input-method(root.index);
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    icon: @image-url("../icons/chevron-down.svg");
+                    label: Tr.text1("Move {} down", root.method.name);
+                    enabled: root.index < root.count - 1;
+                    clicked => {
+                        Backend.move-input-method(root.index, root.index + 1);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                padding-left: 4px;
+                padding-right: 4px;
+                Rectangle {
+                    width: 1px;
+                    height: 18px;
+                    background: Theme.divider;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    icon: @image-url("../icons/gear.svg");
+                    label: Tr.text1("Settings of {}", root.method.name);
+                    // Keeps its place when there is nothing to open, so that the buttons line up.
+                    visible: root.method.settings;
+                    enabled: root.method.settings;
+                    clicked => {
+                        Backend.open-settings(root.method.engine);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    icon: @image-url("../icons/trash.svg");
+                    label: Tr.text1("Remove {}", root.method.name);
+                    clicked => {
+                        Backend.remove-input-method(root.index);
+                    }
                 }
             }
         }
@@ -107,15 +136,16 @@ component InputMethodItem inherits HorizontalLayout {
 // An input method of the user's language, to add with a click.
 component SuggestionItem inherits HorizontalLayout {
     in property <CatalogEntry> entry;
-    padding-left: 16px;
+    padding-left: 18px;
     padding-right: 16px;
-    padding-top: 10px;
-    padding-bottom: 10px;
+    padding-top: 11px;
+    padding-bottom: 11px;
     spacing: 14px;
     VerticalLayout {
         alignment: center;
         Badge {
             text: root.entry.label;
+            active: false;
         }
     }
 
@@ -137,43 +167,11 @@ component SuggestionItem inherits HorizontalLayout {
     }
 }
 
-// Something the user should know, with its icon.
-component Notice inherits Card {
-    in property <image> icon;
-    in property <brush> tint: Theme.secondary;
-    in property <string> text;
-    HorizontalLayout {
-        padding: 14px;
-        padding-left: 16px;
-        padding-right: 16px;
-        spacing: 12px;
-        VerticalLayout {
-            alignment: start;
-            padding-top: 1px;
-            Image {
-                source: root.icon;
-                colorize: root.tint;
-                width: 18px;
-                height: 18px;
-            }
-        }
-
-        Text {
-            text: root.text;
-            color: Theme.text;
-            wrap: word-wrap;
-            horizontal-stretch: 1;
-        }
-
-        @children
-    }
-}
-
 // The keys of a hotkey and what it does.
 component HotkeyHint inherits HorizontalLayout {
     in property <[string]> keys;
     in property <string> text;
-    spacing: 8px;
+    spacing: 10px;
     HorizontalLayout {
         spacing: 4px;
         for key in root.keys: VerticalLayout {
@@ -197,16 +195,18 @@ component HotkeyHint inherits HorizontalLayout {
 }
 
 export component InputMethodsPage inherits VerticalLayout {
-    spacing: 12px;
+    spacing: 16px;
     PageHeader {
         title: Tr.text("Input methods");
         description: Tr.text("The input methods you switch between, in the order of switching. Direct input is always there too.");
     }
 
     // What keeps oh-my-ime from typing at all comes first.
-    if Backend.seat-taken: Notice {
+    if Backend.seat-taken: NoticeCard {
         icon: @image-url("../icons/alert.svg");
         tint: Theme.danger;
+        bg: Theme.danger-background;
+        border: Theme.danger-border;
         text: Tr.text("Another input method holds the keyboard, so oh-my-ime cannot type yet. The About page says which seat.");
         VerticalLayout {
             alignment: center;
@@ -219,54 +219,84 @@ export component InputMethodsPage inherits VerticalLayout {
         }
     }
 
-    if Backend.input-methods.length == 0: Card {
-        VerticalLayout {
-            padding: 28px;
-            spacing: 6px;
-            alignment: center;
-            Text {
-                text: Tr.text("No input methods yet");
-                font-size: 15px;
-                font-weight: 600;
-                color: Theme.text;
-                horizontal-alignment: center;
-            }
-
-            Text {
-                text: Tr.text("Add one to type in another language.");
-                color: Theme.secondary;
-                horizontal-alignment: center;
-                wrap: word-wrap;
-            }
-        }
-    }
-
-    if Backend.input-methods.length > 0: Card {
-        VerticalLayout {
-            for method[index] in Backend.input-methods: VerticalLayout {
-                if index > 0: Divider {
-                    inset: 66px;
+    VerticalLayout {
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                SectionHeader {
+                    text: Tr.text("Switching order");
                 }
-                InputMethodItem {
-                    method: method;
-                    index: index;
-                    count: Backend.input-methods.length;
+            }
+
+            PrimaryButton {
+                text: Tr.text("Add input method…");
+                icon: @image-url("../icons/plus.svg");
+                has-icon: true;
+                clicked => {
+                    Backend.search("");
+                    View.adding = true;
                 }
             }
         }
-    }
 
-    HorizontalLayout {
-        alignment: start;
-        padding-top: 4px;
-        Button {
-            text: Tr.text("Add input method…");
-            icon: @image-url("../icons/plus.svg");
-            colorize-icon: true;
-            primary: true;
-            clicked => {
-                Backend.search("");
-                View.adding = true;
+        if Backend.input-methods.length == 0: Card {
+            VerticalLayout {
+                padding: 32px;
+                spacing: 10px;
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 44px;
+                        height: 44px;
+                        border-radius: 12px;
+                        background: Theme.surface-subtle;
+                        border-width: 1px;
+                        border-color: Theme.card-border;
+                        Image {
+                            source: @image-url("../icons/keyboard.svg");
+                            colorize: Theme.tertiary;
+                            width: 22px;
+                            height: 22px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+                }
+
+                Text {
+                    text: Tr.text("No input methods yet");
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: Tr.text("Add one to type in another language.");
+                    font-size: 13px;
+                    color: Theme.secondary;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if Backend.input-methods.length > 0: Card {
+            VerticalLayout {
+                for method[index] in Backend.input-methods: VerticalLayout {
+                    if index > 0: Divider {
+                        inset: 68px;
+                    }
+                    InputMethodItem {
+                        method: method;
+                        index: index;
+                        count: Backend.input-methods.length;
+                    }
+                }
             }
         }
     }
@@ -274,8 +304,7 @@ export component InputMethodsPage inherits VerticalLayout {
     // For a user without an input method of their language: some to add at once, or
     // what to install.
     if Backend.suggestions.length > 0: VerticalLayout {
-        padding-top: 8px;
-        spacing: 8px;
+        spacing: 10px;
         SectionHeader {
             text: Tr.text1("Suggested for {}", Texts.language(Backend.suggested-language));
         }
@@ -284,7 +313,7 @@ export component InputMethodsPage inherits VerticalLayout {
             VerticalLayout {
                 for entry[index] in Backend.suggestions: VerticalLayout {
                     if index > 0: Divider {
-                        inset: 66px;
+                        inset: 68px;
                     }
                     SuggestionItem {
                         entry: entry;
@@ -293,24 +322,33 @@ export component InputMethodsPage inherits VerticalLayout {
             }
         }
     }
-    if Backend.missing-language != "": Notice {
+    if Backend.missing-language != "": NoticeCard {
         // Rime, oh-my-ime's own engine, types Chinese.
         property <bool> chinese: Backend.missing-language == "zh" || Backend.missing-language == "zh-Hans" || Backend.missing-language == "zh-Hant";
         icon: @image-url("../icons/info.svg");
+        tint: Theme.accent-text;
         text: self.chinese ? Tr.text1("No input method for {} is installed. Install oh-my-ime's Rime engine, or Fcitx 5 or IBus with their input methods: they show here once they are installed.", Texts.language(Backend.missing-language)) : Tr.text1("No input method for {} is installed. Install Fcitx 5 or IBus with an input method for it: it shows here once it is installed.", Texts.language(Backend.missing-language));
     }
 
     // How to switch, once there is something to switch to.
-    if Backend.input-methods.length > 0 && (Backend.toggle-keys.length > 0 || Backend.next-keys.length > 0): VerticalLayout {
-        padding-top: 8px;
-        spacing: 6px;
-        if Backend.toggle-keys.length > 0: HotkeyHint {
-            keys: Backend.toggle-keys;
-            text: Tr.text("Switches between direct input and the input method you used last");
-        }
-        if Backend.next-keys.length > 0 && Backend.input-methods.length > 1: HotkeyHint {
-            keys: Backend.next-keys;
-            text: Tr.text("Switches to the next input method in your list");
+    if Backend.input-methods.length > 0 && (Backend.toggle-keys.length > 0 || Backend.next-keys.length > 0): Rectangle {
+        background: Theme.surface-subtle;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.card-border;
+        VerticalLayout {
+            padding: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 8px;
+            if Backend.toggle-keys.length > 0: HotkeyHint {
+                keys: Backend.toggle-keys;
+                text: Tr.text("Switches between direct input and the input method you used last");
+            }
+            if Backend.next-keys.length > 0 && Backend.input-methods.length > 1: HotkeyHint {
+                keys: Backend.next-keys;
+                text: Tr.text("Switches to the next input method in your list");
+            }
         }
     }
 }
@@ -318,31 +356,32 @@ export component InputMethodsPage inherits VerticalLayout {
 // An entry of the list of input methods to add.
 component CatalogItem inherits Rectangle {
     in property <CatalogEntry> entry;
-    height: root.entry.id == "" ? 36px : 52px;
-    border-radius: 6px;
+    height: root.entry.id == "" ? 34px : 54px;
+    border-radius: 8px;
     background: root.entry.id != "" && touch.has-hover ? Theme.hover : transparent;
     touch := TouchArea {
         enabled: root.entry.id != "";
     }
 
     if root.entry.id == "": Text {
-        x: 8px;
+        x: 10px;
         y: parent.height - self.height - 6px;
         text: Texts.language(root.entry.heading);
         font-size: 12px;
         font-weight: 600;
-        color: Theme.secondary;
+        color: Theme.accent-text;
     }
 
     if root.entry.id != "": HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
+        padding-left: 10px;
+        padding-right: 10px;
         spacing: 12px;
         VerticalLayout {
             alignment: center;
             Badge {
                 text: root.entry.label;
                 size: 32px;
+                active: false;
             }
         }
 
@@ -377,11 +416,11 @@ export component AddDialog inherits Rectangle {
 
     Rectangle {
         width: min(540px, root.width - 48px);
-        height: min(600px, root.height - 48px);
+        height: min(580px, root.height - 48px);
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 2;
         background: Theme.dialog;
-        border-radius: 12px;
+        border-radius: 14px;
         border-width: 1px;
         border-color: Theme.card-border;
         drop-shadow-blur: 28px;
@@ -392,14 +431,14 @@ export component AddDialog inherits Rectangle {
 
         VerticalLayout {
             padding: 20px;
-            padding-bottom: 12px;
+            padding-bottom: 14px;
             spacing: 14px;
             HorizontalLayout {
                 spacing: 8px;
                 Text {
                     text: Tr.text("Add an input method");
-                    font-size: 20px;
-                    font-weight: 600;
+                    font-size: 19px;
+                    font-weight: 700;
                     color: Theme.text;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
@@ -422,17 +461,24 @@ export component AddDialog inherits Rectangle {
                 }
             }
 
-            if Backend.catalog-empty: Text {
-                text: search.text == "" ? Tr.text("Every input method there is is in your list already. Install another framework or engine to get more.") : Tr.text1("No input method matches “{}”.", search.text);
-                color: Theme.secondary;
-                wrap: word-wrap;
+            if Backend.catalog-empty: VerticalLayout {
                 vertical-stretch: 1;
+                alignment: center;
+                padding: 24px;
+                Text {
+                    text: search.text == "" ? Tr.text("Every input method there is is in your list already. Install another framework or engine to get more.") : Tr.text1("No input method matches “{}”.", search.text);
+                    font-size: 13px;
+                    color: Theme.secondary;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
             }
 
             if !Backend.catalog-empty: ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     padding-right: 8px;
+                    spacing: 2px;
                     for entry in Backend.catalog: CatalogItem {
                         entry: entry;
                     }

@@ -1,7 +1,8 @@
-//! Hyprland first-run setup. The plan is built before any files are changed; undo
+//! Desktop first-run setup. The plan is built before any files are changed; undo
 //! removes owned edits and leaves unrelated user configuration in place.
 
 mod files;
+mod native;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,115 @@ use omime_proto::{manifest, paths};
 
 use files::{Change, Edit, Kind, ManagedFile, Record};
 
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum Desktop {
+    #[default]
+    Hyprland,
+    Sway,
+    Kde,
+    Gnome,
+}
+
+impl Desktop {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Hyprland => "Hyprland",
+            Self::Sway => "Sway",
+            Self::Kde => "KDE Plasma",
+            Self::Gnome => "GNOME",
+        }
+    }
+}
+
+/// Read only desktop identity, never infer support from a compositor's name.
+/// Protocol support is checked independently before applying a setup.
+#[derive(Debug, Default)]
+struct DesktopEnvironment {
+    current: String,
+    session: String,
+    sway_socket: bool,
+    hyprland_socket: bool,
+}
+
+impl DesktopEnvironment {
+    fn read() -> Self {
+        let present = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        Self {
+            current: std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default(),
+            session: std::env::var("XDG_SESSION_DESKTOP").unwrap_or_default(),
+            sway_socket: present("SWAYSOCK"),
+            hyprland_socket: present("HYPRLAND_INSTANCE_SIGNATURE"),
+        }
+    }
+
+    fn detect(&self) -> anyhow::Result<Option<Desktop>> {
+        for identity in [&self.current, &self.session] {
+            if identity.trim().is_empty() {
+                continue;
+            }
+            let names: Vec<_> = identity.split(':').map(str::trim).collect();
+            let sway = names.iter().any(|name| name.eq_ignore_ascii_case("sway"));
+            let hyprland = names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("hyprland"));
+            if names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("KDE") || name.eq_ignore_ascii_case("plasma"))
+            {
+                return Ok(Some(Desktop::Kde));
+            }
+            if names.iter().any(|name| name.eq_ignore_ascii_case("GNOME")) {
+                return Ok(Some(Desktop::Gnome));
+            }
+            return match (sway, hyprland) {
+                (true, false) => Ok(Some(Desktop::Sway)),
+                (false, true) => Ok(Some(Desktop::Hyprland)),
+                _ => bail!(
+                    "{}",
+                    tr!(
+                        "Cannot choose setup for desktop {desktop}; use --desktop hyprland or --desktop sway to select the configuration to manage.",
+                        desktop = identity
+                    )
+                ),
+            };
+        }
+        match (self.sway_socket, self.hyprland_socket) {
+            (true, false) => Ok(Some(Desktop::Sway)),
+            (false, true) => Ok(Some(Desktop::Hyprland)),
+            (false, false) => Ok(None),
+            (true, true) => bail!(
+                "{}",
+                tr!(
+                    "Both Sway and Hyprland session markers are set; select the configuration with --desktop hyprland or --desktop sway."
+                )
+            ),
+        }
+    }
+}
+
+fn select_desktop(
+    requested: Option<Desktop>,
+    previous: Option<&Record>,
+    environment: &DesktopEnvironment,
+) -> anyhow::Result<Desktop> {
+    let desktop = match requested {
+        Some(desktop) => desktop,
+        None => environment
+            .detect()?
+            .unwrap_or_else(|| previous.map_or(Desktop::default(), |record| record.desktop)),
+    };
+    ensure!(
+        previous.is_none_or(|record| record.desktop == desktop),
+        "{}",
+        tr!(
+            "Setup already manages another desktop; run omime setup --undo before selecting {desktop}.",
+            desktop = desktop.name()
+        )
+    );
+    Ok(desktop)
+}
+
 pub(super) const ENVIRONMENT: [(&str, &str); 4] = [
     ("GTK_IM_MODULE", ""),
     ("QT_IM_MODULE", "fcitx"),
@@ -24,8 +134,9 @@ pub(super) const ENVIRONMENT: [(&str, &str); 4] = [
     ("XMODIFIERS", "@im=fcitx"),
 ];
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Options {
+    desktop: Option<Desktop>,
     engine: Option<String>,
     config: Option<PathBuf>,
     dry_run: bool,
@@ -46,6 +157,22 @@ impl Options {
                 tr!("duplicate setup option {arg}", arg = arg)
             );
             match arg {
+                "--desktop" => {
+                    options.desktop = match args
+                        .next()
+                        .context(tr!("--desktop needs auto, hyprland, sway, kde or gnome"))?
+                    {
+                        "auto" => None,
+                        "hyprland" => Some(Desktop::Hyprland),
+                        "sway" => Some(Desktop::Sway),
+                        "kde" => Some(Desktop::Kde),
+                        "gnome" => Some(Desktop::Gnome),
+                        _ => bail!(
+                            "{}",
+                            tr!("--desktop must be auto, hyprland, sway, kde or gnome")
+                        ),
+                    };
+                }
                 "--engine" => {
                     let id = args
                         .next()
@@ -60,7 +187,7 @@ impl Options {
                 "--config" => {
                     options.config = Some(
                         args.next()
-                            .context(tr!("--config needs a Hyprland configuration path"))?
+                            .context(tr!("--config needs a desktop configuration path"))?
                             .into(),
                     )
                 }
@@ -74,6 +201,7 @@ impl Options {
         ensure!(
             !options.undo
                 || (options.engine.is_none()
+                    && !seen.contains("--desktop")
                     && options.config.is_none()
                     && !options.start
                     && !options.take_over),
@@ -87,6 +215,7 @@ impl Options {
 #[derive(Debug)]
 struct Locations {
     config_dir: PathBuf,
+    data_dir: PathBuf,
     state_dir: PathBuf,
     journal: PathBuf,
 }
@@ -101,6 +230,11 @@ impl Locations {
         )?;
         Ok(Self {
             journal: state_dir.join("setup.toml"),
+            data_dir: std::path::absolute(
+                paths::user_engine_dir()
+                    .and_then(|p| p.parent()?.parent().map(Path::to_path_buf))
+                    .context(tr!("cannot find XDG_DATA_HOME or HOME"))?,
+            )?,
             config_dir,
             state_dir,
         })
@@ -115,13 +249,23 @@ struct Plan {
     daemon: PathBuf,
 }
 
-pub async fn run(options: Options) -> anyhow::Result<()> {
-    let compositor = if options.undo {
-        Ok(crate::probe::Verdict::NoDisplay)
-    } else {
-        crate::probe::current().await
-    };
+pub async fn run(mut options: Options) -> anyhow::Result<()> {
     let locations = Locations::from_environment()?;
+    if !options.undo {
+        options.desktop = Some(select_desktop(
+            options.desktop,
+            Record::load(&locations.journal)?.as_ref(),
+            &DesktopEnvironment::read(),
+        )?);
+    }
+    // KWin exposes its input protocol only on the connection it supplies to the
+    // selected input method. GNOME uses IBus, not a public Wayland IM global.
+    let compositor =
+        if options.undo || matches!(options.desktop, Some(Desktop::Kde | Desktop::Gnome)) {
+            Ok(crate::probe::Verdict::NoDisplay)
+        } else {
+            crate::probe::current().await
+        };
     run_with(&options, &locations, compositor).await
 }
 
@@ -142,6 +286,30 @@ async fn run_with(
             println!("{warning}");
             println!("{}", tr!("Preview only: applying setup would be refused."));
         }
+    }
+    let mut options = options.clone();
+    if !options.undo {
+        options.desktop = Some(select_desktop(
+            options.desktop,
+            Record::load(&locations.journal)?.as_ref(),
+            &DesktopEnvironment::read(),
+        )?);
+    }
+    if matches!(options.desktop, Some(Desktop::Kde | Desktop::Gnome)) {
+        ensure!(
+            !options.take_over,
+            "{}",
+            tr!(
+                "KDE and GNOME manage their own input service; --take-over is not used for native integration."
+            )
+        );
+        ensure!(
+            !options.start,
+            "{}",
+            tr!(
+                "Select oh-my-ime in the desktop input settings after setup; KDE starts it on a privileged connection and GNOME starts its IBus adapter at login."
+            )
+        );
     }
     // Preview never creates a lock, journal, configuration or state directory.
     let _lock = if options.dry_run {
@@ -166,7 +334,7 @@ async fn run_with(
         return undo(locations, options.dry_run);
     }
 
-    let plan = prepare(locations, options)?;
+    let plan = prepare(locations, &options)?;
     let runtime = if options.start && !options.dry_run {
         Some(session::prepare(options.take_over).await?)
     } else {
@@ -183,7 +351,7 @@ async fn run_with(
         println!(
             "{}",
             tr!(
-                "Recognized Fcitx5/IBus autostart commands in the selected Hyprland file will be suspended."
+                "Recognized Fcitx5/IBus autostart commands in the selected desktop configuration will be suspended."
             )
         );
     }
@@ -206,18 +374,44 @@ async fn run_with(
     }
     println!(
         "{}",
-        tr!("Hyprland setup is ready. Use omime setup --undo to restore the managed settings.")
+        tr!(
+            "{desktop} setup is ready. Use omime setup --undo to restore the managed settings.",
+            desktop = plan.record.desktop.name()
+        )
     );
     if let Some(runtime) = runtime {
         session::start(runtime, &plan.daemon, &locations.state_dir, options.engine.as_deref()).await
             .context(tr!("settings were saved, but session setup did not finish; correct the reported problem and retry omime setup --start"))?;
     }
+    if matches!(plan.record.desktop, Desktop::Kde | Desktop::Gnome) {
+        println!(
+            "{}",
+            match plan.record.desktop {
+                Desktop::Kde => tr!(
+                    "Open System Settings → Keyboard → Virtual Keyboard, select oh-my-ime, then log out and back in. KWin will launch the input service."
+                ),
+                _ => tr!(
+                    "Log out and back in, then add oh-my-ime under Settings → Keyboard → Input Sources. Keep the system IBus service enabled."
+                ),
+            }
+        );
+        return Ok(());
+    }
     println!(
         "{}",
         tr!(
-            "Session configuration is ready for Hyprland, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
+            "Session configuration is ready for {desktop}, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor.",
+            desktop = plan.record.desktop.name()
         )
     );
+    if plan.record.desktop == Desktop::Sway {
+        println!(
+            "{}",
+            tr!(
+                "When starting Sway without UWSM, export the input environment before starting Sway; its exec launchers inherit the compositor's environment. See docs/setup.md."
+            )
+        );
+    }
     println!(
         "{}",
         tr!(
@@ -239,6 +433,11 @@ fn prepare_with(
     installed: &[manifest::InstalledEngine],
 ) -> anyhow::Result<Plan> {
     let previous = Record::load(&locations.journal)?;
+    let desktop = select_desktop(
+        options.desktop,
+        previous.as_ref(),
+        &DesktopEnvironment::default(),
+    )?;
     ensure!(
         previous.as_ref().is_none_or(|r| r.complete),
         "{}",
@@ -246,6 +445,9 @@ fn prepare_with(
             "an earlier setup was interrupted; run omime setup --undo to recover it before applying again"
         )
     );
+    if matches!(desktop, Desktop::Kde | Desktop::Gnome) {
+        return native::prepare(locations, options, daemon, installed, previous, desktop);
+    }
     let requested = options
         .config
         .as_ref()
@@ -264,6 +466,13 @@ fn prepare_with(
     let config_path = requested
         .or_else(|| previous.as_ref().map(|p| p.config_path.clone()))
         .unwrap_or_else(|| {
+            if desktop == Desktop::Sway {
+                return locations
+                    .config_dir
+                    .parent()
+                    .unwrap_or(&locations.config_dir)
+                    .join("sway/config");
+            }
             let hypr = locations
                 .config_dir
                 .parent()
@@ -277,17 +486,21 @@ fn prepare_with(
                 legacy
             }
         });
-    let lua = match config_path.extension().and_then(|e| e.to_str()) {
-        Some("lua") => true,
-        Some("conf") => false,
+    let lua = match (desktop, config_path.extension().and_then(|e| e.to_str())) {
+        (Desktop::Sway, _) => false,
+        (_, Some("lua")) => true,
+        (_, Some("conf")) => false,
         _ => bail!(
             "{}",
             tr!("--config must name a .lua or .conf Hyprland configuration")
         ),
     };
-    let snippet = locations
-        .config_dir
-        .join(if lua { "hyprland.lua" } else { "hyprland.conf" });
+    let snippet = locations.config_dir.join(match (desktop, lua) {
+        (Desktop::Sway, _) => "sway.conf",
+        (Desktop::Hyprland, true) => "hyprland.lua",
+        (Desktop::Hyprland, false) => "hyprland.conf",
+        (Desktop::Kde | Desktop::Gnome, _) => unreachable!("native plan returned above"),
+    });
     let user_config = locations.config_dir.join(config::CONFIG_FILE);
     // A setup that keeps the current method still needs a usable configuration.
     if let Some(text) = files::read(&user_config)? {
@@ -296,7 +509,7 @@ fn prepare_with(
     ensure!(
         config_path != snippet && config_path != user_config,
         "{}",
-        tr!("--config must name Hyprland's main configuration, not an oh-my-ime file")
+        tr!("--config must name the desktop's main configuration, not an oh-my-ime file")
     );
     let engine = options
         .engine
@@ -313,6 +526,7 @@ fn prepare_with(
     let take_over = options.take_over || previous.as_ref().is_some_and(|p| p.take_over);
     let mut record = Record {
         version: 1,
+        desktop,
         complete: true,
         config_path: config_path.clone(),
         engine: engine.clone(),
@@ -333,8 +547,13 @@ fn prepare_with(
     };
 
     let (current, original) = base(&config_path)?;
-    let (text, edits) =
-        configure_hyprland(original.as_deref().unwrap_or(""), &snippet, lua, take_over)?;
+    let (text, edits) = match desktop {
+        Desktop::Hyprland => {
+            configure_hyprland(original.as_deref().unwrap_or(""), &snippet, lua, take_over)?
+        }
+        Desktop::Sway => configure_sway(original.as_deref().unwrap_or(""), &snippet, take_over)?,
+        Desktop::Kde | Desktop::Gnome => unreachable!("native plan returned above"),
+    };
     add_file(
         &mut record,
         &mut changes,
@@ -354,7 +573,11 @@ fn prepare_with(
             arg0 = snippet.display()
         )
     );
-    let content = snippet_text(&daemon, lua)?;
+    let content = match desktop {
+        Desktop::Hyprland => snippet_text(&daemon, lua)?,
+        Desktop::Sway => sway_snippet_text(&daemon)?,
+        Desktop::Kde | Desktop::Gnome => unreachable!("native plan returned above"),
+    };
     add_file(
         &mut record,
         &mut changes,
@@ -395,7 +618,11 @@ fn prepare_with(
         Kind::Whole,
     );
 
-    let uwsm_env = config_root.join("uwsm/env-hyprland");
+    let uwsm_env = config_root.join(match desktop {
+        Desktop::Hyprland => "uwsm/env-hyprland",
+        Desktop::Sway => "uwsm/env-sway",
+        Desktop::Kde | Desktop::Gnome => unreachable!("native plan returned above"),
+    });
     let (current, original) = base(&uwsm_env)?;
     let mut content = original.clone().unwrap_or_default();
     ensure!(
@@ -621,6 +848,128 @@ fn snippet_text(daemon: &Path, lua: bool) -> anyhow::Result<String> {
     Ok(text)
 }
 
+/// Sway performs variable substitution even in quoted config arguments, and its
+/// include command expands globs. Reject those paths rather than changing what
+/// configuration or executable the user selected.
+fn sway_path(path: &Path, include: bool) -> anyhow::Result<&str> {
+    let text = path_text(path)?;
+    ensure!(
+        !text.contains(['$', '`', '\'', '"', '\\'])
+            && (!include || !text.contains(['*', '?', '[', ']'])),
+        "{}",
+        tr!(
+            "This path cannot be represented literally in a Sway configuration; choose a path without quotes, backslashes, variables or wildcard characters."
+        )
+    );
+    Ok(text)
+}
+
+fn sway_quote(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn sway_snippet_text(daemon: &Path) -> anyhow::Result<String> {
+    let environment = ENVIRONMENT
+        .iter()
+        .map(|(key, value)| format!("{key}={}", shell_quote(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let variables = ENVIRONMENT
+        .iter()
+        .map(|(key, _)| *key)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Sway has no `env` directive. Give both commands their own environment;
+    // environment.d and UWSM set the environment for future application launches.
+    let launch = format!(
+        "env {environment} {}",
+        shell_quote(sway_path(daemon, false)?)
+    );
+    let import =
+        format!("env {environment} dbus-update-activation-environment --systemd {variables}");
+    Ok(format!(
+        "# Managed by omime setup.\nexec {}\nexec {}\n",
+        sway_quote(&import),
+        sway_quote(&launch)
+    ))
+}
+
+fn configure_sway(
+    original: &str,
+    snippet: &Path,
+    take_over: bool,
+) -> anyhow::Result<(String, Vec<Edit>)> {
+    ensure!(
+        !original.contains("omime setup begin"),
+        "{}",
+        tr!(
+            "Sway contains an omime setup block without its journal; restore the journal before proceeding"
+        )
+    );
+    let mut text = String::new();
+    let mut edits = Vec::new();
+    for line in original.split_inclusive('\n') {
+        if let Some(program) = sway_startup_program(line)? {
+            ensure!(
+                program == "omimed" || take_over,
+                "{}",
+                tr!(
+                    "Sway already starts {program}; use --take-over to suspend that startup, or remove it yourself before setup",
+                    program = program
+                )
+            );
+            let after = format!(
+                "# omime setup disabled startup {}\n# {}\n",
+                edits.len(),
+                line.trim_end_matches(['\r', '\n'])
+            );
+            text += &after;
+            edits.push(Edit {
+                before: line.into(),
+                after,
+            });
+        } else {
+            text += line;
+        }
+    }
+    let include = sway_quote(sway_path(snippet, true)?);
+    let block = format!(
+        "{}# omime setup begin\ninclude {include}\n# omime setup end\n",
+        if text.is_empty() || text.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        }
+    );
+    text += &block;
+    edits.push(Edit {
+        before: String::new(),
+        after: block,
+    });
+    Ok((text, edits))
+}
+
+fn sway_startup_program(line: &str) -> anyhow::Result<Option<&str>> {
+    let line = line.trim();
+    let Some((directive, command)) = line.split_once(char::is_whitespace) else {
+        return Ok(None);
+    };
+    if !matches!(directive, "exec" | "exec_always") {
+        return Ok(None);
+    }
+    let mut command = command.trim();
+    if let Some(rest) = command.strip_prefix("--no-startup-id") {
+        if !rest.starts_with(char::is_whitespace) {
+            return Ok(None);
+        }
+        command = rest.trim();
+    }
+    if let Some(quoted) = command.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        command = quoted;
+    }
+    recognized_startup(command)
+}
+
 fn configure_hyprland(
     original: &str,
     snippet: &Path,
@@ -721,6 +1070,10 @@ fn startup_program(line: &str, lua: bool) -> anyhow::Result<Option<&str>> {
         }
         value.trim()
     };
+    recognized_startup(command)
+}
+
+fn recognized_startup(command: &str) -> anyhow::Result<Option<&str>> {
     let mut words = command.split_whitespace();
     let Some(mut program) = words.next() else {
         return Ok(None);
@@ -731,6 +1084,12 @@ fn startup_program(line: &str, lua: bool) -> anyhow::Result<Option<&str>> {
         };
         program = next;
     }
+    // Shell separators can immediately follow the executable (omimed; foot).
+    // Recognize that executable first, then reject the compound command below.
+    let program = program
+        .split([';', '|', '&', '<', '>'])
+        .next()
+        .unwrap_or(program);
     let name = program
         .trim_matches(['\'', '"'])
         .rsplit('/')
@@ -743,7 +1102,7 @@ fn startup_program(line: &str, lua: bool) -> anyhow::Result<Option<&str>> {
         !command.contains([';', '|', '&', '<', '>', '`', '$', '\\']),
         "{}",
         tr!(
-            "a compound {name} startup also performs other actions; split that startup in Hyprland before using setup",
+            "a compound {name} startup also performs other actions; split that startup in the desktop configuration before using setup",
             name = name
         )
     );

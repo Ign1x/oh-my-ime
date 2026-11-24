@@ -17,12 +17,36 @@ let
   ibus = pkgs.ibus-with-plugins.override { plugins = cfg.ibus.engines; };
   frameworks = lib.optional cfg.fcitx5.enable fcitx5 ++ lib.optional cfg.ibus.enable ibus;
   servicePath = import ./service-path.nix { inherit lib frameworks; };
+  native = cfg.backend != "wayland";
+  installed = if native then import ./native-package.nix {
+    inherit pkgs lib frameworks;
+    package = cfg.package;
+    rime = if cfg.rime.enable then cfg.rime.package else null;
+  } else cfg.package;
 
   toml = pkgs.formats.toml { };
 in
 {
   options.programs.oh-my-ime = {
     enable = lib.mkEnableOption "oh-my-ime, a Wayland-first input method platform";
+
+    backend = lib.mkOption {
+      type = lib.types.enum [ "wayland" "kde" "gnome" ];
+      default = "wayland";
+      description = ''
+        Use input-method-v2 (`wayland`), KWin's privileged input-method-v1 (`kde`),
+        or the session IBus engine (`gnome`). Select the installed input method in
+        Plasma's Virtual Keyboard or GNOME's Input Sources settings. GNOME needs
+        the distribution's session IBus service and toolkit modules.
+      '';
+    };
+
+    autoStart = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.backend != "kde";
+      defaultText = lib.literalExpression ''backend != "kde"'';
+      description = "Start omimed with the graphical session. KWin must launch the KDE backend itself.";
+    };
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -123,12 +147,22 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.package ];
+    assertions = [
+      {
+        assertion = cfg.backend != "kde" || !cfg.autoStart;
+        message = "The KDE backend must be launched by KWin; programs.oh-my-ime.autoStart must be false.";
+      }
+      {
+        assertion = cfg.backend != "gnome" || (!cfg.fcitx5.enable && !cfg.ibus.enable);
+        message = "GNOME's native IBus route supports native engines; hosted Fcitx5/IBus engines require the Wayland backend.";
+      }
+    ];
+    home.packages = [ installed ];
 
     # The user unit from data/omimed.service, with the package's absolute paths. The
     # frameworks are only on its PATH: in the profile, Fcitx 5's autostart entry would
     # start it as the desktop's input method, in omimed's place.
-    systemd.user.services.omimed = {
+    systemd.user.services.omimed = lib.mkIf (cfg.backend != "kde") {
       Unit = {
         Description = "oh-my-ime input method daemon";
         Documentation = [ "https://github.com/Ign1x/oh-my-ime" ];
@@ -140,7 +174,7 @@ in
         # omimed takes io.github.ign1x.OhMyIme on the session bus.
         Type = "dbus";
         BusName = "io.github.ign1x.OhMyIme";
-        ExecStart = "${cfg.package}/bin/omimed";
+        ExecStart = "${installed}/bin/omimed" + lib.optionalString (cfg.backend == "gnome") " --ibus";
         ExecReload = "${cfg.package}/bin/omime reload";
         Restart = "on-failure";
         RestartPreventExitStatus = 69;
@@ -153,12 +187,12 @@ in
         ++ lib.optional cfg.rime.enable "OMIME_ENGINE_PATH=${cfg.rime.package}/share/oh-my-ime/engines";
       };
 
-      Install.WantedBy = [ "graphical-session.target" ];
+      Install.WantedBy = lib.optional cfg.autoStart "graphical-session.target";
     };
 
     # GTK 4 and Qt 6.8+ use the compositor's text-input; the empty GTK_IM_MODULE keeps
     # GTK 3 from loading an immodule that is not there.
-    home.sessionVariables = lib.mkIf cfg.sessionVariables {
+    home.sessionVariables = lib.mkIf (cfg.sessionVariables && cfg.backend != "gnome") {
       GTK_IM_MODULE = "";
       QT_IM_MODULE = "fcitx";
       QT_IM_MODULES = "wayland;fcitx";

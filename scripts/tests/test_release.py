@@ -66,7 +66,7 @@ class ReleaseTests(unittest.TestCase):
         with tarfile.open(self.out / "oh-my-ime-nix.tar.gz") as tar:
             names = set(tar.getnames())
             for name in ("flake.nix", "flake.lock", "nix/package.nix", "nix/rime.nix", "nix/binary.nix",
-                         "nix/release.json", "nix/nixos.nix", "nix/home-manager.nix", "nix/service-path.nix"):
+                         "nix/release.json", "nix/nixos.nix", "nix/home-manager.nix", "nix/service-path.nix", "nix/native-package.nix"):
                 self.assertIn(f"oh-my-ime-nix/{name}", names)
             self.assertEqual(json.load(tar.extractfile("oh-my-ime-nix/nix/release.json")), manifest)
         lines = (self.out / "SHA256SUMS").read_text().splitlines()

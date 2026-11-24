@@ -91,6 +91,17 @@ pub struct Diagnosis {
     pub seats: Vec<(String, bool)>,
     /// Whether the compositor reports which window has focus.
     pub focused_app: bool,
+    /// Native IBus mode, or the compositor protocol frontend on older daemons.
+    pub backend: Backend,
+    pub backend_connected: bool,
+    pub backend_selected: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Backend {
+    #[default]
+    Wayland,
+    Ibus,
 }
 
 /// An engine as `ListEngines` reports it.
@@ -153,37 +164,55 @@ pub fn daemon_findings(daemon: Option<&Daemon>, others: &[OtherIm]) -> Vec<Findi
         ))];
     };
     let diagnosis = &daemon.diagnosis;
-    let mut findings = vec![Finding::ok(tr!(
-        "omimed is running, connected to {arg0}",
-        arg0 = diagnosis.display
-    ))];
-
-    let mut every_seat_is_ours = true;
-    for (seat, ours) in &diagnosis.seats {
-        if *ours {
-            findings.push(Finding::ok(tr!(
-                "seat {seat}: oh-my-ime is the input method",
-                seat = seat
-            )));
+    let mut findings = Vec::new();
+    if diagnosis.backend == Backend::Ibus {
+        findings.push(Finding::ok(tr!("omimed is running in native IBus mode")));
+        findings.push(if diagnosis.backend_connected {
+            Finding::ok(tr!("connected to the session IBus daemon"))
         } else {
-            every_seat_is_ours = false;
-            findings.push(Finding::problem(busy_seat(seat, others.first())));
+            Finding::problem(tr!("not connected to the session IBus daemon; check that IBus is running and inspect the omimed log"))
+        });
+        if diagnosis.backend_connected {
+            findings.push(if diagnosis.backend_selected {
+                Finding::ok(tr!("oh-my-ime is selected as the IBus input source"))
+            } else {
+                Finding::warning(tr!("oh-my-ime is registered with IBus but is not selected; add and select it in GNOME Keyboard input sources"))
+            });
         }
-    }
-    // A running input method that does not hold the seat now may take it when omimed
-    // restarts, so it is still worth knowing about.
-    if every_seat_is_ours {
-        findings.extend(others.iter().map(|other| {
+        findings.push(Finding::warning(tr!("per-application input methods require an application id from IBus; GNOME Shell may provide only a generic client name")));
+    } else {
+        findings.push(Finding::ok(tr!(
+            "omimed is running, connected to {arg0}",
+            arg0 = diagnosis.display
+        )));
+
+        let mut every_seat_is_ours = true;
+        for (seat, ours) in &diagnosis.seats {
+            if *ours {
+                findings.push(Finding::ok(tr!(
+                    "seat {seat}: oh-my-ime is the input method",
+                    seat = seat
+                )));
+            } else {
+                every_seat_is_ours = false;
+                findings.push(Finding::problem(busy_seat(seat, others.first())));
+            }
+        }
+        // A running input method that does not hold the seat now may take it when omimed
+        // restarts, so it is still worth knowing about.
+        if every_seat_is_ours {
+            findings.extend(others.iter().map(|other| {
             Finding::warning(tr!("{arg0} (pid {arg1}) is running; it is not using the seat now, but may take it when omimed restarts", arg0 = other.process, arg1 = other.pid))
         }));
-    }
+        }
 
-    findings.push(if diagnosis.focused_app {
+        findings.push(if diagnosis.focused_app {
         Finding::ok(tr!("the compositor reports the focused window"))
     } else {
         Finding::warning(tr!("the compositor does not report the focused window, so per-application engines (`[apps] remember`) cannot work"),
         )
     });
+    }
 
     for engine in daemon.engines.iter().filter(|e| e.state == "failed") {
         findings.push(Finding::problem(tr!(
@@ -357,7 +386,12 @@ pub fn engine_findings(
 /// Applications reach an input method the way these variables say. omimed serves the
 /// compositor's text-input, the Fcitx5 module and XIM (also by the names `fcitx` and
 /// `ibus`), not yet IBus's module.
+#[cfg(test)]
 pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
+    backend_environment_findings(vars, Backend::Wayland)
+}
+
+fn backend_environment_findings(vars: &[(String, String)], backend: Backend) -> Vec<Finding> {
     let value = |name: &str| {
         vars.iter()
             .find(|(n, _)| n == name)
@@ -365,6 +399,26 @@ pub fn environment_findings(vars: &[(String, String)]) -> Vec<Finding> {
             .filter(|v| !v.is_empty())
     };
     let mut findings = Vec::new();
+    if backend == Backend::Ibus {
+        for name in ["GTK_IM_MODULE", "QT_IM_MODULE"] {
+            if value(name).is_some_and(|module| matches!(module.as_str(), "fcitx" | "fcitx5")) {
+                findings.push(Finding::warning(tr!("{name} points to Fcitx; native IBus mode uses GNOME's toolkit defaults or the IBus module", name = name)));
+            }
+        }
+        if let Some(modules) = value("QT_IM_MODULES")
+            && !modules
+                .split(';')
+                .any(|module| matches!(module.trim(), "wayland" | "ibus"))
+        {
+            findings.push(Finding::warning(tr!(
+                "QT_IM_MODULES has no Wayland or IBus backend; native GNOME input needs one of them"
+            )));
+        }
+        if value("XMODIFIERS").is_some_and(|name| name != "@im=ibus") {
+            findings.push(Finding::warning(tr!("XMODIFIERS does not name IBus; X11 applications using XIM need XMODIFIERS=@im=ibus in native GNOME mode")));
+        }
+        return findings;
+    }
     for (name, toolkit) in [
         ("GTK_IM_MODULE", omime_proto::i18n::text("GTK applications")),
         ("QT_IM_MODULE", omime_proto::i18n::text("Qt applications")),
@@ -422,7 +476,16 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
         })
         .collect();
 
-    let mut findings = daemon_check(&others, &mut installed).await;
+    let mut backend = if std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .split(':')
+        .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
+    {
+        Backend::Ibus
+    } else {
+        Backend::Wayland
+    };
+    let mut findings = daemon_check(&others, &mut installed, &mut backend).await;
     findings.extend(config_check(&installed));
     findings.extend(engine_findings(&found.broken, &warnings, &unknown));
     findings.extend(found.unavailable.iter().map(|(id, program)| {
@@ -436,9 +499,9 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
         .as_ref()
         .map_or_else(environment, |app| app.variables.clone());
     if let Some(application) = application {
-        findings.extend(application.findings());
+        findings.extend(application.findings_for_backend(backend));
     } else {
-        findings.extend(environment_findings(&variables));
+        findings.extend(backend_environment_findings(&variables, backend));
     }
     if let Ok(connection) = zbus::Connection::session().await {
         match crate::launch_env::manager_environment(&connection).await {
@@ -459,7 +522,7 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
                     findings.push(Finding::warning(tr!("{arg0} differs from the systemd user manager: {arg1}; restart the application or open a new terminal after session setup", arg0 = if app_pid.is_some() { omime_proto::i18n::text("the application's launch environment") } else { omime_proto::i18n::text("this terminal's environment") }, arg1 = keys.join(", "))));
                 }
                 let vars: Vec<_> = manager.into_iter().collect();
-                for mut finding in environment_findings(&vars) {
+                for mut finding in backend_environment_findings(&vars, backend) {
                     finding.text = tr!("systemd application launches: {arg0}", arg0 = finding.text);
                     findings.push(finding);
                 }
@@ -482,13 +545,17 @@ pub async fn run(app_pid: Option<u32>) -> anyhow::Result<bool> {
 ///
 /// Without a session bus or without omimed that is a single problem, and the checks that
 /// do not need the daemon still run.
-async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Finding> {
+async fn daemon_check(
+    others: &[OtherIm],
+    installed: &mut Vec<String>,
+    backend: &mut Backend,
+) -> Vec<Finding> {
     let Ok(conn) = zbus::Connection::session().await else {
-        return stopped_daemon_findings(crate::probe::current().await);
+        return stopped_for_backend(*backend).await;
     };
     match crate::daemon_owns_bus_name(&conn).await {
         Ok(true) => {}
-        Ok(false) => return stopped_daemon_findings(crate::probe::current().await),
+        Ok(false) => return stopped_for_backend(*backend).await,
         Err(e) => {
             return vec![Finding::problem(tr!(
                 "cannot ask the session bus for {DAEMON_BUS_NAME}: {e}",
@@ -519,6 +586,7 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
             ))];
         }
     };
+    *backend = diagnosis.backend;
     let engines: Vec<Engine> = match proxy.list_engines().await {
         Ok(engines) => engines
             .into_iter()
@@ -554,6 +622,16 @@ async fn daemon_check(others: &[OtherIm], installed: &mut Vec<String>) -> Vec<Fi
     findings
 }
 
+async fn stopped_for_backend(backend: Backend) -> Vec<Finding> {
+    if backend == Backend::Ibus {
+        vec![Finding::problem(tr!(
+            "omimed is not running in native IBus mode; run `omime setup --desktop gnome`, then add and select oh-my-ime in GNOME Keyboard input sources"
+        ))]
+    } else {
+        stopped_daemon_findings(crate::probe::current().await)
+    }
+}
+
 fn stopped_daemon_findings(compositor: anyhow::Result<crate::probe::Verdict>) -> Vec<Finding> {
     match compositor {
         Ok(verdict) => match verdict.warning() {
@@ -581,10 +659,28 @@ fn decode_diagnosis(reply: &HashMap<String, OwnedVariant>) -> anyhow::Result<Dia
             .context(tr!("there is no `focused-app` entry"))?
             .try_clone()?,
     )?;
+    let selected = reply
+        .get("backend-selected")
+        .and_then(|v| v.try_clone().ok())
+        .and_then(|v| bool::try_from(v).ok())
+        .unwrap_or_else(|| seats.iter().any(|(_, active)| *active));
     Ok(Diagnosis {
         display: crate::string(reply, "display").unwrap_or_default(),
         seats,
         focused_app,
+        backend: if crate::string(reply, "backend").as_deref() == Some("ibus")
+            || crate::string(reply, "display").as_deref() == Some("ibus")
+        {
+            Backend::Ibus
+        } else {
+            Backend::Wayland
+        },
+        backend_connected: reply
+            .get("backend-connected")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(true),
+        backend_selected: selected,
     })
 }
 
@@ -710,6 +806,9 @@ mod tests {
                     .map(|(name, ours)| ((*name).to_owned(), *ours))
                     .collect(),
                 focused_app,
+                backend: Backend::Wayland,
+                backend_connected: true,
+                backend_selected: true,
             },
             engines: engines
                 .iter()
@@ -749,12 +848,13 @@ mod tests {
 
     #[test]
     fn unsupported_desktop_explains_why_the_daemon_is_not_running() {
-        let findings = stopped_daemon_findings(Ok(crate::probe::Verdict::Unsupported(vec![
-            "zwp_virtual_keyboard_manager_v1",
-        ])));
+        let findings = stopped_daemon_findings(Ok(crate::probe::Verdict::Unsupported(
+            omime_proto::desktop::Capabilities::from_globals([("zwp_input_method_manager_v2", 1)]),
+        )));
         assert_eq!(levels(&findings), [Level::Problem]);
         assert!(findings[0].text.contains("zwp_virtual_keyboard_manager_v1"));
-        assert!(findings[0].text.contains("KDE Plasma and GNOME"));
+        assert!(findings[0].text.contains("KDE Plasma"));
+        assert!(findings[0].text.contains("GNOME"));
         assert!(!findings[0].text.contains("systemctl --user start"));
         for verdict in [
             crate::probe::Verdict::Supported,
@@ -791,6 +891,89 @@ mod tests {
         assert_eq!(
             findings[3].text,
             "engines: sparkle (running), echo (stopped)"
+        );
+    }
+
+    #[test]
+    fn native_ibus_reports_connection_and_selection_without_seat_conflicts() {
+        let mut daemon = daemon(&[("IBus", false)], false, &[("rime", true, "running")]);
+        daemon.diagnosis.backend = Backend::Ibus;
+        daemon.diagnosis.backend_connected = true;
+        daemon.diagnosis.backend_selected = false;
+        let others = other_input_methods(&[(42, "ibus-daemon".into())]);
+        let findings = daemon_findings(Some(&daemon), &others);
+        assert!(!findings.iter().any(Finding::is_problem));
+        assert!(findings.iter().any(|f| f.text.contains("not selected")));
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.text.contains("another input method")
+                    || f.text.contains("may take it")
+                    || f.text.contains("compositor"))
+        );
+        daemon.diagnosis.backend_connected = false;
+        let findings = daemon_findings(Some(&daemon), &others);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.is_problem() && f.text.starts_with("not connected"))
+        );
+        assert!(!findings.iter().any(|f| f.text.contains("not selected")));
+    }
+
+    #[test]
+    fn diagnosis_decodes_native_readiness_and_keeps_older_daemons_working() {
+        let mut reply = HashMap::from([
+            (
+                "display".into(),
+                OwnedVariant::try_from(zbus::Variant::from("wayland-1")).unwrap(),
+            ),
+            (
+                "seats".into(),
+                OwnedVariant::try_from(zbus::Variant::from(vec![("seat0", true)])).unwrap(),
+            ),
+            ("focused-app".into(), true.into()),
+        ]);
+        assert_eq!(decode_diagnosis(&reply).unwrap().backend, Backend::Wayland);
+        reply.insert(
+            "backend".into(),
+            OwnedVariant::try_from(zbus::Variant::from("ibus")).unwrap(),
+        );
+        reply.insert("backend-connected".into(), false.into());
+        reply.insert("backend-selected".into(), false.into());
+        let diagnosis = decode_diagnosis(&reply).unwrap();
+        assert_eq!(diagnosis.backend, Backend::Ibus);
+        assert!(!diagnosis.backend_connected && !diagnosis.backend_selected);
+    }
+
+    #[test]
+    fn native_ibus_environment_accepts_toolkit_defaults_and_ibus_modules() {
+        for pairs in [
+            vec![],
+            vec![
+                ("GTK_IM_MODULE", "ibus"),
+                ("QT_IM_MODULE", "ibus"),
+                ("QT_IM_MODULES", "wayland;ibus"),
+                ("XMODIFIERS", "@im=ibus"),
+            ],
+        ] {
+            let vars = pairs
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect::<Vec<_>>();
+            assert!(backend_environment_findings(&vars, Backend::Ibus).is_empty());
+        }
+        let vars = vec![
+            ("QT_IM_MODULE".into(), "fcitx".into()),
+            ("XMODIFIERS".into(), "@im=fcitx".into()),
+        ];
+        let findings = backend_environment_findings(&vars, Backend::Ibus);
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().all(|f| f.level == Level::Warning));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.text.contains("XMODIFIERS=@im=ibus"))
         );
     }
 

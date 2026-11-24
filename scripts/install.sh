@@ -83,6 +83,37 @@ while IFS= read -r desktop_line; do
 done < data/io.github.ign1x.OhMyIme.Settings.desktop > "$DESKTOP"
 chmod 644 "$DESKTOP"
 
+# Plasma discovers this entry and supplies the privileged input-method connection.
+NATIVE_DESKTOP="$PREFIX/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop"
+while IFS= read -r desktop_line; do
+  case "$desktop_line" in
+    Exec=*) printf 'Exec="%s/bin/omimed"\n' "$(printf '%s' "$QUOTED_PREFIX" | sed 's/%/%%/g')" ;;
+    *) printf '%s\n' "$desktop_line" ;;
+  esac
+done < data/io.github.ign1x.OhMyIme.InputMethod.desktop > "$NATIVE_DESKTOP"
+chmod 644 "$NATIVE_DESKTOP"
+# Install discovery metadata without enabling an input source or an autostart.
+GNOME_DESKTOP="$PREFIX/share/applications/io.github.ign1x.OhMyIme.IBus.desktop"
+while IFS= read -r desktop_line; do
+  case "$desktop_line" in
+    Exec=*) printf 'Exec="%s/bin/omimed" --ibus\n' "$(printf '%s' "$QUOTED_PREFIX" | sed 's/%/%%/g')" ;;
+    *) printf '%s\n' "$desktop_line" ;;
+  esac
+done < data/io.github.ign1x.OhMyIme.IBus.desktop > "$GNOME_DESKTOP"
+chmod 644 "$GNOME_DESKTOP"
+IBUS_COMPONENT="$PREFIX/share/ibus/component/oh-my-ime.xml"
+XML_PREFIX=$(printf '%s' "$PREFIX" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
+install -d "$(dirname "$IBUS_COMPONENT")"
+while IFS= read -r component_line; do
+  case "$component_line" in
+    *'<exec>'*) printf '  <exec>&quot;%s/bin/omimed&quot; --ibus</exec>\n' "$XML_PREFIX" ;;
+    *) printf '%s\n' "$component_line" ;;
+  esac
+done < data/ibus/oh-my-ime.xml > "$IBUS_COMPONENT"
+chmod 644 "$IBUS_COMPONENT"
+# Keep the template for omime setup's managed user registration and undo journal.
+install -Dm644 data/ibus/oh-my-ime.xml "$PREFIX/share/oh-my-ime/ibus/oh-my-ime.xml"
+
 install -Dm644 data/config.toml "$PREFIX/share/oh-my-ime/config.toml"
 for snippet in data/hyprland/*; do
   install -Dm644 "$snippet" "$PREFIX/share/oh-my-ime/hyprland/$(basename "$snippet")"

@@ -33,33 +33,35 @@ oh-my-ime brings the Windows and macOS model to Linux. It is a platform, not ano
 method: it connects input methods to applications and leaves the input experience to them.
 
 > [!NOTE]
-> oh-my-ime is in early development. It works on Hyprland and sway; KDE Plasma and GNOME are
-> not supported yet ([desktop support](#desktop-support)).
+> oh-my-ime is in early development. This development branch adds native KDE and GNOME
+> routes alongside Hyprland and sway. See [desktop support](#desktop-support) for tested scope.
 
 ## Design
 
 ```mermaid
 flowchart LR
     W["Wayland apps"] <-->|"text-input-v3"| C["Compositor"]
-    C <-->|"input-method-v2<br/>one connection"| D["omimed<br/>focus · keys · switching<br/>UI Bridge"]
+    C <-->|"input-method-v1/v2<br/>one connection"| D["omimed<br/>focus · keys · switching<br/>UI Bridge"]
+    G["GNOME · system IBus"] <-->|"IBus engine · native candidates"| D
     X["X11 apps"] <-->|"XIM · Fcitx 5 modules"| D
     D <-->|"D-Bus: keys and actions"| E["Engines<br/>separate processes"]
     E -.->|"their own windows"| D
 ```
 
-- **One daemon, `omimed`,** owns what Wayland allows only once per seat: the compositor's
-  `input-method-v2`, the keyboard grab and the virtual keyboard. It tracks focus, routes each key
+- **One daemon, `omimed`,** adapts to IM v2 on Hyprland/sway, privileged IM v1 on KWin,
+  or system IBus on GNOME (`omimed --ibus`). It tracks focus, routes each key
   to the active input method, switches between input methods and delivers the text.
 - **Input methods ("engines") are separate processes.** Their logic talks to omimed over
   peer-to-peer D-Bus, and each key is answered with an ordered list of actions: commit, preedit,
-  delete surrounding text, forward the key. The platform defines no candidate model.
+  delete surrounding text, forward the key. Protocol 1.3 adds optional semantic candidates
+  for desktop-owned presentation; engines can keep drawing their own UI on Wayland.
 - **The UI Bridge** gives every engine a private Wayland socket and multiplexes it onto omimed's
   own compositor connection. An ordinary frameless window from any toolkit becomes the popup at
   the text cursor, without toolkit patches.
 - **Applications** reach omimed through the compositor (`text-input-v3`); X11 applications
   through XIM or the Fcitx 5 GTK/Qt modules.
-- **Fcitx 5 and IBus run inside oh-my-ime** as engines, unmodified, since a seat cannot have two
-  input methods. 🧩
+- **Fcitx 5 and IBus can run inside oh-my-ime** as engines on the Wayland backend.
+  GNOME instead keeps its system IBus and loads oh-my-ime as an engine.
 
 The full design is in [docs/architecture.md](docs/architecture.md).
 
@@ -86,8 +88,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
 |---|---|
 | Hyprland | ✅ |
 | sway ≥ 1.10 and other compositors with `input-method-v2` (labwc, river, niri, …) | ✅ sway is tested; the others are expected to work |
-| KDE Plasma | 📅 planned, through `input-method-v1` |
-| GNOME | 📅 planned, through the IBus protocol |
+| KDE Plasma | Native IM v1 + input-panel-v1; real KWin 6.8.3 virtual-session checks passed |
+| GNOME | System IBus engine with native candidates; Rime and Echo supported |
 
 On unsupported desktops, `omime setup` refuses before changing anything, and omimed exits
 without disturbing the input method in use. Tested applications are recorded in
@@ -113,6 +115,25 @@ the [setup guide](docs/setup.md), [releases](docs/releases.md), [Nix](docs/nix.m
 
 deb, RPM, AppImage and Arch/AUR packaging is covered in the
 [Linux packages guide](docs/linux-packages.md).
+
+## Desktop setup and settings
+
+`omime setup` selects Hyprland, sway, KDE or GNOME from the session; use
+`--desktop hyprland|sway|kde|gnome` to choose explicitly. Preview changes with
+`--dry-run` and restore managed files with `omime setup --undo`. Sway setup writes a
+managed include, daemon autostart, and the systemd/UWSM input environment; see the
+[setup guide](docs/setup.md) for applications launched directly by sway.
+
+The native settings app has a refreshed light/dark design, connection status,
+clearer input-method ordering and grouped diagnostics.
+[Light preview](docs/images/settings-light.png) · [Dark preview](docs/images/settings-dark.png) ·
+[Compact preview](docs/images/settings-compact.png). The
+[platform roadmap](docs/platform-roadmap.md) compares current capabilities with
+mature input platforms and records the native adapters and remaining application acceptance work.
+
+For KDE or GNOME, run `omime setup --desktop kde --engine rime` or
+`omime setup --desktop gnome --engine rime`, then log in again and select oh-my-ime
+in the desktop input settings. Follow the [native desktop guide](docs/native-desktops.md).
 
 ## Documentation
 

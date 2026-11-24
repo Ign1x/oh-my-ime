@@ -39,6 +39,9 @@ pub struct ManagedFile {
 #[serde(deny_unknown_fields)]
 pub struct Record {
     pub version: u32,
+    /// Journals created before desktop selection managed Hyprland.
+    #[serde(default)]
+    pub desktop: super::Desktop,
     pub complete: bool,
     pub config_path: PathBuf,
     pub engine: Option<String>,

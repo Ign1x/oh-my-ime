@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use omime_proto::engine::{Dict, InputMethodInfo, KeyEvent, Property, PropertyKind, WireAction};
+use omime_proto::engine::{
+    CandidatePage, Dict, InputMethodInfo, KeyEvent, Property, PropertyKind, WireAction,
+};
 use omime_proto::manifest::{InstalledEngine, SettingsBus};
 use omime_proto::names::{
     DAEMON_BUS_NAME, ENGINE_OBJECT_PATH, ENV_ENGINE_ADDRESS, ENV_ENGINE_ID, ENV_ENGINE_RUNTIME_DIR,
@@ -152,6 +154,15 @@ pub trait Engine {
         extras: &Dict,
     ) -> zbus::Result<(bool, Vec<WireAction>)>;
 
+    fn candidate_clicked(
+        &self,
+        context: u64,
+        index: u32,
+        button: u32,
+        modifiers: u32,
+    ) -> zbus::Result<Vec<WireAction>>;
+    fn candidate_page(&self, context: u64, previous: bool) -> zbus::Result<Vec<WireAction>>;
+
     fn reset(&self, context: u64) -> zbus::Result<Vec<WireAction>>;
 
     fn set_input_mode(&self, context: u64, mode: &str) -> zbus::Result<Vec<WireAction>>;
@@ -171,6 +182,10 @@ pub trait Engine {
 /// What the engine host object reports to the core.
 #[derive(Debug)]
 pub enum HostCall {
+    Candidates {
+        ctx: u64,
+        page: CandidatePage,
+    },
     Action {
         ctx: u64,
         action: omime_proto::engine::Action,
@@ -437,6 +452,7 @@ mod text_admission_tests {
         use omime_proto::engine::Action;
         let (events, mut rx) = mpsc::unbounded_channel();
         let host = HostObject {
+            candidate_ui: false,
             engine: "release-admission-test".into(),
             connection_id: u64::MAX,
             events,
@@ -506,6 +522,7 @@ mod text_admission_tests {
 
         let (events, mut receiver) = mpsc::unbounded_channel();
         let host = HostObject {
+            candidate_ui: false,
             engine: "release-cleanup-test".into(),
             connection_id: u64::MAX - 1,
             events,
@@ -542,6 +559,7 @@ mod text_admission_tests {
 struct HostObject {
     engine: String,
     connection_id: u64,
+    candidate_ui: bool,
     events: mpsc::UnboundedSender<CoreEvent>,
 }
 
@@ -553,7 +571,20 @@ impl Drop for HostObject {
 
 impl HostObject {
     fn send(&self, call: HostCall) -> bool {
-        let admission = if let HostCall::Action { ctx, action } = &call {
+        let admission = if let HostCall::Candidates { ctx, page } = &call {
+            let bytes = std::mem::size_of::<CoreEvent>()
+                + page
+                    .candidates
+                    .iter()
+                    .map(|c| c.text.capacity() + c.comment.capacity() + c.label.capacity())
+                    .sum::<usize>();
+            let Some(admission) =
+                TextAdmission::reserve(text_budget(), self.connection_id, *ctx, bytes)
+            else {
+                return false;
+            };
+            Some(admission)
+        } else if let HostCall::Action { ctx, action } = &call {
             use omime_proto::engine::Action;
             let bytes = std::mem::size_of::<CoreEvent>()
                 + self.engine.len()
@@ -658,7 +689,27 @@ impl HostObject {
             "daemon-version".into(),
             owned(Variant::from(env!("CARGO_PKG_VERSION"))),
         );
+        if self.candidate_ui {
+            session.insert("candidate-ui".into(), owned(Variant::from(true)));
+        }
         Ok(session)
+    }
+
+    fn set_candidates(&self, context: u64, page: Dict) -> zbus::fdo::Result<()> {
+        let page = CandidatePage::from_dict(&page);
+        if page.candidates.len() > 64
+            || page
+                .candidates
+                .iter()
+                .map(|c| c.text.len() + c.comment.len() + c.label.len())
+                .sum::<usize>()
+                > 32768
+        {
+            return Err(zbus::fdo::Error::LimitsExceeded(
+                "candidate page exceeds the limit".into(),
+            ));
+        }
+        self.send_action(HostCall::Candidates { ctx: context, page })
     }
 
     fn commit(&self, context: u64, text: String) -> zbus::fdo::Result<()> {
@@ -819,7 +870,7 @@ pub struct EngineSlot {
     /// Increases with every launch; events of older processes are ignored.
     generation: u64,
     /// The minor engine protocol version the running engine registered with.
-    api_minor: u16,
+    pub(super) api_minor: u16,
     /// Stops the process; dropping it stops the process politely.
     kill: Option<oneshot::Sender<StopRequest>>,
     /// The process is stopped on purpose, to start again at once: its exit is not a
@@ -845,6 +896,7 @@ pub struct EngineManager {
     ui_connections: mpsc::UnboundedSender<UiConnection>,
     /// `WAYLAND_DISPLAY` of the real compositor, for engines' non-popup windows.
     host_display: Option<String>,
+    candidate_ui: bool,
     /// Engine processes that have not exited yet.
     alive: Rc<Cell<usize>>,
 }
@@ -873,8 +925,13 @@ impl EngineManager {
             events,
             ui_connections,
             host_display,
+            candidate_ui: false,
             alive: Rc::default(),
         }
+    }
+
+    pub fn set_candidate_ui(&mut self, enabled: bool) {
+        self.candidate_ui = enabled;
     }
 
     fn slot(installed: InstalledEngine) -> EngineSlot {
@@ -1026,7 +1083,7 @@ impl EngineManager {
             let native = if hosted {
                 None
             } else {
-                Some(listen_engine(id, events.clone())?)
+                Some(listen_engine(id, events.clone(), self.candidate_ui)?)
             };
             slot.sockets = Some(EngineSockets {
                 native,
@@ -1057,6 +1114,13 @@ impl EngineManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if self.candidate_ui && !hosted {
+            command
+                .env("OMIME_PRESENTATION", "ibus")
+                .env_remove("WAYLAND_DISPLAY");
+        } else {
+            command.env_remove("OMIME_PRESENTATION");
+        }
         if hosted {
             exit_with_omimed(&mut command);
         } else {
@@ -1779,6 +1843,7 @@ impl AcceptBackoff {
 fn listen_engine(
     engine: &str,
     events: mpsc::UnboundedSender<CoreEvent>,
+    candidate_ui: bool,
 ) -> anyhow::Result<NativeListener> {
     let path = runtime_dir::engine_dir(engine)?.join("engine");
     let listener = runtime_dir::bind_socket(&path)?;
@@ -1844,6 +1909,7 @@ fn listen_engine(
                 pending: registrations.clone(),
             };
             let host = HostObject {
+                candidate_ui,
                 connection_id: id,
                 engine: engine.clone(),
                 events: events.clone(),

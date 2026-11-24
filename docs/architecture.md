@@ -60,7 +60,33 @@ compositor ── one client connection ── omimed ──┬── D-Bus p2p 
 - **Engines**: one process each, launched and supervised by `omimed`.
 - **`omime`**: the command line tool. It talks to the daemon over the session bus.
 
-## The Wayland frontend
+## Desktop frontend selection
+
+`Frontend` dispatches the shared core to Wayland or system IBus. Default startup
+negotiates the live Wayland connection: IM v2 with virtual keyboard takes priority;
+KWin's privileged IM v1 plus input-panel-v1 selects the v1 adapter. `--ibus` starts
+control and engine supervision without a Wayland frontend, Fcitx bus ownership or
+XIM server. It connects to system IBus and registers `oh-my-ime` as an engine.
+
+KWin v1 keeps keyboard serials separate from text `commit_state` serials, stages
+content updates, and attaches an overlay input-panel role to the engine surface on
+the original upstream connection. A v1 panel role cannot be destroyed/reassigned,
+so hiding unmaps the buffer while retaining the role. Sensitive contexts bypass the
+engine; transitioning an existing keyboard grab to sensitive content retires its
+v1 context because the inherited keyboard has no release request.
+
+IBus maps focus, content type, surrounding text and keys into the shared core.
+Incoming non-key work and outgoing signals are bounded; stale context output is
+retired on focus loss. UTF-8 byte deletion offsets convert to IBus character counts.
+Commit clears IBus's cached preedit and lookup state before committing text. The
+adapter authenticates the IBus sender and retires exported engine objects on Destroy.
+
+Protocol 1.3 adds optional semantic candidates. Rime under `OMIME_PRESENTATION=ibus`
+uses this model without creating a Slint window; GNOME owns presentation and sends
+page/click callbacks. This path does not host another Fcitx5/IBus framework. See
+[native desktop setup](native-desktops.md) for lifecycle and current limitations.
+
+## The Wayland IM v2 frontend
 
 For each `wl_seat`, `omimed` binds a `zwp_input_method_v2` and keeps an input context:
 

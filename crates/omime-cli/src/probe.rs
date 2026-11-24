@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, ensure};
+use omime_proto::desktop::Capabilities;
 use omime_proto::tr;
 use wl_proxy::baseline::Baseline;
 use wl_proxy::object::ObjectCoreApi as _;
@@ -17,44 +18,28 @@ use wl_proxy::protocols::wayland::wl_registry::{WlRegistry, WlRegistryHandler};
 use wl_proxy::state::State;
 
 const TIMEOUT: Duration = Duration::from_secs(2);
-const REQUIRED: [&str; 2] = [
-    "zwp_input_method_manager_v2",
-    "zwp_virtual_keyboard_manager_v1",
-];
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
     NoDisplay,
     Supported,
-    Unsupported(Vec<&'static str>),
+    Unsupported(Capabilities),
 }
 
 impl Verdict {
     pub fn warning(&self) -> Option<String> {
         match self {
-            Self::Unsupported(missing) => Some(tr!(
-                "This desktop is not supported: missing {protocols}. KDE Plasma and GNOME are not supported yet. Run setup from a Hyprland session.",
-                protocols = missing.join(", ")
-            )),
+            Self::Unsupported(capabilities) => capabilities.warning(),
             _ => None,
         }
     }
 }
 
 fn verdict<'a>(globals: impl IntoIterator<Item = (&'a str, u32)>) -> Verdict {
-    let globals: Vec<_> = globals.into_iter().collect();
-    let missing: Vec<_> = REQUIRED
-        .into_iter()
-        .filter(|required| {
-            !globals
-                .iter()
-                .any(|(name, version)| name == required && *version >= 1)
-        })
-        .collect();
-    if missing.is_empty() {
+    let capabilities = Capabilities::from_globals(globals);
+    if capabilities.supported() {
         Verdict::Supported
     } else {
-        Verdict::Unsupported(missing)
+        Verdict::Unsupported(capabilities)
     }
 }
 
@@ -65,7 +50,7 @@ pub async fn current() -> anyhow::Result<Verdict> {
         std::env::var_os("WAYLAND_SOCKET").is_none(),
         "{}",
         tr!(
-            "cannot safely check the inherited WAYLAND_SOCKET; it overrides WAYLAND_DISPLAY. Run setup from a Hyprland terminal without an inherited Wayland socket."
+            "cannot safely check the inherited WAYLAND_SOCKET; it overrides WAYLAND_DISPLAY. Run setup from a desktop terminal without an inherited Wayland socket."
         )
     );
     let Some(display) = std::env::var_os("WAYLAND_DISPLAY").filter(|s| !s.is_empty()) else {
@@ -170,29 +155,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn both_protocols_are_required() {
-        assert_eq!(verdict([]), Verdict::Unsupported(REQUIRED.to_vec()));
-        assert_eq!(
-            verdict([("zwp_input_method_v1", 1), ("wl_compositor", 6)]),
-            Verdict::Unsupported(REQUIRED.to_vec())
-        );
-        for (present, missing) in [(0, 1), (1, 0)] {
-            assert_eq!(
-                verdict([(REQUIRED[present], 1)]),
-                Verdict::Unsupported(vec![REQUIRED[missing]])
-            );
-        }
+    fn probe_uses_the_same_capabilities_as_daemon_startup() {
+        use omime_proto::desktop::REQUIRED;
+        assert_eq!(verdict([]), Verdict::Unsupported(Capabilities::default()));
+        let v1 = [("zwp_input_method_v1", 1), ("zwp_input_panel_v1", 1)];
+        assert_eq!(verdict(v1), Verdict::Supported);
+        assert!(verdict(v1).warning().is_none());
         assert_eq!(
             verdict([(REQUIRED[0], 1), (REQUIRED[1], 1)]),
             Verdict::Supported
         );
-        assert_eq!(
-            verdict([(REQUIRED[0], 2), (REQUIRED[1], 3), ("wl_compositor", 6)]),
-            Verdict::Supported
-        );
-        assert_eq!(
-            verdict([(REQUIRED[0], 0), (REQUIRED[1], 1)]),
-            Verdict::Unsupported(vec![REQUIRED[0]])
+        assert!(
+            verdict([(REQUIRED[0], 0), (REQUIRED[1], 1)])
+                .warning()
+                .is_some()
         );
     }
 

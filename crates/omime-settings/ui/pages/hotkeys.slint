@@ -1,7 +1,7 @@
 import { Button } from "std-widgets.slint";
 import { Backend, Tr, View } from "../backend.slint";
 import { Theme } from "../theme.slint";
-import { Card, Divider, IconButton, Keycap, PageHeader, RowText } from "../widgets.slint";
+import { Card, Divider, IconButton, Keycap, NoticeCard, PageHeader, Pill, RowText } from "../widgets.slint";
 
 // A hotkey, its keys and how to change it.
 component HotkeyItem inherits Rectangle {
@@ -11,12 +11,14 @@ component HotkeyItem inherits Rectangle {
     in property <string> subtitle;
     in property <[string]> keys;
     property <bool> recording: View.recording == root.which;
-    min-height: 68px;
+    min-height: 72px;
+    background: root.recording ? Theme.active-row : transparent;
+
     HorizontalLayout {
-        padding-left: 16px;
-        padding-right: 10px;
-        padding-top: 12px;
-        padding-bottom: 12px;
+        padding-left: 18px;
+        padding-right: 12px;
+        padding-top: 14px;
+        padding-bottom: 14px;
         spacing: 12px;
         RowText {
             title: root.title;
@@ -24,15 +26,21 @@ component HotkeyItem inherits Rectangle {
             horizontal-stretch: 1;
         }
 
-        if root.recording: Text {
-            text: Tr.text("Press the new keys…");
-            color: Theme.accent;
-            vertical-alignment: center;
+        if root.recording: VerticalLayout {
+            alignment: center;
+            Pill {
+                dot: true;
+                text: Tr.text("Press the new keys…");
+            }
         }
-        if !root.recording && root.keys.length == 0: Text {
-            text: Tr.text("Off");
-            color: Theme.tertiary;
-            vertical-alignment: center;
+        if !root.recording && root.keys.length == 0: VerticalLayout {
+            alignment: center;
+            Pill {
+                text: Tr.text("Off");
+                fg: Theme.tertiary;
+                bg: Theme.hover;
+                border: Theme.card-border;
+            }
         }
         if !root.recording && root.keys.length > 0: VerticalLayout {
             alignment: center;
@@ -92,7 +100,7 @@ component HotkeyItem inherits Rectangle {
 }
 
 export component HotkeysPage inherits VerticalLayout {
-    spacing: 12px;
+    spacing: 16px;
     PageHeader {
         title: Tr.text("Hotkeys");
         description: Tr.text("Keys that switch input methods while you type in an application.");
@@ -107,7 +115,9 @@ export component HotkeysPage inherits VerticalLayout {
                 keys: Backend.toggle-keys;
             }
 
-            Divider { }
+            Divider {
+                inset: 18px;
+            }
 
             HotkeyItem {
                 which: "next";
@@ -118,10 +128,9 @@ export component HotkeysPage inherits VerticalLayout {
         }
     }
 
-    Text {
+    NoticeCard {
+        icon: @image-url("../icons/info.svg");
+        tint: Theme.accent-text;
         text: Tr.text("To record keys, click Change and press them together; Escape cancels. Keys your compositor binds itself, such as Hyprland's binds, never reach oh-my-ime.");
-        font-size: 12px;
-        color: Theme.secondary;
-        wrap: word-wrap;
     }
 }

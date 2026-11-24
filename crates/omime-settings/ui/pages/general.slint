@@ -1,53 +1,72 @@
 import { ComboBox } from "std-widgets.slint";
 import { Backend, Tr } from "../backend.slint";
-import { Card, Divider, PageHeader, RowText, SwitchRow } from "../widgets.slint";
+import { Card, Divider, PageHeader, RowText, SectionHeader, SwitchRow } from "../widgets.slint";
 
 export component GeneralPage inherits VerticalLayout {
-    spacing: 12px;
+    spacing: 16px;
     PageHeader {
         title: Tr.text("General");
+        description: Tr.text("Interface visibility, notifications, and key handling behavior.");
     }
 
-    Card {
-        VerticalLayout {
-            SwitchRow {
-                title: Tr.text("Show in the tray");
-                subtitle: Tr.text("An icon in the status bar shows the input method in use, and its menu switches");
-                checked <=> Backend.tray;
-                toggled(on) => {
-                    Backend.set-tray(on);
+    VerticalLayout {
+        spacing: 10px;
+        SectionHeader {
+            text: Tr.text("Interface & Alerts");
+        }
+
+        Card {
+            VerticalLayout {
+                SwitchRow {
+                    title: Tr.text("Show in the tray");
+                    subtitle: Tr.text("An icon in the status bar shows the input method in use, and its menu switches");
+                    checked <=> Backend.tray;
+                    toggled(on) => {
+                        Backend.set-tray(on);
+                    }
+                }
+
+                Divider {
+                    inset: 18px;
+                }
+
+                SwitchRow {
+                    title: Tr.text("Show the switcher");
+                    subtitle: Tr.text("Your input methods appear for a moment when you switch with the hotkeys");
+                    checked <=> Backend.switcher;
+                    toggled(on) => {
+                        Backend.set-switcher(on);
+                    }
+                }
+
+                Divider {
+                    inset: 18px;
+                }
+
+                SwitchRow {
+                    title: Tr.text("Show notifications");
+                    subtitle: Tr.text("Tell you when something goes wrong: an input method stopped, another input method holds the keyboard, or config.toml has a mistake");
+                    checked <=> Backend.notifications;
+                    toggled(on) => {
+                        Backend.set-notifications(on);
+                    }
                 }
             }
+        }
+    }
 
-            Divider { }
+    VerticalLayout {
+        spacing: 10px;
+        SectionHeader {
+            text: Tr.text("Input Handling");
+        }
 
-            SwitchRow {
-                title: Tr.text("Show the switcher");
-                subtitle: Tr.text("Your input methods appear for a moment when you switch with the hotkeys");
-                checked <=> Backend.switcher;
-                toggled(on) => {
-                    Backend.set-switcher(on);
-                }
-            }
-
-            Divider { }
-
-            SwitchRow {
-                title: Tr.text("Show notifications");
-                subtitle: Tr.text("Tell you when something goes wrong: an input method stopped, another input method holds the keyboard, or config.toml has a mistake");
-                checked <=> Backend.notifications;
-                toggled(on) => {
-                    Backend.set-notifications(on);
-                }
-            }
-
-            Divider { }
-
+        Card {
             HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                padding-top: 12px;
-                padding-bottom: 12px;
+                padding-left: 18px;
+                padding-right: 18px;
+                padding-top: 14px;
+                padding-bottom: 14px;
                 spacing: 16px;
                 RowText {
                     title: Tr.text("Waiting for an input method");
@@ -58,7 +77,7 @@ export component GeneralPage inherits VerticalLayout {
                 VerticalLayout {
                     alignment: center;
                     ComboBox {
-                        width: 160px;
+                        width: 148px;
                         model: Backend.timeouts;
                         current-index: Backend.timeout-index;
                         accessible-label: Tr.text("Waiting for an input method");

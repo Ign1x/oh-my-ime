@@ -1187,3 +1187,189 @@ msgstr "私有数据路径不是目录"
 
 msgid "cannot remove an engine socket: {error}"
 msgstr "无法删除引擎套接字：{error}"
+
+msgid "Daemon running"
+msgstr "服务运行中"
+
+msgid "Daemon offline"
+msgstr "服务未运行"
+
+msgid "Connecting…"
+msgstr "正在连接…"
+
+msgid "Seat occupied"
+msgstr "键盘已被占用"
+
+msgid "Switching order"
+msgstr "切换顺序"
+
+msgid "Remembered applications"
+msgstr "已记住的应用"
+
+msgid "Interface visibility, notifications, and key handling behavior."
+msgstr "设置界面显示、通知提醒和按键处理方式。"
+
+msgid "Interface & Alerts"
+msgstr "界面与通知"
+
+msgid "Input Handling"
+msgstr "输入处理"
+
+msgid "Compositor display"
+msgstr "桌面连接"
+
+msgid "Input seat"
+msgstr "输入席位"
+
+msgid "Focused application"
+msgstr "焦点应用"
+
+msgid "Input method"
+msgstr "输入法"
+
+msgid "Input mode"
+msgstr "输入模式"
+
+msgid "OK"
+msgstr "正常"
+
+msgid "Held"
+msgstr "被占用"
+
+msgid "Warning"
+msgstr "提示"
+
+msgid "Issue"
+msgstr "异常"
+
+msgid "Command-line diagnostics"
+msgstr "命令行诊断"
+
+msgid "This desktop is not supported: missing {protocols}. This connection provides input-method-v1; oh-my-ime still needs an input-method-v1 and input-panel-v1 backend for KDE Plasma. Keep using the desktop's existing input method."
+msgstr "尚不支持此桌面：缺少 {protocols}。此连接提供 input-method-v1；oh-my-ime 仍需实现 KDE Plasma 的 input-method-v1 和 input-panel-v1 后端。请继续使用桌面现有的输入法。"
+
+msgid "This desktop is not supported: missing {protocols}. KDE Plasma and GNOME require separate input backends that are not implemented yet. Use a Hyprland session or sway with input-method-v2 support; keep the existing input method on this desktop."
+msgstr "尚不支持此桌面：缺少 {protocols}。KDE Plasma 和 GNOME 所需的独立输入后端尚未实现。请使用 Hyprland 或支持 input-method-v2 的 sway 会话；在此桌面上继续使用现有输入法。"
+
+msgid "cannot safely check the inherited WAYLAND_SOCKET; it overrides WAYLAND_DISPLAY. Run setup from a desktop terminal without an inherited Wayland socket."
+msgstr "无法安全检查继承的 WAYLAND_SOCKET；它会覆盖 WAYLAND_DISPLAY。请在没有继承 Wayland socket 的桌面终端中运行 setup。"
+
+msgid "Cannot choose setup for desktop {desktop}; use --desktop hyprland or --desktop sway to select the configuration to manage."
+msgstr "无法为桌面 {desktop} 选择配置；请使用 --desktop hyprland 或 --desktop sway 指定要管理的桌面配置。"
+
+msgid "Both Sway and Hyprland session markers are set; select the configuration with --desktop hyprland or --desktop sway."
+msgstr "同时检测到 Sway 和 Hyprland 会话标记；请使用 --desktop hyprland 或 --desktop sway 选择配置。"
+
+msgid "Setup already manages another desktop; run omime setup --undo before selecting {desktop}."
+msgstr "setup 已在管理另一桌面；选择 {desktop} 前请先运行 omime setup --undo。"
+
+msgid "--desktop needs auto, hyprland or sway"
+msgstr "--desktop 需要指定 auto、hyprland 或 sway"
+
+msgid "--desktop must be auto, hyprland or sway"
+msgstr "--desktop 必须为 auto、hyprland 或 sway"
+
+msgid "--config needs a desktop configuration path"
+msgstr "--config 需要桌面配置文件路径"
+
+msgid "Recognized Fcitx5/IBus autostart commands in the selected desktop configuration will be suspended."
+msgstr "将暂停所选桌面配置中已识别的 Fcitx5/IBus 自启动命令。"
+
+msgid "{desktop} setup is ready. Use omime setup --undo to restore the managed settings."
+msgstr "{desktop} 配置已就绪。使用 omime setup --undo 可恢复托管的设置。"
+
+msgid "Session configuration is ready for {desktop}, UWSM and systemd application launches. Log out and back in for every launcher to inherit it, then run omime doctor."
+msgstr "{desktop}、UWSM 和 systemd 应用启动环境已配置。请注销并重新登录，让各启动器继承配置，再运行 omime doctor。"
+
+msgid "When starting Sway without UWSM, export the input environment before starting Sway; its exec launchers inherit the compositor's environment. See docs/setup.md."
+msgstr "不通过 UWSM 启动 Sway 时，请在启动 Sway 前导出输入环境；其 exec 启动器继承合成器的环境。详见 docs/zh-CN/setup.md。"
+
+msgid "--config must name the desktop's main configuration, not an oh-my-ime file"
+msgstr "--config 必须指定桌面的主配置文件，不能指向 oh-my-ime 文件"
+
+msgid "This path cannot be represented literally in a Sway configuration; choose a path without variables or wildcard characters."
+msgstr "此路径无法在 Sway 配置中按字面表示；请选择不含变量或通配符的路径。"
+
+msgid "Sway contains an omime setup block without its journal; restore the journal before proceeding"
+msgstr "Sway 包含 omime setup 配置块，但缺少修改记录；请先恢复记录"
+
+msgid "Sway already starts {program}; use --take-over to suspend that startup, or remove it yourself before setup"
+msgstr "Sway 已在启动 {program}；请使用 --take-over 暂停该自启动，或在 setup 前自行移除"
+
+msgid "a compound {name} startup also performs other actions; split that startup in the desktop configuration before using setup"
+msgstr "复合启动命令 {name} 还执行其他操作；请在使用 setup 前先拆分桌面配置中的该命令"
+
+msgid "Usage: omime <COMMAND>\n\nCommands:\n  list [--all]     List the input methods to choose from (* marks the one in use);\n                   with --all also those you can enable (marked -)\n  engines          List installed engines (* marks enabled ones)\n  status [--json] [--watch]\n                   Show the input method in use (`--watch` keeps streaming changes)\n  switch <ID>      Switch to an input method from `list`, such as `sparkle` or\n                   `fcitx5/shuangpin` (`direct` for no input method)\n  next             Switch to the next input method\n  toggle           Switch between direct input and the last engine\n  choose           Open the interactive input method chooser\n  enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)\n  disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)\n  settings [<ENGINE>]\n                   Open oh-my-ime's settings, or those of an engine, such as `fcitx5`\n  properties       Show the menu of the input method in use (switches such as\n                   Chinese or English punctuation)\n  activate <ID>    Activate an entry of that menu\n  apps [forget <APP>]\n                   Show the input method each application gets back with\n                   `[apps] remember`, or forget one\n  config [<KEY> <VALUE>]\n                   Show the options of config.toml, or set one, such as\n                   `omime config apps.remember true`\n  install <DIR>    Install an engine from a directory (`--force` to replace it)\n  uninstall <ID>   Remove an engine installed in your user directory\n  reload           Re-read config.toml and look for installed or removed engines\n  doctor [--app PID]\n                   Check the setup, or an application's input environment and plugins\n  setup [--desktop auto|hyprland|sway] [--engine ID] [--config PATH]\n        [--dry-run] [--start] [--take-over]\n                   Configure Hyprland or Sway; --start also starts input in this session\n  setup --undo [--dry-run]\n                   Undo the managed setup, preserving other configuration changes\n  help             Print this help\n\nThe other commands talk to a running `omimed` over the session bus; `install`,\n`uninstall`, `setup` and `doctor` also work without it, `status --watch` keeps watching\nfor it, and the settings wait for it."
+msgstr "用法：omime <命令>\n\n命令：\n  list [--all]     列出可切换的输入法（* 表示当前输入法）；\n                   --all 还列出可启用的输入法（用 - 标记）\n  engines          列出已安装的引擎（* 表示已启用）\n  status [--json] [--watch]\n                   显示当前输入法（--watch 持续输出状态变化）\n  switch <ID>      切换到 list 中的输入法，例如 sparkle、fcitx5/shuangpin；\n                   direct 表示直接输入\n  next             切换到下一个输入法\n  toggle           在直接输入和上一个引擎之间切换\n  choose           打开交互式输入法选择器\n  enable <引擎>    启用引擎（加入 config.toml 的 engines）\n  disable <引擎>   停用引擎（从 config.toml 的 engines 移除）\n  settings [<引擎>]\n                   打开平台设置，或指定引擎（例如 fcitx5）的设置\n  properties       显示当前输入法菜单（如中英文标点开关）\n  activate <ID>    激活菜单中的指定项\n  apps [forget <应用>]\n                   查看 [apps] remember 记住的各应用输入法，或清除某项记忆\n  config [<选项> <值>]\n                   显示或修改 config.toml 选项，例如：\n                   omime config apps.remember true\n  install <目录>   从目录安装引擎（--force 替换已安装的引擎）\n  uninstall <ID>   卸载用户目录中的引擎\n  reload           重新读取 config.toml 并发现已安装或移除的引擎\n  doctor [--app PID]\n                   检查配置，或检查指定应用的输入环境和插件\n  setup [--engine ID] [--config 路径] [--dry-run] [--start] [--take-over]\n                   配置 Hyprland 或 Sway；--start 同时启动当前会话的输入服务\n  setup --undo [--dry-run]\n                   撤销管理的配置，保留其他修改\n  help             显示此帮助\n\n其他命令通过会话总线连接运行中的 omimed；install、uninstall、setup 和 doctor\n也可在 omimed 未运行时使用。status --watch 会持续等待服务，设置窗口也会等待服务启动。"
+
+msgid "This path cannot be represented literally in a Sway configuration; choose a path without quotes, backslashes, variables or wildcard characters."
+msgstr "此路径无法在 Sway 配置中按字面表示；请选择不含引号、反斜杠、变量或通配符的路径。"
+
+msgid "--desktop must be auto, hyprland, sway, kde or gnome"
+msgstr "--desktop 必须为 auto、hyprland、sway、kde 或 gnome"
+
+msgid "--desktop needs auto, hyprland, sway, kde or gnome"
+msgstr "--desktop 需要指定 auto、hyprland、sway、kde 或 gnome"
+
+msgid "GNOME native presentation currently requires Rime or Echo; choose --engine rime."
+msgstr "GNOME 原生展示目前需要 Rime 或 Echo；请使用 --engine rime。"
+
+msgid "KDE and GNOME manage their own input service; --take-over is not used for native integration."
+msgstr "KDE 和 GNOME 管理自己的输入服务；原生接入不使用 --take-over。"
+
+msgid "Log out and back in, then add oh-my-ime under Settings → Keyboard → Input Sources. Keep the system IBus service enabled."
+msgstr "注销并重新登录，然后在“设置 → 键盘 → 输入源”中添加 oh-my-ime。请保持系统 IBus 服务启用。"
+
+msgid "Native KDE/GNOME setup uses desktop registration files; --config applies only to Hyprland and Sway."
+msgstr "KDE/GNOME 原生配置使用桌面注册文件；--config 仅适用于 Hyprland 和 Sway。"
+
+msgid "Open System Settings → Keyboard → Virtual Keyboard, select oh-my-ime, then log out and back in. KWin will launch the input service."
+msgstr "打开“系统设置 → 键盘 → 虚拟键盘”，选择 oh-my-ime，然后注销并重新登录。KWin 会启动输入服务。"
+
+msgid "Select oh-my-ime in the desktop input settings after setup; KDE starts it on a privileged connection and GNOME starts its IBus adapter at login."
+msgstr "配置后请在桌面输入设置中选择 oh-my-ime；KDE 通过特权连接启动它，GNOME 在登录时启动 IBus 适配器。"
+
+msgid "This desktop is not supported: missing {protocols}. On KDE Plasma select oh-my-ime in Virtual Keyboard settings; on GNOME use omimed --ibus with the system IBus service. A Hyprland session or sway uses input-method-v2."
+msgstr "当前连接不支持输入：缺少 {protocols}。KDE Plasma 请在“虚拟键盘”设置中选择 oh-my-ime；GNOME 请通过 omimed --ibus 接入系统 IBus 服务。Hyprland 或 sway 会话使用 input-method-v2。"
+
+msgid "This desktop is not supported: missing {protocols}. This connection provides input-method-v1 but no input-panel-v1. Select oh-my-ime in KDE Virtual Keyboard settings so KWin supplies its privileged input connection."
+msgstr "当前连接不支持输入：缺少 {protocols}。此连接提供 input-method-v1，但没有 input-panel-v1。请在 KDE“虚拟键盘”设置中选择 oh-my-ime，让 KWin 提供特权输入连接。"
+
+msgid "cannot find XDG_DATA_HOME or HOME"
+msgstr "找不到 XDG_DATA_HOME 或 HOME"
+
+msgid "Usage: omime <COMMAND>\n\nCommands:\n  list [--all]     List the input methods to choose from (* marks the one in use);\n                   with --all also those you can enable (marked -)\n  engines          List installed engines (* marks enabled ones)\n  status [--json] [--watch]\n                   Show the input method in use (`--watch` keeps streaming changes)\n  switch <ID>      Switch to an input method from `list`, such as `sparkle` or\n                   `fcitx5/shuangpin` (`direct` for no input method)\n  next             Switch to the next input method\n  toggle           Switch between direct input and the last engine\n  choose           Open the interactive input method chooser\n  enable <ENGINE>  Enable an engine (adds it to `engines` in config.toml)\n  disable <ENGINE> Disable an engine (removes it from `engines` in config.toml)\n  settings [<ENGINE>]\n                   Open oh-my-ime's settings, or those of an engine, such as `fcitx5`\n  properties       Show the menu of the input method in use (switches such as\n                   Chinese or English punctuation)\n  activate <ID>    Activate an entry of that menu\n  apps [forget <APP>]\n                   Show the input method each application gets back with\n                   `[apps] remember`, or forget one\n  config [<KEY> <VALUE>]\n                   Show the options of config.toml, or set one, such as\n                   `omime config apps.remember true`\n  install <DIR>    Install an engine from a directory (`--force` to replace it)\n  uninstall <ID>   Remove an engine installed in your user directory\n  reload           Re-read config.toml and look for installed or removed engines\n  doctor [--app PID]\n                   Check the setup, or an application's input environment and plugins\n  setup [--desktop auto|hyprland|sway|kde|gnome] [--engine ID] [--config PATH]\n        [--dry-run] [--start] [--take-over]\n                   Configure desktop integration; --start is available on Hyprland/Sway\n  setup --undo [--dry-run]\n                   Undo the managed setup, preserving other configuration changes\n  help             Print this help\n\nThe other commands talk to a running `omimed` over the session bus; `install`,\n`uninstall`, `setup` and `doctor` also work without it, `status --watch` keeps watching\nfor it, and the settings wait for it."
+msgstr "用法：omime <命令>\n\n命令：\n  list [--all]     列出可切换的输入法（* 表示当前输入法）；\n                   --all 还列出可启用的输入法（用 - 标记）\n  engines          列出已安装的引擎（* 表示已启用）\n  status [--json] [--watch]\n                   显示当前输入法（--watch 持续输出状态变化）\n  switch <ID>      切换到 list 中的输入法，例如 sparkle、fcitx5/shuangpin；\n                   direct 表示直接输入\n  next             切换到下一个输入法\n  toggle           在直接输入和上一个引擎之间切换\n  choose           打开交互式输入法选择器\n  enable <引擎>    启用引擎（加入 config.toml 的 engines）\n  disable <引擎>   停用引擎（从 config.toml 的 engines 移除）\n  settings [<引擎>]\n                   打开平台设置，或指定引擎（例如 fcitx5）的设置\n  properties       显示当前输入法菜单（如中英文标点开关）\n  activate <ID>    激活菜单中的指定项\n  apps [forget <应用>]\n                   查看 [apps] remember 记住的各应用输入法，或清除某项记忆\n  config [<选项> <值>]\n                   显示或修改 config.toml 选项，例如：\n                   omime config apps.remember true\n  install <目录>   从目录安装引擎（--force 替换已安装的引擎）\n  uninstall <ID>   卸载用户目录中的引擎\n  reload           重新读取 config.toml 并发现已安装或移除的引擎\n  doctor [--app PID]\n                   检查配置，或检查指定应用的输入环境和插件\n  setup [--engine ID] [--config 路径] [--dry-run] [--start] [--take-over]\n                   配置 Hyprland 或 Sway；--start 同时启动当前会话的输入服务\n  setup --undo [--dry-run]\n                   撤销管理的配置，保留其他修改\n  help             显示此帮助\n\n其他命令通过会话总线连接运行中的 omimed；install、uninstall、setup 和 doctor\n也可在 omimed 未运行时使用。status --watch 会持续等待服务，设置窗口也会等待服务启动。"
+
+msgid "Usage: omimed [OPTIONS]\n\nThe oh-my-ime daemon. It becomes the input method of the Wayland compositor and\nroutes keyboard input to input method engines.\n\nOptions:\n  --ibus            Serve the existing session IBus daemon (GNOME)\n  --display <NAME>  Connect to this Wayland display instead of $WAYLAND_DISPLAY\n  --engine <ID>     Select this engine at startup (default: the last one used)\n  -h, --help        Print this help\n  -V, --version     Print the version\n\nEnvironment:\n  OMIME_LOG         Log filter, e.g. `debug` or `omimed=trace`\n                    (default: info,wl_proxy=error)\n  OMIME_ENGINE_PATH Extra directories to look for engines in (colon separated)\n  OMIME_WL_DEBUG    Log every Wayland message (may include typed keys!)"
+msgstr "用法：omimed [选项]\n\noh-my-ime 守护进程。接入 Wayland 合成器，将键盘输入路由到输入法引擎。\n\n选项：\n  --ibus            接入现有会话 IBus 服务（GNOME）\n  --display <名称>  连接指定的 Wayland 显示，替代 $WAYLAND_DISPLAY\n  --engine <ID>     启动时选择指定引擎（默认恢复上次使用的引擎）\n  -h, --help        显示此帮助\n  -V, --version     显示版本\n\n环境变量：\n  OMIME_LOG         日志过滤，例如 debug 或 omimed=trace\n                    （默认：info,wl_proxy=error）\n  OMIME_ENGINE_PATH 额外的引擎搜索目录（以冒号分隔）\n  OMIME_WL_DEBUG    记录每条 Wayland 消息（可能包含输入的按键！）"
+
+msgid "QT_IM_MODULES has no Wayland or IBus backend; native GNOME input needs one of them"
+msgstr "QT_IM_MODULES 没有 Wayland 或 IBus 后端；GNOME 原生输入需要其中之一"
+
+msgid "XMODIFIERS does not name IBus; X11 applications using XIM need XMODIFIERS=@im=ibus in native GNOME mode"
+msgstr "XMODIFIERS 未指定 IBus；GNOME 原生模式下使用 XIM 的 X11 应用需要 XMODIFIERS=@im=ibus"
+
+msgid "connected to the session IBus daemon"
+msgstr "已连接会话 IBus 服务"
+
+msgid "not connected to the session IBus daemon; check that IBus is running and inspect the omimed log"
+msgstr "未连接会话 IBus 服务；请确认 IBus 正在运行并检查 omimed 日志"
+
+msgid "oh-my-ime is registered with IBus but is not selected; add and select it in GNOME Keyboard input sources"
+msgstr "oh-my-ime 已注册到 IBus 但尚未选中；请在 GNOME 键盘输入源中添加并选择它"
+
+msgid "oh-my-ime is selected as the IBus input source"
+msgstr "oh-my-ime 已选为 IBus 输入源"
+
+msgid "omimed is not running in native IBus mode; run `omime setup --desktop gnome`, then add and select oh-my-ime in GNOME Keyboard input sources"
+msgstr "omimed 未运行于原生 IBus 模式；请运行 `omime setup --desktop gnome`，再在 GNOME 键盘输入源中添加并选择 oh-my-ime"
+
+msgid "omimed is running in native IBus mode"
+msgstr "omimed 正在以原生 IBus 模式运行"
+
+msgid "per-application input methods require an application id from IBus; GNOME Shell may provide only a generic client name"
+msgstr "按应用输入法需要 IBus 提供应用 ID；GNOME Shell 可能仅提供通用客户端名称"
+
+msgid "{name} points to Fcitx; native IBus mode uses GNOME's toolkit defaults or the IBus module"
+msgstr "{name} 指向 Fcitx；原生 IBus 模式使用 GNOME 工具包默认设置或 IBus 模块"

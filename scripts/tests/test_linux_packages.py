@@ -119,6 +119,11 @@ class LinuxPackageInputs(unittest.TestCase):
                     ("data/omimed.service", "share/systemd/user/omimed.service"),
                     ("data/io.github.ign1x.OhMyIme.Settings.desktop",
                      "share/applications/io.github.ign1x.OhMyIme.Settings.desktop"),
+                    ("data/io.github.ign1x.OhMyIme.InputMethod.desktop",
+                     "share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop"),
+                    ("data/io.github.ign1x.OhMyIme.IBus.desktop",
+                     "share/applications/io.github.ign1x.OhMyIme.IBus.desktop"),
+                    ("data/ibus/oh-my-ime.xml", "share/ibus/component/oh-my-ime.xml"),
                 ):
                     path = payload / target
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +139,13 @@ class LinuxPackageInputs(unittest.TestCase):
         self.assertIn("ExecStart=/usr/bin/omimed", unit)
         self.assertIn("ExecReload=/usr/bin/omime reload", unit)
         self.assertNotIn("%h/.local", unit)
+        platform = self.root / "platform-stage/usr/share"
+        for entry in ("InputMethod", "IBus"):
+            desktop = (platform / f"applications/io.github.ign1x.OhMyIme.{entry}.desktop").read_text()
+            self.assertIn("Exec=/usr/bin/omimed", desktop)
+        self.assertIn("<exec>/usr/bin/omimed --ibus</exec>",
+                      (platform / "ibus/component/oh-my-ime.xml").read_text())
+        self.assertFalse(any("autostart" in str(path) for path in outputs["platform"]))
 
     def package_records(self):
         for system in common.SYSTEMS:

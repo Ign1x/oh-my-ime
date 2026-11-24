@@ -1,35 +1,109 @@
 import { Backend, Check, Texts, Tr } from "../backend.slint";
 import { Theme } from "../theme.slint";
-import { Card, Divider, PageHeader, SectionHeader } from "../widgets.slint";
+import { Card, Divider, PageHeader, Pill, SectionHeader } from "../widgets.slint";
 
 component CheckItem inherits HorizontalLayout {
     in property <Check> check;
-    padding-left: 16px;
-    padding-right: 16px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    spacing: 12px;
+    property <bool> is-warning: !root.check.ok && root.check.kind == "no-focus";
+    property <brush> status-fg: root.check.ok ? Theme.success : root.is-warning ? Theme.warning : Theme.danger;
+    property <brush> status-bg: root.check.ok ? Theme.success-background : root.is-warning ? Theme.warning-background : Theme.danger-background;
+    property <brush> status-border: root.check.ok ? Theme.success-border : root.is-warning ? Theme.warning-border : Theme.danger-border;
+
+    pure function category(kind: string) -> string {
+        if (kind == "display") {
+            return Tr.text("Compositor display");
+        }
+        if (kind == "seat" || kind == "seat-taken") {
+            return Tr.text("Input seat");
+        }
+        if (kind == "focus" || kind == "no-focus") {
+            return Tr.text("Focused application");
+        }
+        if (kind == "error") {
+            return Tr.text("Input method");
+        }
+        if (kind == "mode-error") {
+            return Tr.text("Input mode");
+        }
+        return kind;
+    }
+
+    pure function status-label(item: Check) -> string {
+        if (item.ok) {
+            return Tr.text("OK");
+        }
+        if (item.kind == "seat-taken") {
+            return Tr.text("Held");
+        }
+        if (item.kind == "no-focus") {
+            return Tr.text("Warning");
+        }
+        return Tr.text("Issue");
+    }
+
+    padding-left: 18px;
+    padding-right: 18px;
+    padding-top: 13px;
+    padding-bottom: 13px;
+    spacing: 14px;
+
     VerticalLayout {
         alignment: start;
         padding-top: 1px;
-        Image {
-            source: root.check.ok ? @image-url("../icons/check.svg") : @image-url("../icons/alert.svg");
-            colorize: root.check.ok ? Theme.success : Theme.danger;
-            width: 18px;
-            height: 18px;
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            background: root.status-bg;
+            border-width: 1px;
+            border-color: root.status-border;
+            Image {
+                source: root.check.ok ? @image-url("../icons/check.svg") : @image-url("../icons/alert.svg");
+                colorize: root.status-fg;
+                width: 15px;
+                height: 15px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
         }
     }
 
-    Text {
-        text: Texts.check(root.check);
-        color: Theme.text;
-        wrap: word-wrap;
+    VerticalLayout {
+        spacing: 4px;
         horizontal-stretch: 1;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: root.category(root.check.kind);
+                font-size: 13.5px;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Pill {
+                    text: root.status-label(root.check);
+                    fg: root.status-fg;
+                    bg: root.status-bg;
+                    border: root.status-border;
+                }
+            }
+        }
+
+        Text {
+            text: Texts.check(root.check);
+            font-size: 12.5px;
+            color: Theme.secondary;
+            wrap: word-wrap;
+        }
     }
 }
 
 export component AboutPage inherits VerticalLayout {
-    spacing: 12px;
+    spacing: 16px;
     PageHeader {
         title: Tr.text("About");
     }
@@ -38,64 +112,107 @@ export component AboutPage inherits VerticalLayout {
         HorizontalLayout {
             padding: 20px;
             spacing: 16px;
-            Rectangle {
-                width: 56px;
-                height: 56px;
-                border-radius: 14px;
-                background: Theme.accent;
-                Image {
-                    source: @image-url("../icons/keyboard.svg");
-                    colorize: Theme.on-accent;
-                    width: 34px;
-                    height: 34px;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 14px;
+                    background: Theme.navy;
+                    Image {
+                        source: @image-url("../icons/keyboard.svg");
+                        colorize: Theme.on-navy;
+                        width: 30px;
+                        height: 30px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
                 }
             }
 
             VerticalLayout {
                 alignment: center;
-                spacing: 3px;
+                spacing: 4px;
+                horizontal-stretch: 1;
                 Text {
                     text: "oh-my-ime";
                     font-size: 20px;
-                    font-weight: 600;
+                    font-weight: 700;
                     color: Theme.text;
                 }
 
                 Text {
                     text: Tr.text2("omimed {}, settings {}", Backend.daemon-version, Backend.version);
+                    font-size: 13px;
                     color: Theme.secondary;
+                    wrap: word-wrap;
                 }
 
                 Text {
                     text: "https://github.com/Ign1x/oh-my-ime";
                     font-size: 12px;
-                    color: Theme.secondary;
+                    color: Theme.accent-text;
+                    overflow: elide;
                 }
             }
         }
     }
 
-    SectionHeader {
-        text: Tr.text("Status");
+    VerticalLayout {
+        spacing: 10px;
+        SectionHeader {
+            text: Tr.text("Status");
+        }
+
+        Card {
+            VerticalLayout {
+                for check[index] in Backend.checks: VerticalLayout {
+                    if index > 0: Divider {
+                        inset: 60px;
+                    }
+                    CheckItem {
+                        check: check;
+                    }
+                }
+            }
+        }
     }
 
-    Card {
+    Rectangle {
+        background: Theme.surface-subtle;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.card-border;
         VerticalLayout {
-            for check[index] in Backend.checks: VerticalLayout {
-                if index > 0: Divider {
-                    inset: 46px;
+            padding: 16px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("../icons/terminal.svg");
+                        colorize: Theme.accent-text;
+                        width: 16px;
+                        height: 16px;
+                    }
                 }
-                CheckItem {
-                    check: check;
+
+                Text {
+                    text: Tr.text("Command-line diagnostics");
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
                 }
             }
-        }
-    }
 
-    Text {
-        text: Tr.text("For a full check, run “omime doctor”. If one application cannot type, use “omime doctor --app PID” to inspect its launch settings and input plugins. Log: “journalctl --user -u omimed”.");
-        font-size: 12px;
-        color: Theme.secondary;
-        wrap: word-wrap;
+            Text {
+                text: Tr.text("For a full check, run “omime doctor”. If one application cannot type, use “omime doctor --app PID” to inspect its launch settings and input plugins. Log: “journalctl --user -u omimed”.");
+                font-size: 12.5px;
+                color: Theme.secondary;
+                wrap: word-wrap;
+            }
+        }
     }
 }

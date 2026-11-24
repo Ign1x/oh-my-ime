@@ -105,6 +105,17 @@ rustPlatform.buildRustPackage {
       $out/share/applications/io.github.ign1x.OhMyIme.Settings.desktop
     substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.Settings.desktop \
       --replace-fail "Exec=omime-settings" "Exec=$out/bin/omime-settings"
+    install -Dm644 data/io.github.ign1x.OhMyIme.InputMethod.desktop \
+      $out/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop
+    substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop \
+      --replace-fail "Exec=omimed" "Exec=$out/bin/omimed"
+    install -Dm644 data/io.github.ign1x.OhMyIme.IBus.desktop \
+      $out/share/applications/io.github.ign1x.OhMyIme.IBus.desktop
+    substituteInPlace $out/share/applications/io.github.ign1x.OhMyIme.IBus.desktop \
+      --replace-fail "Exec=omimed --ibus" "Exec=$out/bin/omimed --ibus"
+    install -Dm644 data/ibus/oh-my-ime.xml $out/share/ibus/component/oh-my-ime.xml
+    substituteInPlace $out/share/ibus/component/oh-my-ime.xml \
+      --replace-fail '<exec>omimed --ibus</exec>' "<exec>$out/bin/omimed --ibus</exec>"
     install -Dm644 data/config.toml $out/share/oh-my-ime/config.toml
     install -Dm644 -t $out/share/oh-my-ime/hyprland data/hyprland/*
 

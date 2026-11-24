@@ -49,8 +49,9 @@ Commands:
   reload           Re-read config.toml and look for installed or removed engines
   doctor [--app PID]
                    Check the setup, or an application's input environment and plugins
-  setup [--engine ID] [--config PATH] [--dry-run] [--start] [--take-over]
-                   Configure Hyprland; --start also starts input in this session
+  setup [--desktop auto|hyprland|sway|kde|gnome] [--engine ID] [--config PATH]
+        [--dry-run] [--start] [--take-over]
+                   Configure desktop integration; --start is available on Hyprland/Sway
   setup --undo [--dry-run]
                    Undo the managed setup, preserving other configuration changes
   help             Print this help

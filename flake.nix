@@ -144,6 +144,7 @@
                 };
               }
               {
+                options.assertions = lib.mkOption { type = lib.types.anything; };
                 options.home.packages = lib.mkOption { type = lib.types.anything; };
                 options.home.sessionVariables = lib.mkOption { type = lib.types.anything; };
                 options.xdg.configFile = lib.mkOption { type = lib.types.anything; };
@@ -155,6 +156,12 @@
         {
           package = self.packages.${system}.default;
           rime = self.packages.${system}.rime;
+          native-wrapper = import ./nix/check-native-wrapper.nix { inherit pkgs; };
+          native-modules = pkgs.runCommand "check-native-modules" { } ''
+            cat > $out <<'JSON'
+            ${builtins.toJSON (import ./nix/check-native-modules.nix { inherit pkgs; })}
+            JSON
+          '';
 
           nixos-module = pkgs.runCommand "check-nixos-module" { } ''
             # The system is not built: its derivation path is only written. Dropping the

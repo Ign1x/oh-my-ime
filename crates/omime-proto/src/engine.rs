@@ -207,6 +207,80 @@ impl Action {
 /// An `a{sv}` dictionary.
 pub type Dict = HashMap<String, OwnedVariant>;
 
+/// One entry in a page presented by the desktop's candidate UI (protocol 1.3).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Candidate {
+    pub text: String,
+    pub comment: String,
+    pub label: String,
+}
+
+/// An optional semantic candidate page. An empty page hides the lookup table.
+///
+/// Selection indices and `cursor` are local to this page, starting at zero.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CandidatePage {
+    pub candidates: Vec<Candidate>,
+    pub cursor: u32,
+    pub has_previous: bool,
+    pub has_next: bool,
+}
+
+impl CandidatePage {
+    pub fn to_dict(&self) -> Dict {
+        let candidates: Vec<(String, String, String)> = self
+            .candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.text.clone(),
+                    candidate.comment.clone(),
+                    candidate.label.clone(),
+                )
+            })
+            .collect();
+        Dict::from([
+            ("candidates".into(), owned(Variant::from(candidates))),
+            ("cursor".into(), self.cursor.into()),
+            ("has-previous".into(), self.has_previous.into()),
+            ("has-next".into(), self.has_next.into()),
+        ])
+    }
+
+    pub fn from_dict(dict: &Dict) -> Self {
+        let candidates: Vec<Candidate> = dict
+            .get("candidates")
+            .and_then(|value| value.try_clone().ok())
+            .and_then(|value| Vec::<(String, String, String)>::try_from(value).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(text, comment, label)| Candidate {
+                text,
+                comment,
+                label,
+            })
+            .collect();
+        let cursor = dict
+            .get("cursor")
+            .and_then(|value| value.try_clone().ok())
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0)
+            .min(u32::try_from(candidates.len().saturating_sub(1)).unwrap_or(u32::MAX));
+        let flag = |key: &str| {
+            dict.get(key)
+                .and_then(|value| value.try_clone().ok())
+                .and_then(|value| bool::try_from(value).ok())
+                .unwrap_or(false)
+        };
+        Self {
+            candidates,
+            cursor,
+            has_previous: flag("has-previous"),
+            has_next: flag("has-next"),
+        }
+    }
+}
+
 /// Rectangle `(x, y, width, height)`.
 pub type Rect = (i32, i32, i32, i32);
 
@@ -584,6 +658,51 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_pages_round_trip_with_unicode_and_page_local_cursor() {
+        let page = CandidatePage {
+            candidates: vec![
+                Candidate {
+                    text: "你好👋".into(),
+                    comment: "nǐ hǎo".into(),
+                    label: "①".into(),
+                },
+                Candidate {
+                    text: "拟好".into(),
+                    ..Candidate::default()
+                },
+            ],
+            cursor: 1,
+            has_previous: true,
+            has_next: true,
+        };
+        assert_eq!(CandidatePage::from_dict(&page.to_dict()), page);
+        let mut wire = page.to_dict();
+        wire.insert("cursor".into(), u32::MAX.into());
+        assert_eq!(CandidatePage::from_dict(&wire).cursor, 1);
+    }
+
+    #[test]
+    fn malformed_or_missing_candidate_pages_hide_lookup() {
+        assert_eq!(
+            CandidatePage::from_dict(&Dict::new()),
+            CandidatePage::default()
+        );
+        let malformed = Dict::from([
+            ("candidates".into(), owned(Variant::from("wrong type"))),
+            ("cursor".into(), u32::MAX.into()),
+            ("has-next".into(), 1u32.into()),
+        ]);
+        assert_eq!(
+            CandidatePage::from_dict(&malformed),
+            CandidatePage::default()
+        );
+        assert_eq!(
+            CandidatePage::from_dict(&CandidatePage::default().to_dict()),
+            CandidatePage::default()
+        );
+    }
 
     #[test]
     fn actions_round_trip() {

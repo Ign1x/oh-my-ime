@@ -9,28 +9,23 @@ The initial machine-readable baseline is
 
 ## Current evidence
 
-The following probes used the **published v0.4.0 platform and Rime binaries**, not the
-unreleased source changes, on x86_64 NixOS on 2026-11-06:
+Compatibility is recorded for a particular application build, desktop, input route and scenario.
+The following rows were run in isolated sessions on 2026-11-24 with the current source build:
 
 | Desktop / application | Result | Scope |
 |---|---|---|
-| sway 1.12 / Firefox 159.0, native Wayland | Passed: preedit, Space candidate selection, Chinese commit, focus cleanup | Private Firefox profile and local two-field HTML fixture; Rime `luna_pinyin` |
-| sway 1.12 / foot 1.28.0, native Wayland | Passed: Space candidate selection, Chinese commit | Real terminal stdin receives exactly `中国` and newline; Rime `luna_pinyin` |
-| sway 1.12 / xterm 411, XWayland | Passed: Space candidate selection, Chinese commit | Real terminal stdin receives exactly `中国` and newline through XIM |
-| KWin 6.8.2, virtual output | Blocked: current platform requires IM v2 | Public registry and privileged `--inputmethod` connection both probed; privileged connection exposes `zwp_input_method_v1` and `zwp_input_panel_v1`, with no IM v2 or virtual-keyboard-v1 |
-| GNOME | Blocked: `gnome-shell` is unavailable in the test environment | No GNOME input workflow was run |
+| sway 1.12 / Firefox 159.0, native Wayland | Passed: preedit, candidate selection, Chinese commit and focus cleanup | Private Firefox profile and local two-field fixture; Rime `luna_pinyin` |
+| sway 1.12 / foot 1.28.0, native Wayland | Passed: candidate selection and Chinese commit | Real terminal stdin; Rime `luna_pinyin` |
+| sway 1.12 / xterm 411, XWayland | Passed: candidate selection and Chinese commit | Real terminal stdin through XIM |
+| KWin 6.8.3, virtual output | Passed: IM v1 startup, Echo composition, Rime 中国, panel role, password bypass and focus recovery | `/tmp/omime-native/kwin-run-8/report.json`; six checks, virtual output |
+| GNOME Shell 50.4, virtual output | Passed: system IBus selection, inline preedit, Rime commit, candidate delivery/screenshot, focus cleanup and password bypass | `/tmp/omime-gnome-a3/report.json`; eight checks |
+| IBus 1.5.34, headless native engine | Passed: Rime six checks and Echo five checks, including paging/clicking and commit-only cache clearing | `/tmp/omime-ibus-rime-b5/result.json`, `/tmp/omime-ibus-echo-b5/result.json` |
 
-The Firefox test observes actual DOM composition events and text values: typing
-`zhongguo` then Space yields `中国`; after starting `ni`, the page focuses the second
-field, where `hao` then Space yields only `好`. Focus changes through the DOM because
-Tab may belong to Rime's composition controls. This does not assert whether the first
-field commits or cancels its composition when losing focus.
-
-Firefox's popup geometry, pointer selection, shortcuts, mixed DPI and restart have
-not been accepted. foot/xterm preedit appearance and focus behavior remain untested.
-GTK 3/4 applications, Qt 5/6 applications, Chromium, VS Code, WeChat and WPS remain separate rows requiring their own runs. The Firefox row
-does not accept other GTK applications. Existing WPS findings remain documented in
-[the application guide](hyprland.md#application-routes-and-verification).
+KWin and GNOME rows use synthetic native text fields and private buses. They establish the
+adapter and desktop-owned lifecycle, not every application. Physical displays, mixed DPI,
+fullscreen, launchers, pointer placement and GTK/Qt/browser/Electron/office applications
+remain separate acceptance rows. KWin virtual-renderer screenshot capture is unstable; the
+GNOME candidate screenshot was captured successfully.
 
 ## Run a private probe
 
@@ -108,19 +103,3 @@ Use only synthetic text in screenshots and logs.
 incorrect result; `blocked` means a prerequisite prevented it; `not-tested` means it
 was not run. A desktop/application is not fully accepted until its applicable scenarios
 have evidence. Headless runs do not establish GPU, physical-display or launcher behavior.
-
-## Backend work established by the probes
-
-KDE needs an IM v1 frontend and an input-panel-v1 presentation path on the connection
-KWin passes to its input method. Both the text protocol and popup role differ from the
-current v2 implementation. The daemon must be able to initialize its core without
-requiring the v2 frontend; simply advertising an engine as a KWin input method does
-not work. Preserve the same-connection rule for popup surfaces.
-
-GNOME's first route is an oh-my-ime engine connected to the **system IBus** instance.
-It needs the daemon lifecycle decoupling, an IBus engine adapter, and optional semantic
-candidate output from Rime for GNOME's candidate UI. The existing `omime-ibus` process
-hosts a private IBus framework inside the platform; it implements the opposite direction
-and does not provide GNOME integration. A desktop installed with the probe's required
-headless flags is the next prerequisite for runtime validation. Neither KDE nor GNOME
-is currently accepted for input, and these probes do not claim otherwise.

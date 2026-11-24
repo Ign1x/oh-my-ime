@@ -111,6 +111,9 @@ def package(args):
                 copy(ROOT / "data/omimed.service", directory / "share/systemd/user/omimed.service")
                 desktop = "io.github.ign1x.OhMyIme.Settings.desktop"
                 copy(ROOT / "data" / desktop, directory / "share/applications" / desktop)
+                copy(ROOT / "data/io.github.ign1x.OhMyIme.InputMethod.desktop", directory / "share/applications/io.github.ign1x.OhMyIme.InputMethod.desktop")
+                copy(ROOT / "data/io.github.ign1x.OhMyIme.IBus.desktop", directory / "share/applications/io.github.ign1x.OhMyIme.IBus.desktop")
+                copy(ROOT / "data/ibus/oh-my-ime.xml", directory / "share/ibus/component/oh-my-ime.xml")
                 copy(ROOT / "data/config.toml", directory / "share/oh-my-ime/config.toml")
                 for snippet in sorted((ROOT / "data/hyprland").iterdir()):
                     copy(snippet, directory / "share/oh-my-ime/hyprland" / snippet.name)
@@ -172,7 +175,7 @@ def assemble(args):
         directory = Path(temporary) / "oh-my-ime-nix"
         copy(ROOT / "nix/release-flake.nix", directory / "flake.nix")
         copy(ROOT / "flake.lock", directory / "flake.lock")
-        for name in ("binary.nix", "nixos.nix", "home-manager.nix", "service-path.nix"):
+        for name in ("binary.nix", "nixos.nix", "home-manager.nix", "service-path.nix", "native-package.nix"):
             copy(ROOT / "nix" / name, directory / "nix" / name)
         copy(ROOT / "nix/release-package.nix", directory / "nix/package.nix")
         (directory / "nix/rime.nix").write_text(

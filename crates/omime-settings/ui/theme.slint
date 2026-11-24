@@ -1,24 +1,55 @@
 import { Palette } from "std-widgets.slint";
 
-// The colors of the settings window, light or dark as the desktop prefers. The widgets
-// (buttons, switches, fields) are Fluent's and follow the same preference.
+// The colors of the settings window, light or dark as the desktop prefers.
+// Uses an intentional navy/teal accent over pale neutral surfaces in light mode
+// and deep slate-navy surfaces in dark mode.
 export global Theme {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
-    out property <brush> window: dark ? #202020 : #f3f3f3;
-    out property <brush> card: dark ? #2b2b2b : #ffffff;
-    out property <brush> card-border: dark ? #ffffff10 : #0000000f;
-    out property <brush> dialog: dark ? #2c2c2c : #fbfbfb;
-    out property <brush> scrim: dark ? #00000080 : #0000004d;
-    out property <brush> divider: dark ? #ffffff14 : #0000000f;
-    out property <brush> text: dark ? #ffffff : #1b1b1b;
-    out property <brush> secondary: dark ? #ffffffa6 : #00000094;
-    out property <brush> tertiary: dark ? #ffffff66 : #00000066;
-    out property <brush> hover: dark ? #ffffff0d : #00000008;
-    out property <brush> selected: dark ? #ffffff17 : #0000000f;
-    out property <brush> keycap: dark ? #ffffff14 : #00000008;
-    out property <brush> accent: Palette.accent-background;
-    out property <brush> on-accent: Palette.accent-foreground;
-    out property <brush> success: dark ? #6ccb5f : #0f7b0f;
-    out property <brush> danger: dark ? #ff99a4 : #c42b1c;
-    out property <brush> danger-background: dark ? #442726 : #fde7e9;
+
+    // Surfaces.
+    out property <brush> window: dark ? #11161d : #f5f6f8;
+    out property <brush> sidebar: dark ? #0d1218 : #eceff4;
+    out property <brush> card: dark ? #18202a : #ffffff;
+    out property <brush> surface-subtle: dark ? #1e2835 : #f8fafc;
+    out property <brush> dialog: dark ? #1a232f : #ffffff;
+    out property <brush> scrim: dark ? #00000099 : #0f172a52;
+
+    // Borders & hairlines.
+    out property <brush> card-border: dark ? #ffffff14 : #0f172a14;
+    out property <brush> divider: dark ? #ffffff10 : #0f172a0f;
+
+    // Typography.
+    out property <brush> text: dark ? #f1f5f9 : #0f172a;
+    out property <brush> secondary: dark ? #94a3b8 : #475569;
+    out property <brush> tertiary: dark ? #64748b : #64748b;
+
+    // Interactive & control states.
+    out property <brush> hover: dark ? #ffffff0d : #0f172a08;
+    out property <brush> selected: dark ? #2dd4bf1a : #0f766e14;
+    out property <brush> keycap: dark ? #222d3b : #f8fafc;
+    out property <brush> keycap-border: dark ? #ffffff1e : #0f172a24;
+
+    // Brand navy & teal.
+    out property <brush> navy: dark ? #243b5a : #162d4c;
+    out property <brush> on-navy: #ffffff;
+    out property <brush> navy-soft: dark ? #3b82f618 : #162d4c0f;
+    out property <brush> accent: dark ? #0d9488 : #0f766e;
+    out property <brush> accent-hover: dark ? #0f766e : #0d665f;
+    out property <brush> accent-pressed: dark ? #115e59 : #0a534d;
+    out property <brush> on-accent: #ffffff;
+    out property <brush> accent-text: dark ? #2dd4bf : #0f766e;
+    out property <brush> accent-soft: dark ? #2dd4bf1c : #0f766e14;
+    out property <brush> accent-border: dark ? #2dd4bf38 : #0f766e2e;
+    out property <brush> active-row: dark ? #2dd4bf0d : #0f766e0a;
+
+    // Semantic status.
+    out property <brush> success: dark ? #4ade80 : #15803d;
+    out property <brush> success-background: dark ? #15803d29 : #dcfce7;
+    out property <brush> success-border: dark ? #4ade8038 : #15803d2e;
+    out property <brush> warning: dark ? #fbbf24 : #b45309;
+    out property <brush> warning-background: dark ? #b4530929 : #fef3c7;
+    out property <brush> warning-border: dark ? #fbbf2438 : #b453092e;
+    out property <brush> danger: dark ? #f87171 : #be123c;
+    out property <brush> danger-background: dark ? #be123c26 : #ffe4e6;
+    out property <brush> danger-border: dark ? #f8717138 : #be123c2e;
 }

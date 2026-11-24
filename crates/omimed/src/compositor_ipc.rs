@@ -17,16 +17,20 @@ use crate::placement::Rect;
 const TIMEOUT: Duration = Duration::from_millis(300);
 /// sway's IPC message type `GET_TREE`.
 const SWAY_GET_TREE: u32 = 4;
+const MAX_SWAY_REPLY: usize = 4 * 1024 * 1024;
+const MAX_HYPRLAND_REPLY: u64 = 256 * 1024;
 
 /// The content area of the focused window, in compositor coordinates, if the compositor
 /// says.
 pub async fn focused_window() -> Option<Rect> {
     let query = async {
+        // An explicit Sway socket belongs to this session. Do not let discovery
+        // of a different, still-running Hyprland session override it.
+        if let Some(socket) = std::env::var_os("SWAYSOCK").filter(|s| !s.is_empty()) {
+            return sway(Path::new(&socket)).await;
+        }
         if let Some(socket) = hyprland_socket() {
             return hyprland(&socket).await;
-        }
-        if let Some(socket) = std::env::var_os("SWAYSOCK") {
-            return sway(Path::new(&socket)).await;
         }
         None
     };
@@ -60,7 +64,14 @@ async fn hyprland(socket: &Path) -> Option<Rect> {
     let mut stream = UnixStream::connect(socket).await.ok()?;
     stream.write_all(b"j/activewindow").await.ok()?;
     let mut answer = String::new();
-    stream.read_to_string(&mut answer).await.ok()?;
+    stream
+        .take(MAX_HYPRLAND_REPLY + 1)
+        .read_to_string(&mut answer)
+        .await
+        .ok()?;
+    if answer.len() as u64 > MAX_HYPRLAND_REPLY {
+        return None;
+    }
     hyprland_window(&answer)
 }
 
@@ -74,6 +85,9 @@ fn hyprland_window(answer: &str) -> Option<Rect> {
     };
     let (x, y) = pair("at")?;
     let (width, height) = pair("size")?;
+    if width <= 0 || height <= 0 {
+        return None;
+    }
     Some((x, y, width, height))
 }
 
@@ -85,10 +99,20 @@ async fn sway(socket: &Path) -> Option<Rect> {
     stream.write_all(&request).await.ok()?;
     let mut header = [0u8; 14];
     stream.read_exact(&mut header).await.ok()?;
-    let length = u32::from_ne_bytes(header[6..10].try_into().ok()?);
-    let mut payload = vec![0; usize::try_from(length).ok()?];
+    let length = sway_payload_length(&header)?;
+    let mut payload = vec![0; length];
     stream.read_exact(&mut payload).await.ok()?;
     sway_focused(&serde_json::from_slice(&payload).ok()?)
+}
+
+fn sway_payload_length(header: &[u8; 14]) -> Option<usize> {
+    if &header[..6] != b"i3-ipc"
+        || u32::from_ne_bytes(header[10..14].try_into().ok()?) != SWAY_GET_TREE
+    {
+        return None;
+    }
+    let length = usize::try_from(u32::from_ne_bytes(header[6..10].try_into().ok()?)).ok()?;
+    (length > 0 && length <= MAX_SWAY_REPLY).then_some(length)
 }
 
 /// The content area of the focused node of a sway tree: its `rect`, moved and sized by
@@ -107,8 +131,11 @@ fn sway_focused(node: &Value) -> Option<Rect> {
         };
         let (x, y, width, height) = rect("rect")?;
         return Some(match rect("window_rect") {
-            Some((dx, dy, w, h)) if w > 0 && h > 0 => (x + dx, y + dy, w, h),
-            _ => (x, y, width, height),
+            Some((dx, dy, w, h)) if w > 0 && h > 0 => {
+                (x.checked_add(dx)?, y.checked_add(dy)?, w, h)
+            }
+            _ if width > 0 && height > 0 => (x, y, width, height),
+            _ => return None,
         });
     }
     ["nodes", "floating_nodes"]
@@ -151,5 +178,39 @@ mod tests {
         .unwrap();
         assert_eq!(sway_focused(&floating), Some((100, 50, 300, 200)));
         assert_eq!(sway_focused(&serde_json::json!({"nodes": []})), None);
+    }
+
+    #[test]
+    fn sway_reply_is_validated_before_allocating_the_tree() {
+        let header = |magic: &[u8; 6], size: u32, kind: u32| {
+            let mut bytes = [0; 14];
+            bytes[..6].copy_from_slice(magic);
+            bytes[6..10].copy_from_slice(&size.to_ne_bytes());
+            bytes[10..14].copy_from_slice(&kind.to_ne_bytes());
+            bytes
+        };
+        assert_eq!(
+            sway_payload_length(&header(b"i3-ipc", 128, SWAY_GET_TREE)),
+            Some(128)
+        );
+        for invalid in [
+            header(b"broken", 128, SWAY_GET_TREE),
+            header(b"i3-ipc", 128, 0),
+            header(b"i3-ipc", u32::MAX, SWAY_GET_TREE),
+            header(b"i3-ipc", 0, SWAY_GET_TREE),
+        ] {
+            assert_eq!(sway_payload_length(&invalid), None);
+        }
+    }
+
+    #[test]
+    fn invalid_geometry_does_not_overflow_or_place_a_popup() {
+        let window = serde_json::json!({
+            "focused": true,
+            "rect": {"x": i32::MAX, "y": 0, "width": 100, "height": 100},
+            "window_rect": {"x": 1, "y": 0, "width": 100, "height": 100},
+        });
+        assert_eq!(sway_focused(&window), None);
+        assert_eq!(hyprland_window(r#"{"at":[0,0],"size":[0,-1]}"#), None);
     }
 }

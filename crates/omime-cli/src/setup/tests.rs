@@ -28,6 +28,7 @@ impl Fixture {
         let locations = Locations {
             journal: state_dir.join("setup.toml"),
             config_dir,
+            data_dir: root.join("data"),
             state_dir,
         };
         let engines = [
@@ -102,7 +103,8 @@ async fn unsupported_compositors_refuse_before_creating_any_files() {
     ] {
         let f = Fixture::new();
         let options = Options::parse(&args).unwrap();
-        let verdict = crate::probe::Verdict::Unsupported(vec!["zwp_input_method_manager_v2"]);
+        let verdict =
+            crate::probe::Verdict::Unsupported(omime_proto::desktop::Capabilities::default());
         let error = run_with(&options, &f.locations, Ok(verdict))
             .await
             .unwrap_err();
@@ -408,4 +410,213 @@ fn symlinked_configs_and_compound_startups_are_not_replaced() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn desktop_selection_is_explicit_or_matches_the_session() {
+    for (current, session, sway_socket, hyprland_socket, expected) in [
+        ("sway", "", false, false, Some(Desktop::Sway)),
+        ("GNOME", "", false, true, Some(Desktop::Gnome)),
+        ("KDE", "", true, false, Some(Desktop::Kde)),
+        ("wlroots:SWAY", "", false, true, Some(Desktop::Sway)),
+        ("Hyprland", "sway", true, false, Some(Desktop::Hyprland)),
+        ("", "sway", false, false, Some(Desktop::Sway)),
+        ("", "", true, false, Some(Desktop::Sway)),
+        ("", "", false, true, Some(Desktop::Hyprland)),
+        ("", "", false, false, None),
+    ] {
+        let environment = DesktopEnvironment {
+            current: current.into(),
+            session: session.into(),
+            sway_socket,
+            hyprland_socket,
+        };
+        assert_eq!(environment.detect().unwrap(), expected);
+    }
+    for environment in [
+        DesktopEnvironment {
+            current: "niri".into(),
+            ..Default::default()
+        },
+        DesktopEnvironment {
+            current: "sway:Hyprland".into(),
+            ..Default::default()
+        },
+        DesktopEnvironment {
+            sway_socket: true,
+            hyprland_socket: true,
+            ..Default::default()
+        },
+    ] {
+        assert!(environment.detect().is_err());
+        assert_eq!(
+            select_desktop(Some(Desktop::Sway), None, &environment).unwrap(),
+            Desktop::Sway
+        );
+    }
+    assert!(Options::parse(&["--desktop", "unknown"]).is_err());
+    assert!(Options::parse(&["--desktop"]).is_err());
+    assert!(Options::parse(&["--undo", "--desktop", "auto"]).is_err());
+    assert!(Options::parse(&["--desktop", "sway", "--desktop", "sway"]).is_err());
+    assert_eq!(
+        Options::parse(&["--desktop", "auto"]).unwrap().desktop,
+        None
+    );
+}
+
+#[test]
+fn sway_setup_is_reversible_idempotent_and_remembers_its_desktop() {
+    let f = Fixture::new();
+    let root = f.locations.config_dir.parent().unwrap();
+    let main = root.join("sway/config");
+    let uwsm = root.join("uwsm/env-sway");
+    let original = "# my desktop\nset $mod Mod4\nexec --no-startup-id fcitx5 -d\noutput * scale 1";
+    f.write(&main, original);
+    f.write(&uwsm, "export MY_SESSION=1\n");
+    assert!(f.plan(&["--desktop", "sway"]).is_err());
+    let plan = f
+        .plan(&["--desktop", "sway", "--engine", "echo", "--take-over"])
+        .unwrap();
+    assert_eq!(plan.record.desktop, Desktop::Sway);
+    assert_eq!(plan.record.config_path, main);
+    assert!(!f.locations.state_dir.exists());
+    f.apply(&plan);
+    let configured = fs::read_to_string(&main).unwrap();
+    assert!(configured.contains("include \""));
+    assert!(configured.contains("oh-my-ime/sway.conf\""));
+    assert!(configured.contains("# exec --no-startup-id fcitx5 -d"));
+    let snippet = fs::read_to_string(f.locations.config_dir.join("sway.conf")).unwrap();
+    assert!(snippet.contains("dbus-update-activation-environment --systemd"));
+    assert!(snippet.contains("QT_IM_MODULES='wayland;fcitx'"));
+    assert!(!snippet.contains("exec_always"));
+    assert!(
+        fs::read_to_string(&uwsm)
+            .unwrap()
+            .contains("export XMODIFIERS='@im=fcitx'")
+    );
+    assert!(!root.join("hypr").exists());
+    assert!(!root.join("uwsm/env-hyprland").exists());
+    assert!(f.plan(&[]).unwrap().changes.is_empty());
+    assert!(f.plan(&["--desktop", "hyprland"]).is_err());
+    f.write(&main, &(configured + "bindsym $mod+Return exec foot\n"));
+    undo(&f.locations, false).unwrap();
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        format!("{original}\nbindsym $mod+Return exec foot\n")
+    );
+    assert_eq!(fs::read_to_string(&uwsm).unwrap(), "export MY_SESSION=1\n");
+    assert!(!f.locations.config_dir.join("sway.conf").exists());
+    assert!(!root.join("environment.d/90-oh-my-ime.conf").exists());
+}
+
+#[test]
+fn old_journals_remain_hyprland_and_can_be_undone() {
+    let f = Fixture::new();
+    let plan = f.plan(&["--engine", "echo"]).unwrap();
+    f.apply(&plan);
+    let mut journal: toml::Value =
+        toml::from_str(&fs::read_to_string(&f.locations.journal).unwrap()).unwrap();
+    journal.as_table_mut().unwrap().remove("desktop");
+    f.write(&f.locations.journal, &toml::to_string(&journal).unwrap());
+    assert_eq!(
+        Record::load(&f.locations.journal).unwrap().unwrap().desktop,
+        Desktop::Hyprland
+    );
+    assert!(f.plan(&[]).unwrap().changes.is_empty());
+    undo(&f.locations, false).unwrap();
+    assert!(!f.main("lua").exists());
+    assert!(!f.config().exists());
+}
+
+#[test]
+fn sway_uses_custom_config_paths_and_does_not_replace_symlinks() {
+    let f = Fixture::new();
+    let main = f.root.join("custom desktop config");
+    let plan = f
+        .plan(&["--desktop", "sway", "--config", main.to_str().unwrap()])
+        .unwrap();
+    assert_eq!(plan.record.config_path, main);
+    let target = f.root.join("declarative-config");
+    f.write(&target, "set $mod Mod4\n");
+    symlink(&target, &main).unwrap();
+    assert!(
+        f.plan(&["--desktop", "sway", "--config", main.to_str().unwrap()])
+            .is_err()
+    );
+    assert_eq!(fs::read_to_string(target).unwrap(), "set $mod Mod4\n");
+}
+
+#[test]
+fn sway_startup_recognition_preserves_unrelated_commands() {
+    for command in [
+        "exec fcitx5 -d",
+        "exec_always --no-startup-id ibus-daemon -drx",
+        "exec \"fcitx5 -d\"",
+        "exec env FOO=bar /usr/bin/omimed",
+    ] {
+        assert!(sway_startup_program(command).unwrap().is_some());
+    }
+    for command in [
+        "# exec fcitx5",
+        "bindsym $mod+f exec fcitx5",
+        "exec foot",
+        "execute fcitx5",
+    ] {
+        assert!(sway_startup_program(command).unwrap().is_none());
+    }
+    for command in [
+        "exec fcitx5 -d && foot",
+        "exec omimed; foot",
+        "exec_always ibus-daemon | tee log",
+    ] {
+        assert!(sway_startup_program(command).is_err());
+    }
+    for path in [
+        "/tmp/$desktop/sway.conf",
+        "/tmp/config*/sway.conf",
+        "/tmp/`id`/sway.conf",
+        "/tmp/quote\"/sway.conf",
+        "/tmp/quote'/sway.conf",
+        "/tmp/back\\slash/sway.conf",
+    ] {
+        assert!(configure_sway("", Path::new(path), false).is_err());
+    }
+    let (text, _) =
+        configure_sway("", Path::new("/tmp/config with spaces/sway.conf"), false).unwrap();
+    assert!(text.contains("include \"/tmp/config with spaces/sway.conf\""));
+}
+
+#[test]
+fn native_desktop_registration_is_reversible_and_preserves_session_environment() {
+    for (desktop, file) in [
+        (
+            "kde",
+            "applications/io.github.ign1x.OhMyIme.InputMethod.desktop",
+        ),
+        ("gnome", "ibus/component/oh-my-ime.xml"),
+    ] {
+        let f = Fixture::new();
+        let plan = f.plan(&["--desktop", desktop, "--engine", "echo"]).unwrap();
+        f.apply(&plan);
+        let registration = f.locations.data_dir.join(file);
+        let content = fs::read_to_string(&registration).unwrap();
+        assert!(content.contains(f.daemon.to_str().unwrap()));
+        assert!(f.plan(&["--desktop", desktop]).unwrap().changes.is_empty());
+        assert!(
+            !f.locations
+                .config_dir
+                .parent()
+                .unwrap()
+                .join("environment.d/90-oh-my-ime.conf")
+                .exists()
+        );
+        let config = f.config();
+        f.write(
+            &config,
+            &(fs::read_to_string(&config).unwrap() + "\n# keep me\n"),
+        );
+        undo(&f.locations, false).unwrap();
+        assert!(!registration.exists());
+        assert!(fs::read_to_string(config).unwrap().contains("# keep me"));
+    }
 }

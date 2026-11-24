@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Native KDE backend on KWin's privileged input-method-v1 connection, with staged
+  text state, original keyboard serials, sensitive-field bypass and same-connection
+  input-panel-v1 candidate surfaces.
+- GNOME `omimed --ibus` mode registers an engine with the existing system IBus.
+  Rime supplies native preedit, candidates, paging and selection without a Slint
+  popup; system IBus remains responsible for application delivery.
+- Engine protocol 1.3 adds optional semantic candidates and selection/page callbacks.
+  Older engine/host pairs retain their existing UI contract.
+- Reversible `omime setup --desktop kde|gnome`, desktop registration metadata,
+  native backend options for NixOS/Home Manager, and isolated KWin/IBus/GNOME probes.
+- `omime setup --desktop auto|hyprland|sway` supports reversible sway setup,
+  including autostart, input environment and UWSM integration. Desktop selection
+  preserves existing Hyprland journals and rejects ambiguous automatic choices.
+- A bilingual platform roadmap records desktop and application gaps, adapter
+  milestones and observable acceptance criteria.
 - Native x86_64/ARM64 deb and RPM packages with separate optional Rime packages,
   a portable AppImage with persistent launchers, and checksum-pinned AUR split-package
   recipes. Packaging checks install the native packages in isolated containers;
@@ -21,6 +36,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- All five native settings pages share refreshed light/dark colors, navigation,
+  input-method cards, connection status and grouped diagnostics. Chinese and English
+  layouts work at the compact 720×480 window size.
+- Daemon startup and CLI diagnostics use the same protocol capability rules and
+  explain desktop-specific startup requirements and IBus connection/selection state.
 - `omime choose` looks like the switcher it belongs with: each input method has its
   badge and, beside it, its engine's name where that is another (小鹤双拼 · Rime); the
   input method in use has a check mark, the pointer highlights the row under it, and
@@ -30,6 +50,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Sway's explicit IPC socket takes priority over discovered Hyprland sessions for
+  candidate placement. IPC replies have size limits and geometry overflow checks.
+- Update `url` to 2.5.9 (and `form_urlencoded` to 1.2.3), fixing the nested `blob:`
+  origin stack overflow reported as RUSTSEC-2026-0592.
 - Rime, Sparkle, the settings and Rime's settings work where OpenGL cannot start (a
   virtual machine, a remote desktop, a broken driver). They ended with "Error creating
   OpenGL display"; omimed started the engine again and again and then gave up, and

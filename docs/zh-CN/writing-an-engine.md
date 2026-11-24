@@ -266,3 +266,15 @@ Rust SDK 收到 `Shutdown`、主机连接关闭或 SIGTERM 后，`run` 会返回
 4. 应答调用，直到连接关闭或收到 `Shutdown`。
 
 GLib（`g_dbus_connection_new_for_address`）、Qt（`QDBusConnection::connectToPeer`）、sd-bus 和 zbus 都支持点对点连接。[`examples/python-gtk4`](../../examples/python-gtk4) 是一个用 Python 和 PyGObject 写成、不依赖 SDK 的完整引擎，它的 GTK 4 窗口和其他引擎的窗口一样成为弹窗。
+
+## 可选桌面候选（协议 1.3）
+
+协商 API minor ≥ 3 且 host 提供 `candidate-ui = true` 时，可以使用语义候选。
+`Host::candidate_ui()` 同时检查两个条件；通过 `Host::set_candidates(context, page)`
+或 `Context::set_candidates(page)` 发送 `CandidatePage`，空页隐藏候选。每项包含
+text、comment、label，整页保存页内 cursor 与 has_previous/has_next。
+
+实现 `candidate_clicked`、`candidate_page` 回调完成选词和翻页，如按键回调一样返回
+有序动作，并验证当前上下文与索引。SDK 不向旧 host 发送扩展调用。GNOME 启动引擎时
+设置 `OMIME_PRESENTATION=ibus`，引擎据此选择无头展示；Rime 同时保留原有 Wayland/Slint
+路径。依赖自绘窗口的引擎需要实现此模式后才能接入 GNOME 原生候选窗。

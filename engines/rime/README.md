@@ -4,6 +4,12 @@ oh-my-ime's Rime engine: [Rime](https://rime.im) (librime) does the input, with 
 schemas as input methods of their own, and the engine shows the candidates in a window
 of its own at the text cursor.
 
+When omimed runs as the system IBus engine, it starts Rime with
+`OMIME_PRESENTATION=ibus`. Rime then runs without a display connection and sends
+candidate text, comments, labels, selection and paging through protocol 1.3 to the
+desktop's lookup table. The same deployment, schemas, per-field sessions and menu
+remain available; the desktop controls the lookup table's appearance.
+
 - **Xiaohe shuangpin first.** The first time, the engine puts Xiaohe shuangpin
   (`double_pinyin_flypy`, 小鹤双拼) and pinyin (`luna_pinyin`) in Rime's schema list,
   with simplified characters, and makes Shift switch between Chinese and English

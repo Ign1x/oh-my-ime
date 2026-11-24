@@ -1,21 +1,21 @@
-# Hyprland 首次配置
+# 桌面首次配置
 
 [English](../setup.md) | 简体中文
 
-`omime setup` 将已安装的 oh-my-ime 接入 Hyprland：配置应用输入途径和自启动，按需选择首次使用的输入法，并保存可撤销的修改记录。
+`omime setup` 支持 Hyprland、sway、KDE 和 GNOME。KDE/GNOME 参见[原生桌面接入](native-desktops.md)。
+下面的环境与接管配置适用于 Hyprland/sway：配置应用输入途径和自启动，按需选择首次使用的输入法，并保存可撤销的修改记录。
 
 先安装平台和需要的输入法。使用 Fcitx5 拼音时，需要安装 Fcitx5 及其拼音插件；Qt 应用还需要匹配的 Fcitx5 Qt 输入模块。自带的 Echo 和 Sparkle 演示引擎默认仅供选择，不启用；Sparkle 无需外部框架。依赖见[安装与应用要求](hyprland.md)。
 
 ## 配置并启动
 
-请在 Hyprland 会话中运行 setup。修改文件或停止 Fcitx5、IBus 之前，工具会检查
+请在 Hyprland 或 sway 会话中运行 setup。修改文件或停止 Fcitx5、IBus 之前，工具会检查
 `zwp_input_method_manager_v2` 和 `zwp_virtual_keyboard_manager_v1`。
-目前尚不支持 KDE Plasma 和 GNOME；setup 会说明缺少的协议并拒绝执行，
-即使指定了 `--take-over` 也一样。显示连接不可达或无响应时也不会应用修改。
+KDE/GNOME 由桌面管理启动和输入源选择，拒绝 `--take-over` 和 `--start`。显示连接不可达或无响应时也不会应用修改。
 `--dry-run` 会先显示警告，再继续预览，并说明实际应用将被拒绝。
 继承的 `WAYLAND_SOCKET` 优先于 `WAYLAND_DISPLAY`，无法在安全探测后交给 omimed
-复用，因此 setup 也会拒绝这种情况。请在未继承 Wayland 套接字的 Hyprland 终端中运行。
-在这两个 Wayland 变量均未设置的文本控制台中，可以配置下次 Hyprland 登录；
+复用，因此 setup 也会拒绝这种情况。请在未继承 Wayland 套接字的桌面终端中运行。
+在这两个 Wayland 变量均未设置的文本控制台中，可以配置下次登录（sway 请指定 `--desktop sway`）；
 `--start` 仍需要 Wayland 会话。
 
 先预览：
@@ -46,6 +46,35 @@ omime setup --engine fcitx5/pinyin --take-over --start
 已经运行的应用仍保留旧环境，需要重启。
 
 配置后注销并重新登录 Hyprland，让合成器和应用继承新的输入环境，再运行 `omime doctor`。已经打开的应用可能需要重启，才能使用新的 GTK/Qt/XIM 接入途径。
+
+## sway
+
+在 sway 会话中会自动选择 sway，也可显式指定：
+
+```sh
+omime setup --desktop sway --engine rime --dry-run
+omime setup --desktop sway --engine rime --start
+```
+
+工具在 `$XDG_CONFIG_HOME/sway/config`（或 `--config PATH`）加入托管 include，
+生成 `$XDG_CONFIG_HOME/oh-my-ime/sway.conf`。该片段在登录时启动 omimed，
+为它设置输入环境，并将输入变量导入 D-Bus/systemd 激活环境。
+`environment.d/90-oh-my-ime.conf` 和 `uwsm/env-sway` 负责之后的 systemd/UWSM 启动。
+用 `omime setup --undo` 可撤销这些修改。选择的桌面会记入日志；更换前须先撤销。
+无法识别或存在歧义的会话需要显式选择 `--desktop`，协议支持检查仍独立执行。
+
+sway 配置指令无法更改启动 sway 的父进程环境。由 sway 的 `exec` 或快捷键直接启动的
+应用，需要通过 UWSM 启动会话，或在启动 sway 的环境中导出以下变量：
+
+```sh
+export GTK_IM_MODULE=''
+export QT_IM_MODULE=fcitx
+export QT_IM_MODULES='wayland;fcitx'
+export XMODIFIERS=@im=fcitx
+```
+
+注销并重新登录后，用 `omime doctor --app PID` 检查应用的实际环境。
+使用 text-input-v3 的原生 Wayland 应用无需输入模块；Qt 5 和 XWayland 应用仍需配置相应接入途径。
 
 ## 配置文件位置
 

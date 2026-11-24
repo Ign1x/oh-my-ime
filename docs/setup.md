@@ -1,8 +1,10 @@
-# First-run setup on Hyprland
+# First-run desktop setup
 
 English | [简体中文](zh-CN/setup.md)
 
-`omime setup` connects an installed oh-my-ime to a Hyprland session. It configures
+`omime setup` connects an installed oh-my-ime to Hyprland, sway, KDE or GNOME.
+For KDE/GNOME, use the [native desktop instructions](native-desktops.md); the
+Hyprland/sway environment and takeover instructions below apply to those two desktops. It configures
 application input routes and autostart, selects a first input method when requested,
 and keeps enough information to undo its changes.
 
@@ -14,17 +16,18 @@ See [installation and application requirements](hyprland.md).
 
 ## Configure and start
 
-Run setup from a Hyprland session. Before changing any files or stopping Fcitx5 or
+Run setup from a Hyprland or sway session. Before changing any files or stopping Fcitx5 or
 IBus, it checks for `zwp_input_method_manager_v2` and
-`zwp_virtual_keyboard_manager_v1`. KDE Plasma and GNOME are not supported yet;
-setup names the missing protocols and refuses, including with `--take-over`.
+`zwp_virtual_keyboard_manager_v1`. KDE uses desktop registration and KWin's privileged
+IM v1 connection; GNOME uses the system IBus engine. Their setup routes reject
+`--take-over` and `--start`, because the desktop owns startup and source selection.
 An unreachable or unresponsive display also prevents applying changes.
 `--dry-run` prints the warning first and still previews, explaining that applying
 would be refused. An inherited `WAYLAND_SOCKET` takes precedence over
 `WAYLAND_DISPLAY` and cannot be safely probed for reuse by omimed, so setup refuses
-it too. Run setup from a Hyprland terminal without an inherited Wayland socket.
+it too. Run setup from a desktop terminal without an inherited Wayland socket.
 On a text console with neither Wayland variable set, setup can prepare
-the next Hyprland login; `--start` still requires a Wayland session.
+the next login (select `--desktop sway` for sway); `--start` still requires a Wayland session.
 
 Preview the changes:
 
@@ -68,6 +71,39 @@ Already running applications keep their original environment and need restarting
 Log out and back into Hyprland after setup so the compositor and applications
 inherit the input environment. Then run `omime doctor`. Existing applications may
 need to be restarted before they use the new GTK/Qt/XIM route.
+
+## Sway
+
+In a sway session, auto-detection selects sway. To prepare it explicitly:
+
+```sh
+omime setup --desktop sway --engine rime --dry-run
+omime setup --desktop sway --engine rime --start
+```
+
+Setup adds a managed include to `$XDG_CONFIG_HOME/sway/config` (or `--config PATH`)
+and creates `$XDG_CONFIG_HOME/oh-my-ime/sway.conf`. It starts omimed once on login,
+sets the input environment for that process, and imports the input variables into
+D-Bus/systemd activation. `environment.d/90-oh-my-ime.conf` and `uwsm/env-sway`
+configure future systemd/UWSM launches. Use `omime setup --undo` to restore them.
+The chosen desktop is saved in the journal; undo before switching its desktop.
+Unrecognized or ambiguous session identities require an explicit `--desktop` choice.
+Protocol checks still run independently of that choice.
+
+Sway cannot set its parent process environment from a configuration directive.
+For applications launched directly with sway `exec`/key bindings, launch the session
+through UWSM or export these variables in the environment that starts sway:
+
+```sh
+export GTK_IM_MODULE=''
+export QT_IM_MODULE=fcitx
+export QT_IM_MODULES='wayland;fcitx'
+export XMODIFIERS=@im=fcitx
+```
+
+Log out and back in, then use `omime doctor --app PID` to check an application's
+actual environment. Native Wayland applications using text-input-v3 need no input
+module; Qt 5 and XWayland applications still need their documented input routes.
 
 ## Configuration location
 

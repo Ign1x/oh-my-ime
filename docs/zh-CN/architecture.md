@@ -38,7 +38,27 @@
 - **引擎**：各自一个进程，由 `omimed` 启动并监护。
 - **`omime`**：命令行工具。它通过会话总线与守护进程通信。
 
-## Wayland 前端
+## 桌面前端选择
+
+`Frontend` 将共享核心分发到 Wayland 或系统 IBus。默认启动检查当前 Wayland 连接，优先
+选择 IM v2 + virtual keyboard，或使用 KWin 特权连接的 IM v1 + input-panel-v1。
+`--ibus` 无需 Wayland 输入连接即可启动核心、控制服务和引擎监督，不接管 Fcitx 总线或
+XIM；它连接系统 IBus，把 `oh-my-ime` 注册为引擎。
+
+KWin v1 分别保存原始键盘 serial 与文本 commit_state serial，并分阶段更新字段状态。
+候选窗在同一上游连接为引擎 surface 设置 overlay panel role；此 role 无法销毁重设，
+隐藏时保留 role 并移除 buffer。敏感字段绕过引擎；从已抓取键盘切换到敏感用途时，由于
+v1 键盘没有 release 请求，会结束该输入上下文。
+
+IBus 将焦点、字段用途、周围文本和按键送入共享核心，限制队列大小并在失焦时清理过期
+输出。UTF-8 字节偏移转换为 IBus 字符偏移；Commit 在上屏前清除 IBus 缓存的预编辑和
+候选。适配器验证 IBus 调用者，Destroy 时移除导出的引擎对象。
+
+协议 1.3 加入可选候选语义。Rime 的 `OMIME_PRESENTATION=ibus` 模式不创建 Slint 窗口，
+由 GNOME 绘制候选并回传翻页/点击。此入口不再托管一套 Fcitx5/IBus 框架。
+生命周期和限制见[原生桌面接入](native-desktops.md)。
+
+## Wayland IM v2 前端
 
 对每个 `wl_seat`，`omimed` 绑定一个 `zwp_input_method_v2`，并维护一个输入上下文：
 

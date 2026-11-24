@@ -6,7 +6,7 @@ use std::fs;
 use std::process::Child;
 
 use anyhow::Context as _;
-use omime_e2e::harness::{TestEnv, echo_engine, program_dir, sparkle_engine};
+use omime_e2e::harness::{TestEnv, echo_engine, program_dir, sparkle_engine, wait_until};
 
 struct App(Child);
 impl Drop for App {
@@ -144,6 +144,82 @@ fn doctor_reports_a_broken_engine() -> anyhow::Result<()> {
             .lines()
             .any(|line| line.starts_with('✗') && line.contains(&path)),
         "no line about {path} in:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// IBus mode uses its existing framework and toolkit launch settings. A lost IBus
+/// connection is a backend failure, not a compositor seat held by a competitor.
+#[test]
+#[ignore = "end-to-end test; see typing.rs"]
+fn doctor_understands_native_ibus_registration_and_disconnection() -> anyhow::Result<()> {
+    let env = TestEnv::prepare(&[echo_engine()])?;
+    let address = format!("unix:path={}", env.dir().join("doctor-ibus.sock").display());
+    let mut ibus = App(env
+        .command("ibus-daemon")
+        .args([
+            "--single",
+            "--panel",
+            "disable",
+            "--config",
+            "disable",
+            "--cache",
+            "none",
+            "--address",
+            &address,
+        ])
+        .env("IBUS_COMPONENT_PATH", env.dir().join("empty-components"))
+        .spawn()?);
+    let _daemon = App(env
+        .command(program_dir().join("omimed"))
+        .args(["--ibus"])
+        .env("IBUS_ADDRESS", &address)
+        .env_remove("WAYLAND_DISPLAY")
+        .spawn()?);
+    let app = App(env
+        .command("sleep")
+        .arg("60")
+        .env("GTK_IM_MODULE", "ibus")
+        .env("QT_IM_MODULE", "ibus")
+        .env("XMODIFIERS", "@im=ibus")
+        .spawn()?);
+    let doctor = || {
+        env.command(program_dir().join("omime"))
+            .env("XDG_CURRENT_DESKTOP", "GNOME")
+            .env("GTK_IM_MODULE", "ibus")
+            .env("QT_IM_MODULE", "ibus")
+            .env("XMODIFIERS", "@im=ibus")
+            .args(["doctor", "--app", &app.0.id().to_string()])
+            .output()
+    };
+    let text = wait_until("native IBus doctor registration", || {
+        let output = doctor().ok()?;
+        let text = String::from_utf8(output.stdout).ok()?;
+        (output.status.success() && text.contains("connected to the session IBus daemon"))
+            .then_some(text)
+    })?;
+    assert!(
+        text.contains("registered with IBus but is not selected"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("another input method holds")
+            && !text.contains("may take it")
+            && !text.contains("set QT_IM_MODULE=fcitx")
+            && !text.contains("omimed does not stand in for"),
+        "{text}"
+    );
+    ibus.0.kill()?;
+    ibus.0.wait()?;
+    let text = wait_until("native IBus doctor connection loss", || {
+        let output = doctor().ok()?;
+        let text = String::from_utf8(output.stdout).ok()?;
+        (!output.status.success() && text.contains("not connected to the session IBus daemon"))
+            .then_some(text)
+    })?;
+    assert!(
+        !text.contains("another input method holds") && !text.contains("may take it"),
+        "{text}"
     );
     Ok(())
 }

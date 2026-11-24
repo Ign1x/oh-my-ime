@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=oh-my-ime for GNOME
+Name[zh_CN]=oh-my-ime GNOME 接入
+Comment=Register oh-my-ime with the session input service
+Exec=omimed --ibus
+Icon=input-keyboard
+Type=Application
+NoDisplay=true
+Terminal=false
+OnlyShowIn=GNOME;
+X-GNOME-Autostart-enabled=true

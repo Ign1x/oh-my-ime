@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 
-use super::{Finding, environment_findings};
+use super::{Backend, Finding, backend_environment_findings};
 
 pub const VARIABLES: [&str; 7] = [
     "QT_IM_MODULE",
@@ -63,7 +63,12 @@ impl Application {
         })
     }
 
+    #[cfg(test)]
     pub fn findings(&self) -> Vec<Finding> {
+        self.findings_for_backend(Backend::Wayland)
+    }
+
+    pub fn findings_for_backend(&self, backend: Backend) -> Vec<Finding> {
         let mut findings = vec![Finding::ok(tr!(
             "application {arg0} ({arg1}): launch environment",
             arg0 = self.pid,
@@ -81,7 +86,7 @@ impl Application {
             );
             findings.push(Finding::ok(format!("{key}={value}")));
         }
-        findings.extend(environment_findings(&self.variables));
+        findings.extend(backend_environment_findings(&self.variables, backend));
         for plugin in &self.plugins {
             let message = tr!(
                 "loaded input backend: {plugin}",

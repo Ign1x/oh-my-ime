@@ -88,8 +88,9 @@ OMIME_E2E_INSTALL_DIR=$(readlink -f result)/bin cargo test -p omime-e2e -- --ign
 
 ## Running omimed by hand
 
-omimed needs a compositor with `zwp_input_method_v2` and `zwp_virtual_keyboard_v1`
-(Hyprland, sway, ...) and no other input method running on it.
+The default Wayland route needs IM v2 plus virtual-keyboard-v1 (Hyprland, sway),
+or KWin's privileged IM v1 plus input-panel-v1 connection. GNOME uses `omimed --ibus`
+with system IBus. See [native desktop setup and probes](native-desktops.md).
 
 ```sh
 cargo build --workspace

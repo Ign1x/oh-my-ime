@@ -4,6 +4,8 @@
 //! focused text field and applies what it asks for: committed text, preedit, deletions.
 //! The engine's user interface is entirely its own: create a window with any Wayland
 //! toolkit and the platform turns it into a popup that follows the text cursor.
+//! A host that advertises [`Host::candidate_ui`] can instead draw the engine's
+//! [`CandidatePage`] and return selection and paging callbacks.
 //!
 //! ```no_run
 //! use omime_sdk::{Context, Engine, KeyEvent};
@@ -36,7 +38,7 @@
 //!   hide or close your toolkit window to "hide" it; the platform maps and unmaps it.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use omime_proto::ApiVersion;
@@ -48,8 +50,8 @@ use tracing::warn;
 use zbus::OwnedVariant;
 
 pub use omime_proto::engine::{
-    ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Property, PropertyKind, Status,
-    modifiers,
+    Candidate, CandidatePage, ContextId, ContextInfo, InputMethodInfo, KeyEvent, Preedit, Property,
+    PropertyKind, Status, modifiers,
 };
 /// The variable with the compositor's display, for windows on the desktop rather than at
 /// the text cursor: floating panels and settings. The engine's own `WAYLAND_DISPLAY` is
@@ -113,6 +115,23 @@ pub trait Engine: Send + 'static {
     /// The application changed the text on its own; drop any composition.
     fn reset(&mut self, ctx: &mut Context<'_>) {
         let _ = ctx;
+    }
+
+    /// A candidate in the desktop's lookup table was clicked. `index` is page-local.
+    /// The callback runs in the same ordered queue as keys (protocol 1.3).
+    fn candidate_clicked(
+        &mut self,
+        ctx: &mut Context<'_>,
+        index: u32,
+        button: u32,
+        modifiers: u32,
+    ) {
+        let _ = (ctx, index, button, modifiers);
+    }
+
+    /// The desktop requests the preceding (`true`) or following candidate page.
+    fn candidate_page(&mut self, ctx: &mut Context<'_>, previous: bool) {
+        let _ = (ctx, previous);
     }
 
     /// Restores an advertised input mode before subsequent keys are handled.
@@ -185,6 +204,12 @@ impl<'a> Context<'a> {
         self.actions.push(Action::ForwardKey { keycode, pressed });
     }
 
+    /// Updates the desktop's candidate UI when the host advertised support for it.
+    /// An empty page hides the lookup table.
+    pub fn set_candidates(&self, page: &CandidatePage) {
+        self.host.set_candidates(self.id, page);
+    }
+
     /// Reports the actual mode for this field in order with the other actions.
     /// Use the engine-local method ID, or `""` when the engine has no submethods.
     /// Ignored when connected to a daemon older than protocol 1.2.
@@ -244,6 +269,9 @@ trait EngineHost {
     ) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
+    fn set_candidates(&self, context: u64, page: &Dict) -> zbus::Result<()>;
+
+    #[zbus(no_reply)]
     fn set_popup_visible(&self, visible: bool) -> zbus::Result<()>;
 
     #[zbus(no_reply)]
@@ -271,6 +299,7 @@ pub struct Host {
     // proxy is filled immediately after build(), before Register is sent.
     proxy: Arc<OnceLock<EngineHostProxy<'static>>>,
     api_minor: Arc<AtomicU16>,
+    candidate_ui: Arc<AtomicBool>,
     mode_revision: Arc<AtomicU64>,
     runtime: tokio::runtime::Handle,
 }
@@ -282,6 +311,12 @@ impl std::fmt::Debug for Host {
 }
 
 impl Host {
+    /// Whether the desktop will present semantic candidates for this engine.
+    /// Requires protocol 1.3 and the host's `candidate-ui` registration capability.
+    pub fn candidate_ui(&self) -> bool {
+        self.api_minor.load(Ordering::Acquire) >= 3 && self.candidate_ui.load(Ordering::Acquire)
+    }
+
     fn supports_input_modes(&self) -> bool {
         self.api_minor.load(Ordering::Acquire) >= 2
     }
@@ -339,6 +374,18 @@ impl Host {
     pub fn forward_key(&self, context: ContextId, keycode: u32, pressed: bool) {
         self.call("forward_key", move |p| async move {
             p.forward_key(context, keycode, pressed).await
+        });
+    }
+
+    /// Updates a focused context's desktop lookup table. Does nothing on older hosts
+    /// or when the host did not advertise `candidate-ui`.
+    pub fn set_candidates(&self, context: ContextId, page: &CandidatePage) {
+        if !self.candidate_ui() {
+            return;
+        }
+        let page = page.to_dict();
+        self.call("set_candidates", move |p| async move {
+            p.set_candidates(context, &page).await
         });
     }
 
@@ -490,6 +537,26 @@ impl EngineObject {
         self.with_context(context, |_| {}, |e, ctx| e.reset(ctx)).1
     }
 
+    fn candidate_clicked(
+        &self,
+        context: u64,
+        index: u32,
+        button: u32,
+        modifiers: u32,
+    ) -> Vec<WireAction> {
+        self.with_context(
+            context,
+            |_| {},
+            |e, ctx| e.candidate_clicked(ctx, index, button, modifiers),
+        )
+        .1
+    }
+
+    fn candidate_page(&self, context: u64, previous: bool) -> Vec<WireAction> {
+        self.with_context(context, |_| {}, |e, ctx| e.candidate_page(ctx, previous))
+            .1
+    }
+
     fn set_input_mode(&self, context: u64, mode: String) -> Vec<WireAction> {
         // Receiving this method also proves support when the daemon calls it
         // immediately after registration, before its Register reply is processed.
@@ -543,6 +610,7 @@ async fn serve_on(
     let host = Host {
         proxy: Arc::new(OnceLock::new()),
         api_minor: Arc::new(AtomicU16::new(0)),
+        candidate_ui: Arc::new(AtomicBool::new(false)),
         mode_revision: Arc::new(AtomicU64::new(0)),
         runtime: tokio::runtime::Handle::current(),
     };
@@ -588,6 +656,12 @@ async fn serve_on(
         .unwrap_or(0);
     host.api_minor
         .store(minor.min(API_VERSION.minor), Ordering::Release);
+    let candidate_ui = session
+        .get("candidate-ui")
+        .and_then(|value| value.try_clone().ok())
+        .and_then(|value| bool::try_from(value).ok())
+        .unwrap_or(false);
+    host.candidate_ui.store(candidate_ui, Ordering::Release);
     {
         let object = conn
             .object_server()
@@ -694,6 +768,9 @@ mod tests {
         capabilities: Arc<Mutex<Dict>>,
         modes: ModeReports,
         reported: Arc<tokio::sync::Notify>,
+        candidate_ui: bool,
+        candidates: Arc<Mutex<Vec<(ContextId, CandidatePage)>>>,
+        candidates_reported: Arc<tokio::sync::Notify>,
     }
 
     #[zbus::interface(name = "io.github.ign1x.OhMyIme.EngineHost1")]
@@ -731,7 +808,10 @@ mod tests {
                 selected.notified().await;
             }
             self.registered.notify_one();
-            Dict::from([("api-minor".into(), self.api_minor.into())])
+            Dict::from([
+                ("api-minor".into(), self.api_minor.into()),
+                ("candidate-ui".into(), self.candidate_ui.into()),
+            ])
         }
 
         fn report_input_mode(
@@ -747,6 +827,14 @@ mod tests {
                 .push((context, input_method, mode, revision));
             self.reported.notify_one();
         }
+
+        fn set_candidates(&self, context: u64, page: Dict) {
+            self.candidates
+                .lock()
+                .unwrap()
+                .push((context, CandidatePage::from_dict(&page)));
+            self.candidates_reported.notify_one();
+        }
     }
 
     #[zbus::proxy(
@@ -761,6 +849,16 @@ mod tests {
         fn activate(&self, context: u64, info: &Dict) -> zbus::Result<Vec<WireAction>>;
 
         fn set_input_mode(&self, context: u64, mode: &str) -> zbus::Result<Vec<WireAction>>;
+
+        fn candidate_clicked(
+            &self,
+            context: u64,
+            index: u32,
+            button: u32,
+            modifiers: u32,
+        ) -> zbus::Result<Vec<WireAction>>;
+
+        fn candidate_page(&self, context: u64, previous: bool) -> zbus::Result<Vec<WireAction>>;
 
         fn process_key(
             &self,
@@ -789,6 +887,9 @@ mod tests {
                 capabilities: Arc::default(),
                 modes: Arc::default(),
                 reported: Arc::new(tokio::sync::Notify::new()),
+                candidate_ui: false,
+                candidates: Arc::default(),
+                candidates_reported: Arc::new(tokio::sync::Notify::new()),
             },
         )
         .await
@@ -957,6 +1058,9 @@ mod tests {
                         capabilities: capabilities.clone(),
                         modes: modes.clone(),
                         reported: reported.clone(),
+                        candidate_ui: false,
+                        candidates: Arc::default(),
+                        candidates_reported: Arc::new(tokio::sync::Notify::new()),
                     },
                 )
                 .await;
@@ -1020,6 +1124,124 @@ mod tests {
                     assert!(modes.lock().unwrap().is_empty());
                 }
                 assert_eq!(actions, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn candidate_ui_requires_version_and_capability_and_callbacks_return_actions() {
+        struct CandidatesEngine {
+            page: CandidatePage,
+            available: Arc<AtomicBool>,
+        }
+        impl Engine for CandidatesEngine {
+            fn registered(&mut self, host: &Host) {
+                self.available.store(host.candidate_ui(), Ordering::Release);
+                host.set_candidates(91, &self.page);
+            }
+
+            fn process_key(&mut self, _ctx: &mut Context<'_>, _key: &KeyEvent) -> bool {
+                false
+            }
+
+            fn candidate_clicked(
+                &mut self,
+                ctx: &mut Context<'_>,
+                index: u32,
+                button: u32,
+                modifiers: u32,
+            ) {
+                assert_eq!((ctx.id(), index, button, modifiers), (91, 1, 1, 4));
+                ctx.commit("你好👋");
+                ctx.clear_preedit();
+            }
+
+            fn candidate_page(&mut self, ctx: &mut Context<'_>, previous: bool) {
+                assert_eq!(ctx.id(), 91);
+                assert!(previous);
+                ctx.set_candidates(&CandidatePage::default());
+                ctx.set_preedit(Preedit::with_cursor_at_end("ni"));
+            }
+        }
+        run_test(async {
+            for (minor, candidate_ui) in [(2, true), (3, false), (3, true)] {
+                let available = Arc::new(AtomicBool::new(false));
+                let candidates = Arc::new(Mutex::new(Vec::new()));
+                let reported = Arc::new(tokio::sync::Notify::new());
+                let page = CandidatePage {
+                    candidates: vec![Candidate {
+                        text: "你好👋".into(),
+                        comment: "nǐ hǎo".into(),
+                        label: "①".into(),
+                    }],
+                    ..CandidatePage::default()
+                };
+                let engine = connect_with_daemon(
+                    CandidatesEngine {
+                        page: page.clone(),
+                        available: available.clone(),
+                    },
+                    FakeDaemon {
+                        registered: Arc::new(tokio::sync::Notify::new()),
+                        selected: None,
+                        api_minor: minor,
+                        capabilities: Arc::default(),
+                        modes: Arc::default(),
+                        reported: Arc::new(tokio::sync::Notify::new()),
+                        candidate_ui,
+                        candidates: candidates.clone(),
+                        candidates_reported: reported.clone(),
+                    },
+                )
+                .await;
+                assert_eq!(
+                    available.load(Ordering::Acquire),
+                    minor >= 3 && candidate_ui
+                );
+                if minor < 3 || !candidate_ui {
+                    assert!(
+                        tokio::time::timeout(
+                            std::time::Duration::from_millis(50),
+                            reported.notified()
+                        )
+                        .await
+                        .is_err()
+                    );
+                    assert!(candidates.lock().unwrap().is_empty());
+                    continue;
+                }
+                reported.notified().await;
+                assert_eq!(*candidates.lock().unwrap(), [(91, page)]);
+                let actions: Vec<_> = engine
+                    .candidate_clicked(91, 1, 1, 4)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|wire| Action::from_wire(wire).unwrap())
+                    .collect();
+                assert_eq!(
+                    actions,
+                    [
+                        Action::Commit("你好👋".into()),
+                        Action::Preedit(Preedit::default()),
+                    ]
+                );
+                let actions: Vec<_> = engine
+                    .candidate_page(91, true)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|wire| Action::from_wire(wire).unwrap())
+                    .collect();
+                assert_eq!(
+                    actions,
+                    [Action::Preedit(Preedit::with_cursor_at_end("ni"))]
+                );
+                reported.notified().await;
+                assert_eq!(
+                    candidates.lock().unwrap().last(),
+                    Some(&(91, CandidatePage::default()))
+                );
             }
         });
     }

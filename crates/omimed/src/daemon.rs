@@ -25,18 +25,102 @@ use crate::core::engines::UiConnection;
 use crate::core::{Core, CoreEvent};
 use crate::fcitx::{self, FcitxFrontend};
 use crate::frontend::{ContextIds, Frontends, KeyDelivery, KeyRef, Origin};
+use crate::ibus::{self, IbusFrontend};
 use crate::notify::{Notifier, Subject, Trouble};
 use crate::placement::{self, Rect};
 use crate::state::State;
 use crate::tray::{self, TrayInfo, TrayService};
-use crate::wayland::{EngineId, Frontend};
+use crate::wayland::{EngineId, Frontend as WaylandFrontend};
 use crate::xim::{self, XimFrontend};
+
+/// Backend owner. The IBus event loop never dispatches a Wayland connection.
+enum Frontend {
+    Wayland(Box<WaylandFrontend>),
+    Ibus(IbusFrontend),
+}
+impl Frontend {
+    fn connect(display: Option<&str>, ids: ContextIds) -> anyhow::Result<Self> {
+        Ok(Self::Wayland(Box::new(WaylandFrontend::connect(
+            display, ids,
+        )?)))
+    }
+    fn take_events(&mut self) -> Vec<crate::frontend::FrontendEvent> {
+        match self {
+            Self::Wayland(frontend) => frontend.take_events(),
+            Self::Ibus(frontend) => frontend.take_events().collect(),
+        }
+    }
+    fn seat_states(&self) -> Vec<(String, bool)> {
+        match self {
+            Self::Wayland(frontend) => frontend.seat_states(),
+            Self::Ibus(frontend) => vec![("IBus".into(), frontend.is_selected())],
+        }
+    }
+    fn reports_focused_app(&self) -> bool {
+        match self {
+            Self::Wayland(frontend) => frontend.reports_focused_app(),
+            Self::Ibus(_) => false,
+        }
+    }
+    fn set_active_engine(&mut self, engine: Option<EngineId>) {
+        if let Self::Wayland(frontend) = self {
+            frontend.set_active_engine(engine);
+        }
+    }
+    fn set_engine_visible(&mut self, engine: EngineId, visible: bool) {
+        if let Self::Wayland(frontend) = self {
+            frontend.set_engine_visible(engine, visible);
+        }
+    }
+}
+// Methods specific to Wayland are called only from run_sessions/session. Keeping
+// those paths unchanged preserves its reconnect and UI bridge lifecycle.
+impl std::ops::Deref for Frontend {
+    type Target = WaylandFrontend;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Wayland(frontend) => frontend,
+            Self::Ibus(_) => unreachable!("Wayland operation in IBus loop"),
+        }
+    }
+}
+impl std::ops::DerefMut for Frontend {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Wayland(frontend) => frontend,
+            Self::Ibus(_) => unreachable!("Wayland operation in IBus loop"),
+        }
+    }
+}
+
+fn discover_for_backend(ibus: bool) -> Vec<omime_proto::manifest::InstalledEngine> {
+    discover_engines()
+        .into_iter()
+        .filter(|engine| {
+            if !ibus {
+                return true;
+            }
+            if engine.manifest.is_hosted() {
+                return false;
+            }
+            if engine.id() == "sparkle" {
+                info!(
+                    "Sparkle requires its own Wayland window and is unavailable in native IBus mode"
+                );
+                return false;
+            }
+            true
+        })
+        .collect()
+}
 
 /// Options for [`run`].
 #[derive(Debug, Default)]
 pub struct Options {
     /// Compositor to connect to instead of `$WAYLAND_DISPLAY`.
     pub display: Option<String>,
+    /// Register with the session IBus daemon instead of claiming Wayland input.
+    pub ibus: bool,
     /// Engine to select at startup.
     pub engine: Option<String>,
 }
@@ -66,6 +150,11 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async {
         let context_ids = ContextIds::default();
+        if options.ibus {
+            let (ibus, requests) = IbusFrontend::start(context_ids.clone());
+            let daemon = Daemon::new(options, context_ids).await?;
+            return daemon.run_ibus(Frontend::Ibus(ibus), requests).await;
+        }
         let mut frontend = Frontend::connect(options.display.as_deref(), context_ids.clone())?;
         let display = options.display.clone();
         match initialize(options, context_ids, &mut frontend).await {
@@ -265,8 +354,13 @@ impl Daemon {
         };
 
         let (fcitx_tx, fcitx_rx) = mpsc::unbounded_channel();
-        let fcitx = FcitxFrontend::new(fcitx::start(fcitx_tx).await, context_ids.clone());
-        let (xim, xim_retry) = if std::env::var_os("DISPLAY").is_some() {
+        let fcitx_queues = if options.ibus {
+            [None, None]
+        } else {
+            fcitx::start(fcitx_tx).await
+        };
+        let fcitx = FcitxFrontend::new(fcitx_queues, context_ids.clone());
+        let (xim, xim_retry) = if !options.ibus && std::env::var_os("DISPLAY").is_some() {
             match XimFrontend::connect(context_ids.clone(), xim::STARTUP_CONNECT_WAIT) {
                 Ok(xim) => (Some(xim), None),
                 Err(e) => {
@@ -284,7 +378,7 @@ impl Daemon {
         if config.tray.enabled && control.is_some() {
             *tray.borrow_mut() = start_tray(&control_tx).await;
         }
-        let installed = discover_engines();
+        let installed = discover_for_backend(options.ibus);
         if installed.is_empty() {
             warn!("no engines are installed; keys pass through unchanged");
         } else {
@@ -301,8 +395,9 @@ impl Daemon {
         let panel = config
             .panel
             .enabled
-            .then(|| crate::panel::start(host_display.clone()))
-            .flatten();
+            .then_some(())
+            .filter(|_| !options.ibus)
+            .and_then(|_| crate::panel::start(host_display.clone()));
         let notifier = Rc::new(Notifier::start(
             config.notifications.enabled,
             host_display.clone(),
@@ -311,6 +406,7 @@ impl Daemon {
             notifier.tell(Trouble::Config { error, kept: false });
         }
         let mut core = Core::new(&config, installed, core_tx, ui_tx, host_display);
+        core.set_candidate_ui(options.ibus);
         let loaded = State::load();
         let has_saved_choice = loaded.is_some();
         let saved = loaded.unwrap_or_default();
@@ -389,6 +485,52 @@ impl Daemon {
             xim,
             xim_retry,
         })
+    }
+
+    async fn run_ibus(
+        mut self,
+        mut frontend: Frontend,
+        mut requests: mpsc::Receiver<ibus::Request>,
+    ) -> anyhow::Result<()> {
+        if let Some(engine) = self.options.engine.clone()
+            && let Err(error) = self.core.set_current(
+                Some(engine),
+                &mut Outputs::new(&mut frontend, &mut self.fcitx, None),
+            )
+        {
+            warn!("{error:#}");
+        }
+        loop {
+            let events: Vec<_> = frontend.take_events().into_iter().collect();
+            for event in events {
+                self.core.on_frontend_event(
+                    event,
+                    &mut Outputs::new(&mut frontend, &mut self.fcitx, None),
+                );
+            }
+            let deadline = self.core.deadline();
+            tokio::select! {
+                Some(request) = requests.recv() => { if let Frontend::Ibus(ibus) = &mut frontend { ibus.handle(request); } },
+                Some(event) = self.core_rx.recv() => self.core.on_event(event, &mut Outputs::new(&mut frontend, &mut self.fcitx, None)).await,
+                Some(request) = self.control_rx.recv() => self.on_control(request, &mut frontend).await,
+                Some(_connection) = self.ui_rx.recv() => {},
+                () = sleep_until(deadline) => self.core.on_timer(Instant::now(), &mut Outputs::new(&mut frontend, &mut self.fcitx, None)),
+                _ = self.signals.term.recv() => break,
+                _ = self.signals.int.recv() => break,
+                _ = self.signals.hup.recv() => { let _ = self.reload(&mut frontend).await; },
+            }
+        }
+        if let Frontend::Ibus(ibus) = &mut frontend {
+            ibus.handle(ibus::Request::Disconnected);
+        }
+        for event in frontend.take_events() {
+            self.core.on_frontend_event(
+                event,
+                &mut Outputs::new(&mut frontend, &mut self.fcitx, None),
+            );
+        }
+        self.stop_engines(None).await;
+        Ok(())
     }
 
     async fn run(
@@ -525,7 +667,8 @@ impl Daemon {
                 );
             }
             frontend.flush_hosted_modifiers();
-            frontend.set_x11_cursor(self.x11_cursor(frontend));
+            let x11_cursor = self.x11_cursor(frontend);
+            frontend.set_x11_cursor(x11_cursor);
             if let Err(e) = frontend.flush() {
                 break SessionEnd::Lost(e);
             }
@@ -738,20 +881,43 @@ impl Daemon {
                 });
             }
             ControlRequest::Diagnose(reply) => {
-                let display = self
-                    .options
-                    .display
-                    .clone()
-                    .or_else(|| std::env::var("WAYLAND_DISPLAY").ok())
-                    .unwrap_or_default();
-                let _ = reply.send(control::diagnosis(
+                let display = if self.options.ibus {
+                    "ibus".to_owned()
+                } else {
+                    self.options
+                        .display
+                        .clone()
+                        .or_else(|| std::env::var("WAYLAND_DISPLAY").ok())
+                        .unwrap_or_default()
+                };
+                let mut diagnosis = control::diagnosis(
                     &display,
                     frontend.seat_states(),
                     frontend.reports_focused_app(),
                     self.core.input_method_configured(),
                     self.core.input_method_error(),
                     self.core.input_mode_error(),
-                ));
+                );
+                diagnosis.insert(
+                    "backend".into(),
+                    zbus::OwnedVariant::try_from(zbus::Variant::from(if self.options.ibus {
+                        "ibus"
+                    } else {
+                        "wayland"
+                    }))
+                    .expect("backend name has no descriptors"),
+                );
+                if let Frontend::Ibus(ibus) = frontend {
+                    diagnosis.insert(
+                        "backend-connected".into(),
+                        zbus::OwnedVariant::from(ibus.is_connected()),
+                    );
+                    diagnosis.insert(
+                        "backend-selected".into(),
+                        zbus::OwnedVariant::from(ibus.is_selected()),
+                    );
+                }
+                let _ = reply.send(diagnosis);
             }
             ControlRequest::Reload(reply) => {
                 let _ = reply.send(self.reload(frontend).await);
@@ -852,7 +1018,7 @@ impl Daemon {
                 });
             }
         }
-        let installed = discover_engines();
+        let installed = discover_for_backend(self.options.ibus);
         self.core.reconfigure(
             &self.config,
             installed,
@@ -873,7 +1039,7 @@ impl Daemon {
         if let Some(tray) = &*self.tray.borrow() {
             tray.changed();
         }
-        if self.config.panel.enabled && self.panel.is_none() {
+        if !self.options.ibus && self.config.panel.enabled && self.panel.is_none() {
             let display = self
                 .options
                 .display
@@ -952,8 +1118,17 @@ impl<'a> Outputs<'a> {
 impl Frontends for Outputs<'_> {
     fn finish_key(&mut self, key: &KeyRef, handled: bool) {
         match key {
-            KeyRef::Wayland(key) => self.wayland.finish_key(key, handled),
+            KeyRef::Wayland(key) => {
+                if let Frontend::Wayland(wayland) = self.wayland {
+                    wayland.finish_key(key, handled);
+                }
+            }
             KeyRef::Fcitx(key) => self.fcitx.finish_key(key, handled),
+            KeyRef::Ibus(key) => {
+                if let Frontend::Ibus(ibus) = self.wayland {
+                    ibus.finish_key(key, handled);
+                }
+            }
             KeyRef::Xim(key) => {
                 if let Some(xim) = &mut self.xim {
                     xim.finish_key(key, handled);
@@ -975,7 +1150,9 @@ impl Frontends for Outputs<'_> {
                     Some(KeyRef::Wayland(key)) => Some(key),
                     _ => None,
                 };
-                self.wayland.apply_actions(seat, ctx, actions, key);
+                if let Frontend::Wayland(wayland) = self.wayland {
+                    wayland.apply_actions(seat, ctx, actions, key);
+                }
             }
             Origin::Fcitx => {
                 let key = match reply_key {
@@ -983,6 +1160,15 @@ impl Frontends for Outputs<'_> {
                     _ => None,
                 };
                 self.fcitx.apply_actions(ctx, actions, key);
+            }
+            Origin::Ibus => {
+                if let Frontend::Ibus(ibus) = self.wayland {
+                    let key = match reply_key {
+                        Some(KeyRef::Ibus(key)) => Some(key),
+                        _ => None,
+                    };
+                    ibus.apply_actions(ctx, actions, key);
+                }
             }
             Origin::Xim => {
                 if let Some(xim) = &mut self.xim {
@@ -998,8 +1184,17 @@ impl Frontends for Outputs<'_> {
 
     fn clear_preedit(&mut self, origin: Origin, ctx: ContextId) {
         match origin {
-            Origin::Wayland(seat) => self.wayland.clear_preedit(seat, ctx),
+            Origin::Wayland(seat) => {
+                if let Frontend::Wayland(wayland) = self.wayland {
+                    wayland.clear_preedit(seat, ctx);
+                }
+            }
             Origin::Fcitx => self.fcitx.clear_preedit(ctx),
+            Origin::Ibus => {
+                if let Frontend::Ibus(ibus) = self.wayland {
+                    ibus.clear_preedit(ctx);
+                }
+            }
             Origin::Xim => {
                 if let Some(xim) = &mut self.xim {
                     xim.clear_preedit(ctx);
@@ -1010,13 +1205,35 @@ impl Frontends for Outputs<'_> {
 
     fn forward_key(&mut self, origin: Origin, ctx: ContextId, key: &crate::frontend::ForwardedKey) {
         match origin {
-            Origin::Wayland(seat) => self.wayland.forward_key(seat, ctx, key),
+            Origin::Wayland(seat) => {
+                if let Frontend::Wayland(wayland) = self.wayland {
+                    wayland.forward_key(seat, ctx, key);
+                }
+            }
             Origin::Fcitx => self.fcitx.forward_key(ctx, key),
+            Origin::Ibus => {
+                if let Frontend::Ibus(ibus) = self.wayland {
+                    ibus.forward_key(ctx, key);
+                }
+            }
             Origin::Xim => {
                 if let Some(xim) = &mut self.xim {
                     xim.forward_key(ctx, key);
                 }
             }
+        }
+    }
+
+    fn set_candidates(
+        &mut self,
+        origin: Origin,
+        ctx: ContextId,
+        page: &omime_proto::engine::CandidatePage,
+    ) {
+        if origin == Origin::Ibus
+            && let Frontend::Ibus(ibus) = self.wayland
+        {
+            ibus.set_candidates(ctx, page);
         }
     }
 
@@ -1035,7 +1252,10 @@ impl Frontends for Outputs<'_> {
         ctx: ContextId,
         info: &ContextInfo,
     ) -> bool {
-        self.wayland.hosted_activate(engine, origin, ctx, info)
+        match self.wayland {
+            Frontend::Wayland(wayland) => wayland.hosted_activate(engine, origin, ctx, info),
+            Frontend::Ibus(_) => false,
+        }
     }
 
     fn hosted_update(
@@ -1045,18 +1265,28 @@ impl Frontends for Outputs<'_> {
         info: &ContextInfo,
         reset: bool,
     ) {
-        self.wayland.hosted_update(engine, ctx, info, reset);
+        if let Frontend::Wayland(wayland) = self.wayland {
+            wayland.hosted_update(engine, ctx, info, reset);
+        }
     }
 
     fn hosted_deactivate(&mut self, engine: &EngineId, ctx: ContextId) {
-        self.wayland.hosted_deactivate(engine, ctx);
+        if let Frontend::Wayland(wayland) = self.wayland {
+            wayland.hosted_deactivate(engine, ctx);
+        }
     }
 
     fn hosted_unread(&self, engine: &EngineId) -> Option<usize> {
-        self.wayland.hosted_unread(engine)
+        match &*self.wayland {
+            Frontend::Wayland(wayland) => wayland.hosted_unread(engine),
+            Frontend::Ibus(_) => None,
+        }
     }
 
     fn hosted_key(&mut self, engine: &EngineId, key: &KeyRef, event: &KeyEvent) -> KeyDelivery {
+        if matches!(self.wayland, Frontend::Ibus(_)) {
+            return KeyDelivery::Refused;
+        }
         // XIM passes only presses on, so each key is released right after its press,
         // or the input method would think it is still held. A modifier would then
         // look like a tap of its own (Fcitx5 switches modes on Shift taps), so
@@ -1071,6 +1301,7 @@ impl Frontends for Outputs<'_> {
         match key {
             KeyRef::Wayland(key) => self.wayland.finish_delegated(key),
             KeyRef::Fcitx(key) => self.fcitx.finish_key(key, true),
+            KeyRef::Ibus(_) => return KeyDelivery::Refused,
             KeyRef::Xim(xim_key) => {
                 let release = KeyEvent {
                     released: true,

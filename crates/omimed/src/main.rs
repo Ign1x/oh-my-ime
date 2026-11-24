@@ -7,6 +7,7 @@ mod core;
 mod daemon;
 mod fcitx;
 mod frontend;
+mod ibus;
 mod ime_state;
 mod keyboard;
 mod notify;
@@ -34,6 +35,7 @@ The oh-my-ime daemon. It becomes the input method of the Wayland compositor and
 routes keyboard input to input method engines.
 
 Options:
+  --ibus            Serve the existing session IBus daemon (GNOME)
   --display <NAME>  Connect to this Wayland display instead of $WAYLAND_DISPLAY
   --engine <ID>     Select this engine at startup (default: the last one used)
   -h, --help        Print this help
@@ -59,6 +61,7 @@ fn main() -> ExitCode {
                 println!("omimed {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
+            "--ibus" => options.ibus = true,
             "--display" => match args.next() {
                 Some(display) => options.display = Some(display),
                 None => return usage_error(omime_proto::i18n::text("--display needs a value")),

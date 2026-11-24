@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  oh-my-ime engine protocol, version 1.2.
+  oh-my-ime engine protocol, version 1.3.
+
+  Version 1.3 adds optional desktop candidate presentation: SetCandidates,
+  CandidateClicked and CandidatePage. The Register reply advertises candidate-ui
+  (b) only when the current desktop presents lookup tables. Engines must require
+  both minor version 3 and candidate-ui=true before calling SetCandidates.
 
   Version 1.2 adds context-bound input modes (SetInputMode, ReportInputMode and
   action kind 4). Engines advertise stable mode IDs in the Register capability
@@ -44,7 +49,7 @@
     surrounding-anchor  u     selection anchor, bytes into surrounding-text
     cursor-rect         (iiii) text cursor relative to the engine's popup window
     frontend            s     how the application reaches the daemon: "wayland"
-                              (text-input), "xim" or "fcitx" (the Fcitx5 GTK/Qt
+                              (text-input), "ibus", "xim" or "fcitx" (the Fcitx5 GTK/Qt
                               modules); since 0.4
     client-preedit      b     whether the application shows the preedit; when false
                               (xterm and other XIM applications that leave drawing it
@@ -117,6 +122,26 @@
       <arg name="actions" type="a(uv)" direction="out"/>
     </method>
 
+    <!--
+      Since 1.3. A desktop candidate click. index is local to the last presented
+      page, starting at zero; button and modifiers use the desktop's pointer event.
+      The daemon queues callbacks with keys and discards stale contexts/replies.
+    -->
+    <method name="CandidateClicked">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="index" type="u" direction="in"/>
+      <arg name="button" type="u" direction="in"/>
+      <arg name="modifiers" type="u" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
+    <!-- Since 1.3. The desktop requests the previous or next page, ordered with keys. -->
+    <method name="CandidatePage">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="previous" type="b" direction="in"/>
+      <arg name="actions" type="a(uv)" direction="out"/>
+    </method>
+
     <!-- The daemon asks the engine to exit. -->
     <method name="Shutdown"/>
 
@@ -144,7 +169,8 @@
   <interface name="io.github.ign1x.OhMyIme.EngineHost1">
     <!--
       Must be the first call. id must equal OMIME_ENGINE_ID. Returns the session
-      parameters, currently "api-major" (q), "api-minor" (q) and "daemon-version" (s).
+      parameters: "api-major" (q), "api-minor" (q), "daemon-version" (s), and the
+      optional "candidate-ui" (b, since 1.3; false when absent).
     -->
     <method name="Register">
       <arg name="id" type="s" direction="in"/>
@@ -194,6 +220,22 @@
       <arg name="input_method" type="s" direction="in"/>
       <arg name="mode" type="s" direction="in"/>
       <arg name="revision" type="t" direction="in"/>
+    </method>
+
+    <!--
+      Since 1.3. Optional desktop lookup table. Requires negotiated api-minor >= 3
+      and candidate-ui=true in Register's reply. The page dictionary contains:
+        candidates    a(sss)  text, comment, label for each candidate
+        cursor        u       highlighted index within this page, starting at zero
+        has-previous  b       a preceding page is available
+        has-next      b       a following page is available
+      An empty candidate list hides the lookup table. Only the focused context
+      belonging to the reporting engine is accepted. The method is no-reply.
+    -->
+    <method name="SetCandidates">
+      <arg name="context" type="t" direction="in"/>
+      <arg name="page" type="a{sv}" direction="in"/>
+      <annotation name="org.freedesktop.DBus.Method.NoReply" value="true"/>
     </method>
 
     <!--

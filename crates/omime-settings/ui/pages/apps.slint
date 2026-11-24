@@ -1,16 +1,36 @@
 import { ComboBox } from "std-widgets.slint";
 import { AppRow, Backend, Tr } from "../backend.slint";
 import { Theme } from "../theme.slint";
-import { Card, Divider, IconButton, PageHeader, RowText, SwitchRow } from "../widgets.slint";
+import { Card, Divider, IconButton, NoticeCard, PageHeader, RowText, SectionHeader, SwitchRow } from "../widgets.slint";
 
 // An application with its input method.
 component AppItem inherits HorizontalLayout {
     in property <AppRow> app;
-    padding-left: 16px;
-    padding-right: 10px;
-    padding-top: 10px;
-    padding-bottom: 10px;
+    padding-left: 18px;
+    padding-right: 12px;
+    padding-top: 11px;
+    padding-bottom: 11px;
     spacing: 12px;
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            background: Theme.surface-subtle;
+            border-width: 1px;
+            border-color: Theme.card-border;
+            Image {
+                source: @image-url("../icons/apps.svg");
+                colorize: Theme.secondary;
+                width: 15px;
+                height: 15px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+
     RowText {
         title: root.app.app;
         horizontal-stretch: 1;
@@ -19,7 +39,7 @@ component AppItem inherits HorizontalLayout {
     VerticalLayout {
         alignment: center;
         ComboBox {
-            width: 220px;
+            width: 180px;
             model: Backend.app-choices;
             current-index: root.app.choice;
             accessible-label: Tr.text1("Input method of {}", root.app.app);
@@ -42,7 +62,7 @@ component AppItem inherits HorizontalLayout {
 }
 
 export component AppsPage inherits VerticalLayout {
-    spacing: 12px;
+    spacing: 16px;
     PageHeader {
         title: Tr.text("Applications");
         description: Tr.text("Each application can keep the input method you used in it last.");
@@ -58,7 +78,9 @@ export component AppsPage inherits VerticalLayout {
                     Backend.set-remember-apps(on);
                 }
             }
-            Divider { }
+            Divider {
+                inset: 18px;
+            }
             SwitchRow {
                 title: Tr.text("Remember the input mode of each application");
                 subtitle: Tr.text("Restore Chinese or Latin mode within the same input method when supported");
@@ -71,21 +93,29 @@ export component AppsPage inherits VerticalLayout {
         }
     }
 
-    if Backend.remember-apps && Backend.apps.length > 0: Card {
-        VerticalLayout {
-            for app[index] in Backend.apps: VerticalLayout {
-                if index > 0: Divider { }
-                AppItem {
-                    app: app;
+    if Backend.remember-apps && Backend.apps.length > 0: VerticalLayout {
+        spacing: 10px;
+        SectionHeader {
+            text: Tr.text("Remembered applications");
+        }
+
+        Card {
+            VerticalLayout {
+                for app[index] in Backend.apps: VerticalLayout {
+                    if index > 0: Divider {
+                        inset: 60px;
+                    }
+                    AppItem {
+                        app: app;
+                    }
                 }
             }
         }
     }
 
-    if Backend.remember-apps && Backend.apps.length == 0: Text {
+    if Backend.remember-apps && Backend.apps.length == 0: NoticeCard {
+        icon: @image-url("../icons/apps.svg");
+        tint: Theme.accent-text;
         text: Tr.text("No application has an input method of its own yet: switch input methods in one, and it shows here.");
-        font-size: 12px;
-        color: Theme.secondary;
-        wrap: word-wrap;
     }
 }

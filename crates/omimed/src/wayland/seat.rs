@@ -1186,7 +1186,7 @@ fn output_fits(
     bytes <= MAX_PENDING_COMMIT_BYTES
 }
 
-fn now_ms() -> u32 {
+pub(super) fn now_ms() -> u32 {
     let now = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
     // Wayland timestamps are 32-bit milliseconds that wrap around.
     (now.tv_sec as u64)

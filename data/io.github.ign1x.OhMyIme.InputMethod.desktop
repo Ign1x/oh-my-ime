@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=oh-my-ime
+Name[zh_CN]=oh-my-ime 输入平台
+Comment=Input methods with independent engine interfaces
+Comment[zh_CN]=支持独立引擎界面的输入平台
+Exec=omimed
+Icon=input-keyboard
+Type=Application
+NoDisplay=true
+Terminal=false
+Categories=System;Utility;
+StartupNotify=false
+X-KDE-Wayland-VirtualKeyboard=true
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management

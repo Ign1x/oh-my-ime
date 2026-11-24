@@ -28,7 +28,7 @@ fn supported_setup_needs_no_library_path() -> anyhow::Result<()> {
     let output = env
         .command(program_dir().join("omime"))
         .env_remove("LD_LIBRARY_PATH")
-        .args(["setup", "--dry-run"])
+        .args(["setup", "--desktop", "hyprland", "--dry-run"])
         .output()?;
     let message = text(&output);
     assert!(output.status.success(), "{message}");
@@ -287,7 +287,10 @@ fn unsupported_setup_preserves_files_and_the_framework_owner() -> anyhow::Result
             let _env = tokio::task::spawn_blocking(move || -> anyhow::Result<TestEnv> {
                 let config = snapshot(&env.dir().join("config"))?;
                 let state = snapshot(&env.dir().join("state"))?;
-                for args in [vec!["setup", "--start", "--take-over"], vec!["setup"]] {
+                for args in [
+                    vec!["setup", "--desktop", "hyprland", "--start", "--take-over"],
+                    vec!["setup", "--desktop", "hyprland"],
+                ] {
                     let output = omime(&env, &args)?;
                     assert!(!exits.load(Ordering::SeqCst), "the framework received Exit");
                     assert!(!output.status.success());
@@ -297,10 +300,20 @@ fn unsupported_setup_preserves_files_and_the_framework_owner() -> anyhow::Result
                         message.contains("zwp_virtual_keyboard_manager_v1"),
                         "{message}"
                     );
-                    assert!(message.contains("KDE Plasma and GNOME"), "{message}");
+                    assert!(message.contains("KDE Plasma"), "{message}");
                     assert!(message.contains("Hyprland session"), "{message}");
                 }
-                let preview = omime(&env, &["setup", "--start", "--take-over", "--dry-run"])?;
+                let preview = omime(
+                    &env,
+                    &[
+                        "setup",
+                        "--desktop",
+                        "hyprland",
+                        "--start",
+                        "--take-over",
+                        "--dry-run",
+                    ],
+                )?;
                 assert!(preview.status.success(), "{}", text(&preview));
                 let preview = text(&preview);
                 assert!(
@@ -313,7 +326,7 @@ fn unsupported_setup_preserves_files_and_the_framework_owner() -> anyhow::Result
                 let doctor = omime(&env, &["doctor"])?;
                 assert!(!doctor.status.success());
                 let diagnosis = text(&doctor);
-                assert!(diagnosis.contains("KDE Plasma and GNOME"), "{diagnosis}");
+                assert!(diagnosis.contains("KDE Plasma"), "{diagnosis}");
                 assert!(!diagnosis.contains("omimed is not running"), "{diagnosis}");
                 assert_eq!(snapshot(&env.dir().join("config"))?, config);
                 assert_eq!(snapshot(&env.dir().join("state"))?, state);
@@ -323,7 +336,7 @@ fn unsupported_setup_preserves_files_and_the_framework_owner() -> anyhow::Result
                 let offline = env
                     .command(program_dir().join("omime"))
                     .env_remove("WAYLAND_DISPLAY")
-                    .args(["setup"])
+                    .args(["setup", "--desktop", "hyprland"])
                     .output()?;
                 assert!(offline.status.success(), "{}", text(&offline));
                 assert!(env.dir().join("state/oh-my-ime/setup.toml").exists());
@@ -380,7 +393,7 @@ fn inherited_wayland_socket_refuses_before_taking_over_a_different_display() -> 
                         // WAYLAND_DISPLAY names sway; the inherited descriptor connects to Weston.
                         let mut command = env.command(program_dir().join("omime"));
                         inherit_socket(&mut command, socket);
-                        command.args(["setup", "--start", "--take-over"]);
+                        command.args(["setup", "--desktop", "hyprland", "--start", "--take-over"]);
                         if !display_set {
                             command.env_remove("WAYLAND_DISPLAY");
                         }

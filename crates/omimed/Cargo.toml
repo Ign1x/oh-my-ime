@@ -31,6 +31,7 @@ xim-ctext = "0.5"
 wl-proxy = { workspace = true, features = [
   "protocol-cursor_shape_v1",
   "protocol-fractional_scale_v1",
+  "protocol-input_method_unstable_v1",
   "protocol-input_method_unstable_v2",
   "protocol-linux_dmabuf_v1",
   "protocol-presentation_time",

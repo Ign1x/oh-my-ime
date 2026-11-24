@@ -44,6 +44,8 @@ use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_manager_v1::{
 use wl_proxy::protocols::fractional_scale_v1::wp_fractional_scale_v1::{
     WpFractionalScaleV1, WpFractionalScaleV1Handler,
 };
+use wl_proxy::protocols::input_method_unstable_v1::zwp_input_panel_surface_v1::ZwpInputPanelSurfaceV1;
+use wl_proxy::protocols::input_method_unstable_v1::zwp_input_panel_v1::ZwpInputPanelV1;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_manager_v2::ZwpInputMethodManagerV2;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_method_v2::ZwpInputMethodV2;
 use wl_proxy::protocols::input_method_unstable_v2::zwp_input_popup_surface_v2::{
@@ -157,6 +159,7 @@ pub(super) struct BridgeShared {
     registries: Vec<Weak<WlRegistry>>,
     /// Input method used to create popups.
     popup_host: Option<Rc<ZwpInputMethodV2>>,
+    panel_host: Option<Rc<ZwpInputPanelV1>>,
     /// Whether a text input is focused and the input method active.
     im_active: bool,
     active_engine: Option<EngineId>,
@@ -202,7 +205,7 @@ impl BridgeShared {
     fn presentation(&self, engine: &EngineId) -> Presentation {
         if self.active_engine.as_ref() != Some(engine) || !self.shown_engines.contains(engine) {
             Presentation::Hidden
-        } else if self.im_active && self.popup_host.is_some() {
+        } else if self.im_active && (self.popup_host.is_some() || self.panel_host.is_some()) {
             Presentation::Popup
         } else if self.x11.is_some() && self.own.can_mirror() {
             Presentation::Mirror
@@ -237,6 +240,7 @@ impl Bridge {
             globals: BTreeMap::new(),
             registries: Vec::new(),
             popup_host: None,
+            panel_host: None,
             im_active: false,
             active_engine: None,
             shown_engines: std::collections::HashSet::new(),
@@ -360,6 +364,7 @@ impl Bridge {
                 _ => true,
             };
             shared.popup_host = popup_host;
+            shared.panel_host = None;
             shared.im_active = im_active;
             shared.active_engine = active_engine;
             shared.x11 = x11;
@@ -375,6 +380,33 @@ impl Bridge {
                 handler.drop_popup(&surface);
             }
             handler.refresh(&surface);
+        }
+    }
+
+    /// V1 panels use the same upstream connection and surface as the engine UI.
+    /// Unlike the v2 popup role, the v1 panel role has no destroy request: it stays
+    /// associated with its surface and is hidden with a null buffer.
+    pub fn set_panel_policy(
+        &self,
+        panel: Option<Rc<ZwpInputPanelV1>>,
+        im_active: bool,
+        active_engine: Option<EngineId>,
+        x11: Option<X11Target>,
+    ) {
+        let windows = {
+            let mut shared = self.shared.borrow_mut();
+            shared.popup_host = None;
+            shared.panel_host = panel;
+            shared.im_active = im_active;
+            shared.active_engine = active_engine;
+            shared.x11 = x11;
+            shared.windows.retain(|w| w.strong_count() > 0);
+            shared.windows.clone()
+        };
+        for surface in windows.iter().filter_map(Weak::upgrade) {
+            if let Ok(mut handler) = surface.try_get_handler_mut::<BridgeSurface>() {
+                handler.refresh(&surface);
+            }
         }
     }
 }
@@ -1106,6 +1138,7 @@ struct BridgeSurface {
     input_popup: Option<Weak<ZwpInputPopupSurfaceV2>>,
     /// The input popup role on the compositor, created when the window is first mapped.
     popup: Option<Rc<ZwpInputPopupSurfaceV2>>,
+    panel: Option<Rc<ZwpInputPanelSurfaceV1>>,
     /// Attach since the last commit (window surfaces only).
     pending_attach: Option<PendingAttach>,
     /// The buffer attached on the compositor side; `Some` means the popup is mapped.
@@ -1156,6 +1189,7 @@ impl BridgeSurface {
             window: None,
             input_popup: None,
             popup: None,
+            panel: None,
             pending_attach: None,
             current: None,
             held: None,
@@ -1197,7 +1231,14 @@ impl BridgeSurface {
     }
 
     fn ensure_popup(&mut self, surface: &Rc<WlSurface>) -> bool {
-        if self.popup.is_some() {
+        if self.popup.is_some() || self.panel.is_some() {
+            return true;
+        }
+        if let Some(host) = self.shared.borrow().panel_host.clone() {
+            let panel = host.new_send_get_input_panel_surface(surface);
+            panel.set_forward_to_client(false);
+            panel.send_set_overlay_panel();
+            self.panel = Some(panel);
             return true;
         }
         let Some(host) = self.shared.borrow().popup_host.clone() else {
@@ -2106,5 +2147,71 @@ impl ZxdgToplevelDecorationV1Handler for VirtualDecoration {
 
     fn handle_unset_mode(&mut self, slf: &Rc<ZxdgToplevelDecorationV1>) {
         self.reconfigure(slf);
+    }
+}
+
+#[cfg(test)]
+mod v1_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    use wl_proxy::baseline::Baseline;
+
+    #[test]
+    fn panel_role_uses_the_original_engine_surface_and_survives_hiding() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let state = State::builder(Baseline::V6)
+            .with_server_fd(&Rc::new(client.into()))
+            .build()
+            .unwrap();
+        let registry = state.display().new_send_get_registry();
+        let compositor = state.create_object::<WlCompositor>(6);
+        registry.send_bind(1, compositor.clone());
+        let panel = state.create_object::<ZwpInputPanelV1>(1);
+        registry.send_bind(2, panel.clone());
+        let surface = compositor.new_send_create_surface();
+        let bridge = Bridge::new(state.clone(), registry, EventQueue::default());
+        let engine: EngineId = Rc::from("test");
+        bridge.set_engine_visible(engine.clone(), true);
+        bridge.set_panel_policy(Some(panel.clone()), true, Some(engine.clone()), None);
+        let mut handler = BridgeSurface::new(bridge.shared.clone(), engine, false);
+        assert!(handler.ensure_popup(&surface));
+        let role_id = handler.panel.as_ref().unwrap().server_id().unwrap();
+        handler.drop_popup(&surface);
+        assert!(handler.ensure_popup(&surface));
+        assert_eq!(handler.panel.as_ref().unwrap().server_id(), Some(role_id));
+        state.before_poll().unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            match peer.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(size) => bytes.extend_from_slice(&buffer[..size]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("wire read: {error}"),
+            }
+        }
+        let mut roles = Vec::new();
+        let mut overlays = 0;
+        while !bytes.is_empty() {
+            let id = u32::from_ne_bytes(bytes[..4].try_into().unwrap());
+            let header = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+            let size = (header >> 16) as usize;
+            if id == panel.server_id().unwrap() {
+                assert_eq!(header as u16, 0);
+                let role = u32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+                let target = u32::from_ne_bytes(bytes[12..16].try_into().unwrap());
+                roles.push((role, target));
+            }
+            if id == role_id {
+                assert_eq!(header as u16, 1); // set_overlay_panel
+                overlays += 1;
+            }
+            bytes.drain(..size);
+        }
+        assert_eq!(roles, [(role_id, surface.server_id().unwrap())]);
+        assert_eq!(overlays, 1);
+        state.destroy();
     }
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <name>org.freedesktop.IBus.OhMyIme</name>
+  <description>oh-my-ime native input platform</description>
+  <exec>omimed --ibus</exec>
+  <version>0.5.0</version>
+  <author>oh-my-ime contributors</author>
+  <license>MIT OR Apache-2.0</license>
+  <homepage>https://github.com/Ign1x/oh-my-ime</homepage>
+  <textdomain>oh-my-ime</textdomain>
+  <engines>
+    <engine>
+      <name>oh-my-ime</name>
+      <longname>oh-my-ime</longname>
+      <description>oh-my-ime input methods</description>
+      <language>zh</language>
+      <license>MIT OR Apache-2.0</license>
+      <author>oh-my-ime contributors</author>
+      <icon>input-keyboard</icon>
+      <layout>default</layout>
+      <rank>0</rank>
+    </engine>
+  </engines>
+</component>

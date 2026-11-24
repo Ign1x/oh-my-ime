@@ -22,6 +22,8 @@ pub enum Origin {
     Fcitx,
     /// An X11 application using XIM.
     Xim,
+    /// The session IBus daemon (GNOME native integration).
+    Ibus,
 }
 
 /// A key the core has to decide about; it goes back to the frontend that reported it.
@@ -30,6 +32,7 @@ pub enum KeyRef {
     Wayland(wayland::KeyRef),
     Fcitx(fcitx::KeyRef),
     Xim(xim::KeyRef),
+    Ibus(crate::ibus::KeyRef),
 }
 
 impl KeyRef {
@@ -39,6 +42,7 @@ impl KeyRef {
             Self::Wayland(key) => key.ctx,
             Self::Fcitx(key) => key.ctx,
             Self::Xim(key) => key.ctx,
+            Self::Ibus(key) => key.ctx,
         }
     }
 }
@@ -60,19 +64,40 @@ pub enum FrontendEvent {
         reset: bool,
     },
     /// The text field lost focus.
-    Deactivated { ctx: ContextId },
+    Deactivated {
+        ctx: ContextId,
+    },
     /// A key needs a decision: call [`Frontends::finish_key`].
-    Key { key: KeyRef, event: KeyEvent },
+    Key {
+        key: KeyRef,
+        event: KeyEvent,
+    },
     /// The text cursor relative to an engine's popup changed.
-    CursorRect { engine: EngineId, rect: Rect },
+    CursorRect {
+        engine: EngineId,
+        rect: Rect,
+    },
     /// Another application got focus (`None` when unknown). Sent after the `Updated`
     /// events of the focused fields, which carry the new app id.
     FocusedApp(Option<String>),
+    CandidateClicked {
+        ctx: ContextId,
+        index: u32,
+        button: u32,
+        modifiers: u32,
+    },
+    CandidatePage {
+        ctx: ContextId,
+        previous: bool,
+    },
     /// Something a hosted input method did.
     Hosted(HostedEvent),
     /// Another input method holds the seat of this name (`true`), or omimed serves it
     /// again (`false`).
-    SeatTaken { seat: String, taken: bool },
+    SeatTaken {
+        seat: String,
+        taken: bool,
+    },
 }
 
 /// What hosted input methods (Wayland input methods running as engines) do.
@@ -137,6 +162,15 @@ pub trait Frontends {
 
     /// Removes any preedit from the text field `ctx`.
     fn clear_preedit(&mut self, origin: Origin, ctx: ContextId);
+
+    /// Candidate presentation supplied by the desktop, when available.
+    fn set_candidates(
+        &mut self,
+        _origin: Origin,
+        _ctx: ContextId,
+        _page: &omime_proto::engine::CandidatePage,
+    ) {
+    }
 
     /// Selects the engine whose windows may be shown.
     fn set_active_engine(&mut self, engine: Option<EngineId>);
