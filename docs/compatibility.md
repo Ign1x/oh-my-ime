@@ -28,6 +28,19 @@ desktop-owned lifecycle, not every application. Physical displays, mixed DPI, fu
 pointer placement and browser/Electron/office applications remain separate acceptance rows. KWin
 virtual-renderer screenshot capture is unstable; the GNOME candidate screenshot was captured successfully.
 
+### P1 recovery and resource baseline
+
+The isolated P1 run on 2026-11-24 passed the following non-application checks:
+
+| Area | Passed checks | Evidence |
+|---|---|---|
+| Core recovery and resource bounds | 4,096 context teardowns without RSS growth; update-flood key latency 83–166 ms; input remained responsive | `release_core_bounds` ignored E2E suite |
+| Fcitx and SDK output bounds | 8,192 preedit flood increased RSS by 132 KiB; SDK batch commit left the next key responsive; 256 FocusIn calls had no compositor query or FD leak | `release_fcitx_bounds` ignored E2E suite |
+| Engine and daemon restart recovery | Timeout recovery resumed composition; crashed engine restarted; Rime restart restored application input mode | `tests/e2e/tests/regressions.rs`, `typing.rs`, `management.rs` |
+
+The machine-readable record is [`tests/desktop/results/2026-11-24-p1.json`](../tests/desktop/results/2026-11-24-p1.json).
+Physical suspend/resume, real multi-monitor or mixed-DPI hardware, and long-run hardware p99 latency were not tested.
+
 The 2026-11-24 P0 isolated follow-up passed the complete GNOME toolkit run and Firefox 160 scenarios.
 KWin passed startup, Echo composition and the IM v1 candidate-panel role, then KWin 6.8.3 crashed while
 handling the virtual screenshot request. Later KWin screenshot and Rime commit checks are blocked by

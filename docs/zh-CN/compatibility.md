@@ -29,6 +29,19 @@ KWin 通过启动、Echo 组合和 IM v1 候选 panel 角色检查，但 KWin 6.
 后续截图和 Rime 上屏被该虚拟渲染器阻塞。证据保留在 `/tmp/omime-p0-kwin-1/report.json` 和
 `/tmp/omime-p0-gnome-toolkits/report.json`。
 
+### P1 恢复与资源基线
+
+2026-11-24 的隔离 P1 运行通过了以下不绑定具体应用的检查：
+
+| 范围 | 通过检查 | 证据 |
+|---|---|---|
+| 核心恢复与资源边界 | 4,096 次上下文回收无 RSS 增长；更新洪泛下按键时延 83–166 ms；连续更新期间输入保持响应 | `release_core_bounds` 被忽略的 E2E 套件 |
+| Fcitx 与 SDK 输出边界 | 8,192 次预编辑洪泛后 RSS 增加 132 KiB；SDK 批量提交后下一键保持响应；256 次 FocusIn 无 compositor 查询或 FD 泄漏 | `release_fcitx_bounds` 被忽略的 E2E 套件 |
+| 引擎与守护进程重启恢复 | 超时后恢复新的组合；引擎崩溃后自动重启并继续输入；Rime 重启后恢复应用输入模式 | `tests/e2e/tests/regressions.rs`、`typing.rs`、`management.rs` |
+
+机器可读记录见 [`tests/desktop/results/2026-11-24-p1.json`](../../tests/desktop/results/2026-11-24-p1.json)。
+物理休眠/恢复、真实多显示器或混合 DPI 硬件，以及长期硬件 p99 时延未测试。
+
 ## 运行隔离探针
 
 先构建工作区，得到虚拟键盘测试工具。桌面探针只依赖 Python 标准库，不需要 `wayland-info`：

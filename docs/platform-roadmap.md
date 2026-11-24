@@ -21,11 +21,11 @@ user journeys from installation through recovery.
 | Applications | Consistent composition in browsers, terminals, editors and office software | Synthetic tests and limited Firefox, foot and xterm evidence on sway | Separate GTK 3/4, Qt 5/6, Chromium/Electron, VS Code, WPS and WeChat runs, including sandbox packages and launchers |
 | Candidate windows | Follow the cursor, stay visible at edges, scale and click correctly | Independent engine UIs, Wayland UI bridge and X11 cursor mirroring | Mixed DPI, fullscreen, edges and physical-display acceptance for each backend |
 | Text editing | Correct commits, selection replacement, deletion and focus changes | Ordered Commit, Preedit and DeleteSurrounding actions; bounded output queues | Adapter-specific byte/character boundaries, serials and context lifetime; reconversion design |
-| Recovery | Continue typing after failures, with actionable explanations | Key timeouts, restarts, isolation and diagnostics | Desktop reconnection and long-session acceptance; graphical recovery actions |
-| First use | Choose a language, enable an engine, try typing and finish | CLI setup, language suggestions and input-method ordering | Desktop-aware graphical onboarding, typing test and understandable application repair |
-| Interface | Clear navigation, readable status, coherent themes, keyboard access | Native Slint settings/switcher and Chinese/English localization | Consistent components, compact layouts, long labels, focus and screen-reader acceptance |
+| Recovery | Continue typing after failures, with actionable explanations | Key timeouts, restarts, isolation, diagnostics and isolated P1 recovery/resource checks | Desktop reconnection, suspend/resume, long-run hardware acceptance and graphical recovery actions |
+| First use | Choose a language, enable an engine, try typing and finish | CLI setup, language suggestions, input-method ordering and a real settings-page typing test | Desktop-aware graphical onboarding and understandable application repair |
+| Interface | Clear navigation, readable status, coherent themes, keyboard access | Native Slint settings/switcher, first-run typing card and Chinese/English localization | Consistent components, compact layouts, long labels, focus and screen-reader acceptance |
 | Ecosystem | Stable installation, upgrade and integration contracts | Manifests, Rust SDK, Python/GTK example and hosted Fcitx5/IBus | Protocol 1.3 semantic candidate adoption by more engines; SDK examples, provenance and versions |
-| Performance | Predictable latency and stable resources | Timeouts, queue bounds and resource regressions | Per-route p50/p95/p99 latency and memory baselines, suspend/resume and long-session tests |
+| Performance | Predictable latency and stable resources | Timeouts, queue bounds, resource regressions and isolated P1 latency/memory checks | Per-route p50/p95/p99 latency on hardware, suspend/resume and long-session tests |
 
 Prediction, dictionaries, voice and handwriting can be provided by engines. The
 platform owns connection, focus, delivery, presentation, recovery and management;
@@ -81,7 +81,7 @@ limits of application identity and per-app state for mediated IBus contexts and 
 
 ### Daily use and ecosystem
 
-Complete graphical onboarding, typing tests and recovery. Add pure X11 and validate
+Complete graphical onboarding and recovery actions. Add pure X11 and validate
 more IM v2 compositors. Establish mixed-scale, accessibility, suspend/resume and
 resource baselines. Publish adapter/engine capability contracts so the UI can explain
 unsupported features precisely.
@@ -123,3 +123,10 @@ and corrected in Slint, then captured using private sway/D-Bus sessions with rea
 omimed/Rime. See [light](images/settings-light.png), [dark](images/settings-dark.png)
 and [compact](images/settings-compact.png). These UI checks do not establish physical-display
 or launcher acceptance.
+
+The P1 recovery and resource baseline on 2026-11-24 passed isolated core teardown,
+update-flood responsiveness, Fcitx/SDK output bounds, timeout recovery, engine restart,
+daemon/Rime restart recovery and repeated focus entry. The machine-readable evidence is
+[`tests/desktop/results/2026-11-24-p1.json`](../tests/desktop/results/2026-11-24-p1.json).
+Physical suspend/resume, real multi-monitor or mixed-DPI hardware, and long-run hardware
+p99 latency remain untested.

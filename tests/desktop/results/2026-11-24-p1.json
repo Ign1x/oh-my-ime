@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-24",
+  "scope": "isolated P1 recovery, long-session and resource acceptance",
+  "runs": [
+    {
+      "area": "core recovery and resource bounds",
+      "status": "passed",
+      "checks": [
+        "4096 context teardown cycles without RSS growth",
+        "update flood key latency 83-166 ms",
+        "input remains responsive during continuous updates"
+      ],
+      "evidence": "release_core_bounds ignored E2E suite"
+    },
+    {
+      "area": "Fcitx and SDK output bounds",
+      "status": "passed",
+      "checks": [
+        "8192 preedit flood RSS increase 132 KiB",
+        "next key remains responsive after SDK batch commit",
+        "256 FocusIn calls without compositor query or FD leak"
+      ],
+      "evidence": "release_fcitx_bounds ignored E2E suite"
+    },
+    {
+      "area": "engine and daemon restart recovery",
+      "status": "passed",
+      "checks": [
+        "timeout recovery resumes a new composition",
+        "crashed engine restarts and typing continues",
+        "Rime restart restores the application input mode"
+      ],
+      "evidence": "tests/e2e/tests/regressions.rs, typing.rs and management.rs"
+    }
+  ],
+  "limitations": [
+    "physical suspend/resume was not tested",
+    "real multi-monitor and mixed-DPI hardware were not tested",
+    "long-run hardware p99 latency was not established"
+  ]
+}

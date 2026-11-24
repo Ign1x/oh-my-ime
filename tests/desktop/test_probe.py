@@ -142,6 +142,13 @@ class DesktopProbeTests(unittest.TestCase):
         kwin = next(run for run in baseline["runs"] if run["desktop"].startswith("KWin"))
         self.assertTrue(kwin["blocked_checks"])
 
+    def test_p1_baseline_records_recovery_and_resource_evidence(self):
+        baseline = json.loads((ROOT / "tests/desktop/results/2026-11-24-p1.json").read_text())
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(len(baseline["runs"]), 3)
+        self.assertTrue(all(run["status"] == "passed" for run in baseline["runs"]))
+        self.assertTrue(baseline["limitations"])
+
     def test_require_compatible_rejects_registry_only_native_probe(self):
         report = {
             "checks": {
