@@ -130,7 +130,8 @@ class DesktopProbeTests(unittest.TestCase):
         gnome = next(run for run in baseline["runs"] if run["desktop"].startswith("GNOME Shell"))
         self.assertIn("GTK3 Gtk.Entry commit", gnome["checks"])
         self.assertIn("GTK4 Gtk.Entry commit", gnome["checks"])
-        self.assertIn("/tmp/omime-gnome-gtk34-probe-2/report.json", gnome["evidence"])
+        self.assertIn("Qt6 Quick TextField commit", gnome["checks"])
+        self.assertEqual("/tmp/omime-gnome-toolkits-final2/report.json", gnome["evidence"])
 
     def test_require_compatible_rejects_registry_only_native_probe(self):
         report = {

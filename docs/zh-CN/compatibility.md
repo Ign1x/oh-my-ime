@@ -16,11 +16,11 @@
 | sway 1.12 / foot 1.28.0，原生 Wayland | 候选和中文上屏通过 | 真实终端 stdin；Rime `luna_pinyin` |
 | sway 1.12 / xterm 411，XWayland | 候选和中文上屏通过 | 真实终端 stdin，经 XIM |
 | KWin 6.8.3，虚拟显示器 | IM v1 启动、Echo 组合、Rime 中国、候选角色、密码绕过、焦点恢复通过 | `/tmp/omime-native/kwin-run-8/report.json`，6 项检查 |
-| GNOME Shell 50.4，虚拟显示器 | 系统 IBus 选择、真实 GTK3/GTK4 `Gtk.Entry` 上屏、行内预编辑、Rime 上屏、候选、失焦清理、密码绕过通过 | `/tmp/omime-gnome-gtk34-probe-2/report.json`，10 项检查 |
+| GNOME Shell 50.4，虚拟显示器 | 系统 IBus 选择、真实 GTK3/GTK4 `Gtk.Entry` 与 Qt6 Quick `TextField` 上屏、行内预编辑、Rime 上屏、候选、失焦清理、密码绕过通过 | `/tmp/omime-gnome-toolkits-final2/report.json`，11 项检查 |
 | IBus 1.5.34，无头原生引擎 | Rime 6 项、Echo 5 项通过，含翻页/点击与提交缓存清理 | `/tmp/omime-ibus-rime-b5/result.json`、`/tmp/omime-ibus-echo-b5/result.json` |
 
-KWin 使用合成原生文本框，GNOME 另外启动真实 GTK3/GTK4 `Gtk.Entry`；两者都使用私有总线，证明适配器与桌面生命周期，
-不代表所有应用。实际显示器、混合 DPI、全屏、启动器、鼠标定位，以及 Qt/浏览器/Electron/办公软件仍需
+KWin 使用合成原生文本框，GNOME 另外启动真实 GTK3/GTK4 `Gtk.Entry` 和 Qt6 Quick `TextField`；两者都使用私有总线，证明适配器与桌面生命周期，
+不代表所有应用。实际显示器、混合 DPI、全屏、启动器、鼠标定位，以及浏览器/Electron/办公软件仍需
 分别验收。KWin 虚拟渲染器截图不稳定；GNOME 候选截图已成功保存。
 
 ## 运行隔离探针

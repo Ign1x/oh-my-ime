@@ -216,13 +216,15 @@
           foot
         ]) { };
         # Just enough to build and run the end-to-end tests (used by CI). The native
-        # GNOME application probes use Python with PyGObject and GTK 3/4.
+        # GNOME application probes use Python with PyGObject, GTK 3/4 and Qt 6.
         e2e =
           shell pkgs
             [
               (pkgs.python3.withPackages (ps: [ ps.pygobject3 ]))
               pkgs.gtk3
               pkgs.gtk4
+              pkgs.qt6Packages.qtdeclarative
+              pkgs.qt6Packages.qtwayland
             ]
             {
               # GTK 3/4 find their typelibs in the toolkit outputs, and the namespaces
@@ -244,6 +246,8 @@
                   ]
                 )
               );
+              QML2_IMPORT_PATH = "${pkgs.qt6Packages.qtdeclarative}/lib/qt-6/qml";
+              QT_PLUGIN_PATH = "${pkgs.qt6Packages.qtbase}/lib/qt-6/plugins";
             };
       });
 

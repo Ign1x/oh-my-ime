@@ -25,6 +25,8 @@ def main():
                         help='also type into a real GTK3 Gtk.Entry in the private Shell session')
     parser.add_argument('--gtk4', action='store_true',
                         help='also type into a real GTK4 Gtk.Entry in the private Shell session')
+    parser.add_argument('--qt6', action='store_true',
+                        help='also type into a real Qt6 Quick TextField in the private Shell session')
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.bin_dir = args.bin_dir.resolve()
@@ -54,10 +56,14 @@ def main():
               'limitations': ['Headless virtual output; physical displays, mixed DPI, fullscreen and launchers not tested.',
                               'Native synthetic Wayland text field; GTK/Qt/browser applications need separate acceptance.']}
     gtk_toolkits = [version for version, enabled in (('GTK3', args.gtk3), ('GTK4', args.gtk4)) if enabled]
-    if gtk_toolkits:
-        report['scope'] += ' and ' + ' and '.join(f'a real {version} Gtk.Entry' for version in gtk_toolkits)
-        untested = [version for version in ('GTK3', 'GTK4') if version not in gtk_toolkits]
-        untested += ['Qt', 'browser', 'Electron', 'office']
+    app_toolkits = gtk_toolkits + (['Qt6'] if args.qt6 else [])
+    if app_toolkits:
+        descriptions = [f'a real {version} Gtk.Entry' for version in gtk_toolkits]
+        if args.qt6:
+            descriptions.append('a real Qt6 Quick TextField')
+        report['scope'] += ' and ' + ' and '.join(descriptions)
+        untested = [version for version in ('GTK3', 'GTK4', 'Qt6') if version not in app_toolkits]
+        untested += ['browser', 'Electron', 'office']
         report['limitations'][1] = ('Native synthetic Wayland text field; ' + ', '.join(untested) +
                                     ' applications need separate acceptance.')
     remote = None
@@ -140,14 +146,33 @@ def main():
             if gtk_process.returncode != 0:
                 raise RuntimeError(f'{toolkit} editor exited with status {gtk_process.returncode}')
             report['checks'][f'{gtk_id}_ibus_commit'] = 'passed'
-        if gtk_toolkits:
+        if args.qt6:
+            qt_log = args.out/'qt6-editor.log'
+            qt_process = session.start('qt6-editor', ['qml', ROOT/'tests/desktop/qt6-ibus-editor.qml'],
+                                       QT_QPA_PLATFORM='wayland', QT_IM_MODULES='wayland',
+                                       QT_WAYLAND_DISABLE_WINDOWDECORATION='1',
+                                       QT_QUICK_BACKEND='software', QT_FORCE_STDERR_LOGGING='1',
+                                       QT_LOGGING_TO_CONSOLE='1')
+            shared['wait_for']('Qt6 editor', lambda: qt_log.exists() and 'ready true' in qt_log.read_text(), 20)
+            time.sleep(1)
+            for ch in 'zhongguo':
+                key(keys[ch])
+            key(keys[' '])
+            shared['wait_for']('Qt6 Chinese commit', lambda: 'text "中国"' in qt_log.read_text(), 20)
+            if qt_log.read_text().count('text "中国"') != 1:
+                raise RuntimeError('Qt6 received Chinese text more than once')
+            shared['wait_for']('Qt6 editor exit', lambda: qt_process.poll() is not None, 10)
+            if qt_process.returncode != 0:
+                raise RuntimeError(f'Qt6 editor exited with status {qt_process.returncode}')
+            report['checks']['qt6_ibus_commit'] = 'passed'
+        if app_toolkits:
             # A toolkit owns the active focus after its commit. Start a fresh
             # native text-input client so the remaining protocol checks do not
             # depend on compositor-specific focus restoration behavior.
             session.start('native-editor', [args.bin_dir/'omime-ti-client', '--app-id',
                                             'omime-gnome-native-editor'])
             log = args.out/'native-editor.log'
-            shared['wait_for']('native editor after GTK', lambda:log.exists() and 'ready' in log.read_text(), 20)
+            shared['wait_for']('native editor after toolkit', lambda:log.exists() and 'ready' in log.read_text(), 20)
             time.sleep(.5)
         # Refresh the fixture's cursor after Shell created its IBus context. A
         # direct space and backspace are real editing events, so the fixture sends

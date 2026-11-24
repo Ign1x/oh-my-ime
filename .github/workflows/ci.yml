@@ -22,6 +22,8 @@ jobs:
             pkg-config libwayland-dev libxkbcommon-dev libdbus-1-dev libfontconfig-dev librime-dev xkb-data
       - name: Compile native desktop probes
         run: python3 -m py_compile tests/desktop/native-gnome.py tests/desktop/gtk3-ibus-editor.py tests/desktop/gtk4-ibus-editor.py tests/desktop/native-ibus.py tests/desktop/native-kwin.py
+      - name: Check Qt6 native probe source
+        run: test -s tests/desktop/qt6-ibus-editor.qml
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2

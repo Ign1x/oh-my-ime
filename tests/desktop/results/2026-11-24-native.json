@@ -2,7 +2,7 @@
   "schema_version": 1,
   "description": "Native KDE/GNOME/IBus acceptance baseline for the 0.5.0 development source.",
   "date": "2026-11-24",
-  "revision": "6afab496376e1b5e6e8411a5d5b872eed1901423",
+  "revision": "d5bc26e8259fea882364635cf394ae5b28273372",
   "worktree_dirty": true,
   "runs": [
     {
@@ -21,9 +21,9 @@
       "engine": "Rime/luna_pinyin",
       "session": "private headless Mutter/Wayland and IBus 1.5.34",
       "status": "passed",
-      "checks": ["Shell startup", "IBus engine selection", "GTK3 Gtk.Entry commit", "GTK4 Gtk.Entry commit", "inline preedit", "candidate delivery", "candidate screenshot", "中国 commit", "focus cleanup", "password bypass"],
-      "evidence": "/tmp/omime-gnome-gtk34-probe-2/report.json",
-      "limitations": ["physical display", "mixed DPI", "fullscreen", "Qt/browser/Electron/office applications", "pointer click"]
+      "checks": ["Shell startup", "IBus engine selection", "GTK3 Gtk.Entry commit", "GTK4 Gtk.Entry commit", "Qt6 Quick TextField commit", "inline preedit", "candidate delivery", "candidate screenshot", "中国 commit", "focus cleanup", "password bypass"],
+      "evidence": "/tmp/omime-gnome-toolkits-final2/report.json",
+      "limitations": ["physical display", "mixed DPI", "fullscreen", "browser/Electron/office applications", "pointer click"]
     },
     {
       "desktop": "IBus 1.5.34",
