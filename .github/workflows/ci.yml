@@ -58,6 +58,11 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Build the package (runs the unit tests)
         run: nix build --print-build-logs
+      - name: Check native KDE/GNOME packaging and module routes
+        run: |
+          nix build --print-build-logs \
+            .#checks.x86_64-linux.native-wrapper \
+            .#checks.x86_64-linux.native-modules
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
