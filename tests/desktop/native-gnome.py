@@ -21,6 +21,8 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--shell', default='gnome-shell')
     parser.add_argument('--bin-dir', type=Path, default=ROOT/'target/debug')
+    parser.add_argument('--gtk4', action='store_true',
+                        help='also type into a real GTK4 Gtk.Entry in the private Shell session')
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.bin_dir = args.bin_dir.resolve()
@@ -38,7 +40,8 @@ def main():
     keyfile.mkdir(parents=True)
     (keyfile/'keyfile').write_text("[org/gnome/desktop/input-sources]\nsources=[('ibus', 'oh-my-ime')]\nmru-sources=[('ibus', 'oh-my-ime')]\n[org/gnome/shell]\nwelcome-dialog-last-shown-version='999'\n")
     session = shared['Session'](args.out, env)
-    report = {'desktop':'GNOME Shell','checks':{},'scope':'headless Shell with real IBus, Rime and Wayland editor',
+    report = {'desktop':'GNOME Shell','checks':{},
+              'scope':'headless Shell with real IBus, Rime and Wayland editor',
               'at_utc': datetime.now(timezone.utc).isoformat(),
               'revision': shared['version'](['git','-C',str(ROOT),'rev-parse','HEAD']),
               'worktree_dirty': shared['worktree_dirty'](),
@@ -48,6 +51,10 @@ def main():
               'shell_version': shared['version']([args.shell,'--version']),
               'limitations': ['Headless virtual output; physical displays, mixed DPI, fullscreen and launchers not tested.',
                               'Native synthetic Wayland text field; GTK/Qt/browser applications need separate acceptance.']}
+    if args.gtk4:
+        report['scope'] += ' and a real GTK4 Gtk.Entry'
+        report['limitations'][1] = ('Native synthetic Wayland text field; GTK3, Qt, browser, Electron and office '
+                                    'applications need separate acceptance.')
     remote = None
     try:
         bus = args.out/'bus.conf'
@@ -99,6 +106,35 @@ def main():
         report['checks']['ibus_engine_selection']='passed'
         time.sleep(.5)
         keys=dict(zip('qwertyuiop',range(16,26)))|dict(zip('asdfghjkl',range(30,39)))|dict(zip('zxcvbnm',range(44,51)))|{' ':57}
+        if args.gtk4:
+            # Keep the event log separate from Session.start's stdout/stderr log.
+            gtk_log = args.out/'gtk4-entry.log'
+            gtk_process = session.start('gtk4-editor', ["python3", ROOT/'tests/desktop/gtk4-ibus-editor.py'],
+                                        OMIME_GTK4_LOG=str(gtk_log), GDK_BACKEND='wayland',
+                                        GSK_RENDERER='cairo', GTK_A11Y='none')
+            shared['wait_for']('GTK4 editor', lambda: gtk_log.exists() and 'ready true' in gtk_log.read_text(), 20)
+            # `present()` and `grab_focus()` return before GTK has delivered the
+            # focus-in event to IBus. Give the toolkit one main-loop turn before
+            # injecting the first key, otherwise that key can bypass IBus.
+            time.sleep(1)
+            for ch in 'zhongguo':
+                key(keys[ch])
+            key(keys[' '])
+            shared['wait_for']('GTK4 Chinese commit', lambda:'text "中国"' in gtk_log.read_text(), 20)
+            if gtk_log.read_text().count('text "中国"') != 1:
+                raise RuntimeError('GTK4 received Chinese text more than once')
+            shared['wait_for']('GTK4 editor exit', lambda: gtk_process.poll() is not None, 10)
+            if gtk_process.returncode != 0:
+                raise RuntimeError(f'GTK4 editor exited with status {gtk_process.returncode}')
+            report['checks']['gtk4_ibus_commit'] = 'passed'
+            # GTK4 owns the active focus after its commit. Start a fresh native
+            # text-input client so the remaining protocol checks do not depend on
+            # compositor-specific focus restoration behavior.
+            session.start('native-editor', [args.bin_dir/'omime-ti-client', '--app-id',
+                                            'omime-gnome-native-editor'])
+            log = args.out/'native-editor.log'
+            shared['wait_for']('native editor after GTK4', lambda:log.exists() and 'ready' in log.read_text(), 20)
+            time.sleep(.5)
         # Refresh the fixture's cursor after Shell created its IBus context. A
         # direct space and backspace are real editing events, so the fixture sends
         # the latest cursor rectangle through text-input-v3 again.

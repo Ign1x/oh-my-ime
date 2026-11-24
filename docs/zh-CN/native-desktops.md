@@ -72,8 +72,12 @@ nix develop .#e2e --command python3 tests/desktop/native-ibus.py \
   --monitor --out /tmp/omime-ibus-native
 nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
   --shell /path/to/gnome-shell --out /tmp/omime-gnome-native
+nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
+  --shell /path/to/gnome-shell --gtk4 --out /tmp/omime-gnome-gtk4-native
 ```
 
 每轮创建独立 XDG 目录、总线和进程，不改变现有桌面。KWin 使用虚拟显示器，GNOME
 需要支持 headless 的 Shell。KWin 6.8.3 虚拟渲染器在截图时发生崩溃，因此该轮不能证明
-候选窗视觉位置正确。物理显示器、混合 DPI、全屏和完整 GTK/Qt/Electron 应用矩阵仍需验收。
+候选窗视觉位置正确。可选的 `--gtk4` 会在隔离 Shell 会话中启动真实 GTK4
+`Gtk.Entry` 并检查一次 Rime 上屏；运行环境需要 GTK4 和 PyGObject。物理显示器、混合 DPI、全屏，
+以及 GTK3、Qt、浏览器、Electron 和办公软件仍需分别验收。

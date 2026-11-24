@@ -89,11 +89,15 @@ nix develop .#e2e --command python3 tests/desktop/native-ibus.py \
   --monitor --out /tmp/omime-ibus-native
 nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
   --shell /path/to/gnome-shell --out /tmp/omime-gnome-native
+nix develop .#e2e --command python3 tests/desktop/native-gnome.py \
+  --shell /path/to/gnome-shell --gtk4 --out /tmp/omime-gnome-gtk4-native
 ```
 
 Each run creates its own XDG directories, bus and processes. Existing sessions are
 not changed. The KWin test uses a virtual output, and the Shell test requires a
 headless-capable GNOME build. Screenshot capture on KWin 6.8.3's virtual renderer
 crashed the compositor during testing, so candidate geometry is not visually
-accepted by that run. Physical displays, mixed DPI, fullscreen and the complete
-GTK/Qt/Electron application matrix require further acceptance.
+accepted by that run. The optional `--gtk4` run starts a real GTK4 `Gtk.Entry` in
+the isolated Shell session and checks one Rime commit; it requires GTK4 and
+PyGObject in the environment. Physical displays, mixed DPI, fullscreen, and the
+GTK3, Qt, browser, Electron and office application matrix require further acceptance.

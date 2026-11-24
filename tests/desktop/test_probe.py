@@ -127,6 +127,9 @@ class DesktopProbeTests(unittest.TestCase):
             self.assertTrue(run["checks"])
             self.assertTrue(run["limitations"])
             self.assertTrue(run["evidence"])
+        gnome = next(run for run in baseline["runs"] if run["desktop"].startswith("GNOME Shell"))
+        self.assertIn("GTK4 Gtk.Entry commit", gnome["checks"])
+        self.assertIn("/tmp/omime-gnome-gtk4-final4/report.json", gnome["evidence"])
 
     def test_require_compatible_rejects_registry_only_native_probe(self):
         report = {

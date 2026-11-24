@@ -18,14 +18,14 @@ The following rows were run in isolated sessions on 2026-11-24 with the current 
 | sway 1.12 / foot 1.28.0, native Wayland | Passed: candidate selection and Chinese commit | Real terminal stdin; Rime `luna_pinyin` |
 | sway 1.12 / xterm 411, XWayland | Passed: candidate selection and Chinese commit | Real terminal stdin through XIM |
 | KWin 6.8.3, virtual output | Passed: IM v1 startup, Echo composition, Rime 中国, panel role, password bypass and focus recovery | `/tmp/omime-native/kwin-run-8/report.json`; six checks, virtual output |
-| GNOME Shell 50.4, virtual output | Passed: system IBus selection, inline preedit, Rime commit, candidate delivery/screenshot, focus cleanup and password bypass | `/tmp/omime-gnome-a3/report.json`; eight checks |
+| GNOME Shell 50.4, virtual output | Passed: system IBus selection, GTK4 `Gtk.Entry` commit, inline preedit, Rime commit, candidate delivery/screenshot, focus cleanup and password bypass | `/tmp/omime-gnome-gtk4-final4/report.json`; nine checks |
 | IBus 1.5.34, headless native engine | Passed: Rime six checks and Echo five checks, including paging/clicking and commit-only cache clearing | `/tmp/omime-ibus-rime-b5/result.json`, `/tmp/omime-ibus-echo-b5/result.json` |
 
-KWin and GNOME rows use synthetic native text fields and private buses. They establish the
-adapter and desktop-owned lifecycle, not every application. Physical displays, mixed DPI,
-fullscreen, launchers, pointer placement and GTK/Qt/browser/Electron/office applications
-remain separate acceptance rows. KWin virtual-renderer screenshot capture is unstable; the
-GNOME candidate screenshot was captured successfully.
+The KWin row uses a synthetic native text field; the GNOME row combines that field with a real GTK4
+`Gtk.Entry`. Both use private buses. They establish the adapter and desktop-owned lifecycle, not every
+application. Physical displays, mixed DPI, fullscreen, launchers, pointer placement and GTK3/Qt/browser/
+Electron/office applications remain separate acceptance rows. KWin virtual-renderer screenshot capture is
+unstable; the GNOME candidate screenshot was captured successfully.
 
 ## Run a private probe
 
