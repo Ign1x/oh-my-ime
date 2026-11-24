@@ -113,6 +113,20 @@ class DesktopProbeTests(unittest.TestCase):
             self.assertNotEqual(first, PROBE.fingerprint(binary))
             self.assertIsNone(PROBE.fingerprint(Path(directory) / "absent"))
 
+    def test_native_acceptance_baseline_keeps_real_routes_and_limits(self):
+        baseline = json.loads((ROOT / "tests/desktop/results/2026-11-24-native.json").read_text())
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(len(baseline["runs"]), 3)
+        routes = {run["route"] for run in baseline["runs"]}
+        self.assertIn("privileged input-method-v1 + input-panel-v1", routes)
+        self.assertIn("system IBus engine + native Wayland text-input", routes)
+        self.assertIn("native engine adapter", routes)
+        for run in baseline["runs"]:
+            self.assertEqual(run["status"], "passed")
+            self.assertTrue(run["checks"])
+            self.assertTrue(run["limitations"])
+            self.assertTrue(run["evidence"])
+
     def test_report_is_written_and_children_cleaned_when_compositor_cannot_start(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "probe"
