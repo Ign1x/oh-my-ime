@@ -471,6 +471,9 @@ def probe(args):
             native = "native-kwin.py" if args.desktop == "kwin" else "native-gnome.py"
             report["checks"]["registry"] = result("passed", "registry captured; IM v2 is not required by this desktop's native backend")
             report["checks"]["daemon"] = result("not-tested", f"run tests/desktop/{native} for native input acceptance")
+            report["checks"]["native_acceptance"] = result(
+                "not-tested", f"run tests/desktop/{native}; registry probing does not exercise the desktop-owned native route"
+            )
             return report
         stage = "daemon"
         daemon = args.bin_dir / "omimed"
@@ -564,7 +567,10 @@ def main():
                 print(f"{row['id']}/{scenario}: {check['status']}: {check['detail']}")
     for name, check in report["checks"].items():
         print(f"{name}: {check['status']}: {check['detail']}")
-    return 3 if args.require_compatible and any(check["status"] in ("blocked", "failed") for check in checks) else 0
+    native_unverified = report["checks"].get("native_acceptance", {}).get("status") == "not-tested"
+    return 3 if args.require_compatible and (
+        any(check["status"] in ("blocked", "failed") for check in checks) or native_unverified
+    ) else 0
 
 
 if __name__ == "__main__":

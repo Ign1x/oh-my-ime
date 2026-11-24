@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import unittest
@@ -126,6 +127,22 @@ class DesktopProbeTests(unittest.TestCase):
             self.assertTrue(run["checks"])
             self.assertTrue(run["limitations"])
             self.assertTrue(run["evidence"])
+
+    def test_require_compatible_rejects_registry_only_native_probe(self):
+        report = {
+            "checks": {
+                "compositor": {"status": "passed", "detail": "ok"},
+                "registry": {"status": "passed", "detail": "ok"},
+                "daemon": {"status": "not-tested", "detail": "run native probe"},
+                "native_acceptance": {"status": "not-tested", "detail": "run native probe"},
+            },
+            "applications": [],
+        }
+        with tempfile.TemporaryDirectory() as directory, patch.object(PROBE, "probe", return_value=report), \
+             patch.object(sys, "argv", ["desktop-probe.py", "--desktop", "gnome",
+                                         "--out", str(Path(directory) / "probe"),
+                                         "--require-compatible"]):
+            self.assertEqual(PROBE.main(), 3)
 
     def test_report_is_written_and_children_cleaned_when_compositor_cannot_start(self):
         with tempfile.TemporaryDirectory() as directory:
