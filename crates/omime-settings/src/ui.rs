@@ -576,6 +576,30 @@ mod tests {
     }
 
     #[test]
+    fn typing_test_is_available_after_an_input_method_is_enabled() {
+        let (window, controller, _requests) = open();
+        // The first-run card exposes a real text input and a keyboard-accessible
+        // clear action, so a user can verify input before opening another app.
+        let typing = find(&window, "Typing test");
+        typing.set_accessible_value("中国");
+        click(&window, "Clear typing test");
+
+        // Once the last method is disabled, the first page returns to its setup
+        // state and does not present a misleading test field.
+        let mut empty = snapshot();
+        for method in &mut empty.input_methods {
+            method.enabled = false;
+        }
+        controller.apply(Event::Snapshot(Box::new(empty)));
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, "Typing test")
+                .next()
+                .is_none(),
+            "typing test is only shown when an input method is available"
+        );
+    }
+
+    #[test]
     fn engines_with_settings_open_them() {
         let (window, _controller, mut requests) = open();
         click(&window, "Settings of 拼音");

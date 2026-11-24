@@ -105,6 +105,27 @@ msgstr "还没有输入法"
 msgid "Add one to type in another language."
 msgstr "添加一个，就能输入其他语言。"
 
+msgid "Try typing"
+msgstr "试打一下"
+
+msgid "Focus the field and type a few words to check your input method."
+msgstr "点击输入框并输入几句话，检查输入法是否正常。"
+
+msgid "Type here"
+msgstr "在这里输入"
+
+msgid "Typing test"
+msgstr "试打输入框"
+
+msgid "Clear"
+msgstr "清空"
+
+msgid "Clear typing test"
+msgstr "清空试打内容"
+
+msgid "When it works, use the same input method in any application. The hotkeys below switch it while you type."
+msgstr "确认正常后，就可以在任何应用中使用同一个输入法。输入时可用下面的热键切换。"
+
 msgid "Add input method…"
 msgstr "添加输入法…"
 
